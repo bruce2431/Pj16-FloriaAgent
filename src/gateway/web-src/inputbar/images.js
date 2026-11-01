@@ -59,14 +59,16 @@ import { syncGwSend } from './send.js'
         .map((f, i) => `<span class="file-pill" title="${esc(f.abs)}"><span class="fp-ico">${fileIcon(f.name)}</span><span class="fp-name">${esc(f.name)}</span><button class="img-x" data-f="${i}" type="button" aria-label="移除">×</button></span>`)
         .join('')
   }
-  // @ 浮窗「上传」组的数据源（mention.js 消费）：本次上传、可被正文引用的附件。
-  // 形态 = {kind:'imgpick'|'filepick', name, md}——md 即选中后写回 doc 的正文引用原文（与自动插入同一形态）。
+  // @ 浮窗「上传」组的数据源（mention.js / commands.js 消费）：本次上传、可被正文引用的附件。
+  // 形态 = {kind:'attref', attKind:'img'|'file', name, md}——md 即选中后写回 doc 的正文引用原文
+  // （与自动插入同一形态）。kind 与首屏两个**上传动作行**（commands.js 的 imgpick/filepick）分开：
+  // 动作行点开文件选择器，本行是「引用已上传件」，两者语义不同，不可共用一个 kind。
   function uploadedMentionItems() {
     const out = []
     for (const p of pendingImages) {
-      if (p.attRel) out.push({ kind: 'imgpick', name: p.attName, md: `![${p.attName}](${encodeURI(p.attRel)})` })
+      if (p.attRel) out.push({ kind: 'attref', attKind: 'img', name: p.attName, md: `![${p.attName}](${encodeURI(p.attRel)})` })
     }
-    for (const f of pendingFiles) out.push({ kind: 'filepick', name: f.name, md: `[${f.name}](${encodeURI(f.rel)})` })
+    for (const f of pendingFiles) out.push({ kind: 'attref', attKind: 'file', name: f.name, md: `[${f.name}](${encodeURI(f.rel)})` })
     return out
   }
   // 编码：≤1.5MB 且 png/jpg/webp 直传原 base64（截图文字不重压）；否则 canvas 重编码 jpeg

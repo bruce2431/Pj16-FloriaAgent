@@ -9,14 +9,14 @@
    收起态高），iPad Safari 顶栏展开时叠盖视口顶——贴顶乐观气泡被顶栏遮挡 + 占位按大视口
    补空白致底部溢出屏幕外（「占位有点大」）。dvh 随顶栏伸缩，视口顶恒=可视区顶，两层占位
    高度/贴顶位几何与 resize 重算链（app.js stageSync）自动咬合。100% 为旧浏览器 fallback。 */
-/* overflow:hidden / overscroll-behavior:none（键盘节）：文档**不可滚**是壳体模型的组成部分——
-   body 是 fixed 壳体，布局滚动对它本无影响，但 iOS 的橡皮筋回弹会把整个画面（含 fixed）拽一下再
-   弹回，表现为键盘起落时的「回弹」。文档无滚动余量即无处回弹。 */
-html { height: 100%; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
+/* 文档可滚（键盘节，sticky 壳）：iOS 键盘 reveal 要把输入框“滚”进可视区；页面若不可滚，WebKit
+   会改为平移可视视口——fixed 壳体挂在布局视口上，于是整页被顶起（实测 #app.top 0→−427）。
+   这里把文档做成那个可滚的滚动器（触屏设备才有滚动余量，见下），壳体用 position:sticky 钉在
+   滚动口顶部：浏览器滚多少，粘附就抵消多少，画面纹丝不动。overscroll-behavior:none 关掉橡皮筋回弹。 */
+html { height: 100%; height: 100dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: none; }
 
-/* 壳体（键盘节）：固定定位到**可视视口矩形**。无键盘时 --app-h = 布局视口高、--app-pan = 0 ⇒ 满屏；
-   键盘在场时 top 补回浏览器施加的那份位移、height 收到键盘上沿 ⇒ 屏幕坐标恒为 [0, 键盘上沿]，
-   顶部不动、底部贴键盘。两个变量只由 visualViewport 派生（见 engine/viewport.js）。 */
+/* 壳体（键盘节）：普通文档流里的 sticky 卡，不再 fixed。盒模型恒定（键盘不参与盒高/位置）。
+   唯一的键盘期几何量 = 输入栏的 --kb-lift（见 engine/viewport.js），壳体自身不读任何键盘量。 */
 body {
   /* 大圆角卡片画布：body 底色略灰 + 留边，整个应用悬浮为一张无缝大圆角卡片
      2026-08-13：留边 12px→1px（用户要求与四周距离约 1px）
@@ -26,16 +26,19 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   line-height: 1.6;
-  /* 壳体盒：top/height 由引擎写（键盘节），左右钉满；box-sizing 保证 1px 留边在内 */
-  position: fixed;
-  top: var(--app-pan, 0px);
-  left: 0;
-  right: 0;
-  height: var(--app-h, 100dvh);
+  /* 文档容器（不是壳体本身）：min-height 撑满一屏，用于给 #app 提供 sticky 的包含块。
+     壳体 = #app（见下），body 只负责留边与滚动余量。 */
+  position: relative;
+  min-height: 100%;
   box-sizing: border-box;
-  overflow: hidden;
   padding: 1px;
   -webkit-font-smoothing: antialiased;
+}
+
+/* 键盘 reveal 的滚动余量（只给触屏设备）：文档必须能滚，WebKit 才会选择“滚文档”而不是
+   “平移可视视口”；余量 = 一屏高（> 任何软键盘高）。鼠标设备不加，避免出现可滚空白页。 */
+@media (hover: none) and (pointer: coarse) {
+  body::after { content: ""; display: block; height: 100dvh; pointer-events: none; }
 }
 
 button { font-family: inherit; background: none; border: none; padding: 0; color: inherit; cursor: pointer; }
@@ -51,19 +54,18 @@ a { text-decoration: none; color: inherit; }
 * { -webkit-tap-highlight-color: transparent; }
 
 /* ================= 键盘弹出（移动端）=================
-   唯一真源 = visualViewport（engine/viewport.js 写入三个变量，缺省值 = 无键盘行为）：
-     --app-h    壳体高 = 可视视口高（键盘在场时 = 键盘上沿到屏顶；无键盘 = 布局视口高）
-     --app-pan  壳体在布局坐标里的下移量 = 可视视口上顶量 vv.offsetTop，
-                把键盘为露出焦点元素而做的那次上顶补回来，使**屏幕**位置不动
-                （布局滚动 scrollY 不进公式：fixed 壳体不受它影响，补了反而被下推）
+   唯一真源 = visualViewport（engine/viewport.js 写入两个变量，缺省值 = 无键盘行为）：
+     --kb-lift  输入栏需抬起的量 = 输入栏自然底边 − 可视视口高（**屏坐标**实测，add-back 后算出）
      --bar-room 底栏上沿到屏顶的余量（实测，已含顶部呼吸常量）= 底栏子件弹层的安全高度上界
-   形态（用户定案）：键盘弹出时**只变矮、不上移**——顶部（侧栏/顶栏）钉在屏顶不动，消息流窗口收窄，
-   底栏贴键盘上沿。壳体就是 body（键盘节规则），#app 仍取 100% 填满它。
-   为何这样不抖：appH/pan 只由 visualViewport 与 scrollY 派生，不含任何自引用量（不读 #app 自身
-   rect、不用恒等式）⇒ 写样式不会改变下一次测量 ⇒ 无回环。Safari 在键盘动画期间可能漏发 vv 事件，
-   故引擎在场期间逐帧复算（pinTracker 同法），静止 1s 后降为 250ms 巡检。
-   覆盖层（#search-overlay / #risk-modal / #rename-modal）在 #app 内 absolute inset:0 ⇒ 遮罩 ≡ 壳体
-   ≡ 可视窗，不必各自复刻视口公式。
+   形态（用户定案）：键盘弹出时**壳体原地不动**——只把输入栏抬到键盘上沿；侧栏/顶栏/消息流
+   位置与高度都不变，被键盘盖住的是它们自己的底部。壳体 = #app 的 sticky 卡（键盘节规则），
+   文档滚动/可视视口平移都由粘附在滚动机制内部消化，JS 不参与根节点定位。
+   为何这样不抖：lift 只用屏坐标（rect.bottom 对 vv.height），**布局视口量一律不进算式**；rect 的读
+   发生在写之前（再 add-back 已施加的 lift）⇒ 不存在「写→测→写」的回环。模型不可信（捏合缩放）时 lift 归 0。
+   Safari 在键盘动画期间可能漏发 vv 事件，故引擎布防期间逐帧复算（pinTracker 同法），
+   静止 1s 后降为 250ms 巡检。
+   覆盖层（#search-overlay / #risk-modal / #rename-modal）在 #app 内 absolute inset:0 ⇒ 遮罩 ≡ 壳体，
+   底部再让出 var(--kb-lift) 的呼吸，使对话框居中在键盘上方的可视区里。
    底栏子件（#cmd-pop / #task-dock .td-panel / #proj-pop / #model-pop / #ctx-panel
    五个向上弹出的弹层；@ 与 + 共用 #cmd-pop）同款做法：高度上限一律 min(<设计上限>, var(--bar-room, <设计上限>))。
    勿改回 vh/裸定值——vh 是布局视口且键盘在场不缩，键盘越高弹层上半截越落在可视区外；
@@ -78,11 +80,16 @@ a { text-decoration: none; color: inherit; }
    chat 底板 = --plane（灰）、work 底板 = --chat-bg（白）。侧栏在两种模式下都**透明**（它就是底板的一部分、
    不给自己着色，见 #sidebar.open）；个性化的只有「底板色 ↔ 内容卡色」这一对。
    形态因此对两模式完全同构：通高底板（含侧栏那列）+ 一张内缩 2px 的圆角内容卡（chat 卡白、work 卡灰）。 */
-#app { --sunken-bg: var(--chat-bg); display: flex; height: 100%; border-radius: 22px; overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); position: relative; background: var(--plane); }
+#app {
+  --sunken-bg: var(--chat-bg); display: flex; height: calc(100dvh - 2px); border-radius: 22px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); position: sticky; top: 1px; background: var(--plane);
+  /* sticky 同时是绝对定位后代的包含块（覆盖层 #search-overlay 等仍以 #app 为基准）。 */
+}
 #app.work { --sunken-bg: var(--plane); background: var(--chat-bg); }
-/* 壳体位移已移出 #app：键盘几何全在 body（见文件头键盘节）。#app 保持 position:relative 且**永不**
-   带 transform/filter——它是 #img-lightbox / #drop-overlay / .toast 等 fixed 后代的包含块基准，
-   transform 非 none 会让它们改基准。 */
+/* 键盘节：壳体（body / #app / 侧栏 / 顶栏 / 消息流）**没有任何随键盘变化的几何量**。键盘 reveal 时
+   浏览器去滚文档（或平移可视视口）以露出输入框，#app 的 sticky 粘附把它消化在滚动机制内部 ⇒ 画面
+   不动；输入栏再按实测屏坐标抬升（engine/viewport.js）。因此这里不需要、也不允许给 #app 加任何
+   transform 或用 JS 反向补偿滚动量（transform 会改定位后代的包含块基准，反向补偿则必然回弹）。 */
 
 /* ================= 主聊天区 ================= */
 /* 2026-09-23 视图卡化：#chat-area 退化为「无形槽」——通高，无圆角/无背景/无边距，只作定位与
@@ -120,7 +127,7 @@ a { text-decoration: none; color: inherit; }
    → maxScroll=贴顶位 恒成立 → 视口零钳制零移动。旧 0.32s pad 过渡让占位与 pad 在过渡期
    失配，maxScroll 逐帧下坠被浏览器钳制拖拽=「折叠提问卡消息流随之滑动」根因，故删除；
    pad 变化本由占位高度对冲（scrollHeight 不变量），过渡无视觉职责 */
-#chat-area.in-session #chat-scroll { padding-bottom: 142px; } /* 2026-08-21 dsh 高胶囊：docked bar ≈116px + 底边距 22px = 138px，留 4px 余量 */
+#chat-area.in-session #chat-scroll { padding-bottom: calc(142px + var(--kb-lift, 0px)); } /* 2026-08-21 dsh 高胶囊：docked bar ≈116px + 底边距 22px = 138px，留 4px 余量；键盘节：底栏被抬升多少，占位就补多少 */
 /* composer 遮罩（2026-10-03 移植 dsh .composerSeat 渐隐带，几何见 index.html 注）：会话态贴底栏
    区域全卡宽渐隐——顶部 36px 由透明过渡到卡底色（固定 px 停止、不随底栏长高拉伸，等价 dsh 的
    「24% of resting composer 用 px 固定」），36px 以下实心，遮住底栏两侧与下方滚过的消息流。
@@ -129,7 +136,8 @@ a { text-decoration: none; color: inherit; }
    高度 = 底栏高 --bar-h（核心 viewport.js settle 实测）+ 22px 底距 + 36px 渐隐带。z-index 3：
    盖住消息流（含 sticky 头 z1），低于 #input-wrap（z5）与 #char（z4）；pointer-events:none。 */
 #composer-mask {
-  position: absolute; left: 0; right: 0; bottom: 0;
+  /* 键盘节：底栏抬升多少，渐隐带也跟多少——上沿恒贴底栏新上沿 */
+  position: absolute; left: 0; right: 0; bottom: var(--kb-lift, 0px);
   height: calc(var(--bar-h, 116px) + 58px);
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--sunken-bg) 0%, transparent) 0,
@@ -864,8 +872,9 @@ body.kb-open #input-wrap { transition: none; }
    该锚点是**底栏相对立绘的位置**，2026-09-27 用户定案「和图片的相对位置不可以改」——任何改动都不得
    移动底栏在立绘里的落点（曾试过改底边锚，底栏上移压住女孩手臂，被否）。 */
 #empty-hint #input-wrap {
-  top: 76.75%;
-  /* 键盘节：不单独抬底栏——整页平移已把台面前缘处的底栏连带顶起（键盘高 ≤ 台面留白时仍可见） */
+  /* 键盘节：抬升走**布局**（top）而不是 transform——浏览器 reveal 用的是布局/渲染位置，
+     只有布局挪了它才发现「要露出的东西已经在键盘上方」而不去平移可视视口。无键盘时该项为 0，落点原样不动 */
+  top: calc(76.75% - var(--kb-lift, 0px));
   transform: translate(-50%, -50%);
   /* 2026-09-07 用户定案：空态输入栏稍宽于趴栏 stage（每侧超出 20px），仍以视口宽 −32px 封顶
      （手机 stage=88vw 时该封顶生效，与 docked 手机档 calc(100% - 32px) 一致） */
@@ -878,7 +887,9 @@ body.kb-open #input-wrap { transition: none; }
    首版 max(780px,70vw)+1100 封顶方向搞反（大窗口变宽）被用户否决已回滚。
    空态（#empty-hint #input-wrap）不受影响：输入栏绑定趴栏画面，维持 stage 比例） */
 #input-wrap.docked {
-  top: calc(100% - 22px); /* 键盘节：底栏钉在 app 底边上方 22px——整页平移已把 app 底边送到键盘上沿 */
+  /* 键盘节：底栏钉在 app 底边上方 22px，键盘在场再加 var(--kb-lift)——**布局**位移（见空态同款注，
+     浏览器 reveal 只认布局/渲染位置；走 transform 它看不见，照样会 pan 整页） */
+  top: calc(100% - 22px - var(--kb-lift, 0px));
   transform: translate(-50%, -100%);
   /* 下限 240px（2026-09-27 用户定案「增大最小宽度阈值」）：工具行的 min-content ≈234px
      （左组 + 28 / 项目 chip 图标 14+箭头 14+内垫 16 / 右组 模型 chip 30 + 上下文 28 + 发送 34
@@ -1361,10 +1372,11 @@ body.kb-open #input-wrap { transition: none; }
 /* 风险确认门（dsh RiskConfirmation + Modal 完全移植：全屏遮罩 + 居中 r24 对话框，
    warning 行 + checkbox 认可 + footer[outline 取消 / primary 确认]） */
 #risk-modal {
-  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体 ≡ 可视窗（键盘节：壳体已收到键盘上沿），
-     对话框在可视窗内居中。勿改回 position:fixed（挂 body 会与壳体脱钩，随键盘下移）。*/
+  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体，底部再让出 var(--kb-lift)，
+     对话框就居中在键盘上方的可视区里。勿改回 position:fixed（挂 body 会与壳体脱钩）。*/
   position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000;
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 24px calc(24px + var(--kb-lift, 0px));
 }
 #risk-modal[hidden] { display: none; }
 /* dsh Modal（Modal.module.css）：.root > .mask + .dialog > .content > .header[.title+.close] + .body + .footer */
@@ -1772,11 +1784,11 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
   background: transparent; transform: translateY(-1px);
 }
 .sess-item.on .w-tag { border-color: transparent; background: var(--hairline-2); }
-/* work 侧栏会话置顶标记（2026-10-18）：行首图钉，只由 work 列表渲染（chat 侧栏无此节点）。
-   与 dot 同排：dot 是 5px 状态点，图钉 13px；两者都在标题前，标题仍 flex:1 保持单行省略。 */
-.sess-item .pin-ico { flex: 0 0 auto; display: flex; width: 13px; height: 13px; color: var(--text-3); }
-.sess-item .pin-ico svg { width: 13px; height: 13px; display: block; }
-.sess-item.on .pin-ico { color: var(--text-2); }
+/* work 侧栏会话置顶标记（2026-11-01 移行尾，照 dsh）：只由 work 列表渲染（chat 侧栏无此节点）。
+   行尾 12px 淡灰图钉，标题 flex:1 从行首起排、省略号不被图钉侵占；行 gap 8px 已隔开与标题/气泡。 */
+.sess-item .pin-ico { flex: 0 0 auto; display: flex; width: 12px; height: 12px; color: var(--text-3); opacity: 0.85; }
+.sess-item .pin-ico svg { width: 12px; height: 12px; display: block; }
+.sess-item.on .pin-ico { color: var(--text-2); opacity: 1; }
 
 .folder { display: flex; flex-direction: column; }
 .folder-head {
@@ -1816,11 +1828,12 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
 
 /* 搜索覆盖层 */
 #search-overlay {
-  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体 ≡ 可视窗（键盘节：壳体已收到键盘上沿），
-     对话框在可视窗内居中。勿改回 position:fixed（挂 body 会与壳体脱钩，随键盘下移）。*/
+  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体，底部让出 var(--kb-lift)，
+     搜索框居中在键盘上方的可视区里。勿改回 position:fixed（挂 body 会与壳体脱钩）。*/
   position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: rgba(0, 0, 0, 0.18); z-index: 100; display: none;
   align-items: center; justify-content: center;
+  padding-bottom: var(--kb-lift, 0px);
 }
 #search-overlay.show { display: flex; }
 #search-box {
@@ -1939,7 +1952,7 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
 
   /* 主区留白收窄，首条消息避开汉堡按钮（汉堡本体样式见上方「汉堡按钮」节，全视口共用） */
   #chat-scroll { padding: 16px 12px 8px; }
-  #chat-area.in-session #chat-scroll { padding-top: 60px; padding-bottom: 140px; } /* 2026-08-21 dsh 高胶囊：docked bar 高度增加，同步留足底边距 */
+  #chat-area.in-session #chat-scroll { padding-top: 60px; padding-bottom: calc(140px + var(--kb-lift, 0px)); } /* 2026-08-21 dsh 高胶囊：docked bar 高度增加，同步留足底边距；键盘节同上补偿 */
   #messages { max-width: 100%; }
   .msg .body { max-width: 88%; }
   /* 手机（≤720px）：空态 stage = 88% 包含块主导（去掉 620px 上限）；输入栏在 stage 内相对定位
@@ -2079,10 +2092,11 @@ body.touch .folder-head .folder-add { display: inline-flex; } /* 真触屏恒显
 /* 共用壳：#rename-modal（会话/文件重命名、新建名称）与 #dl-modal（大文件下载确认）同一套
    mask/dialog/header/body/footer 骨架，差异只在 body 内容（input vs 纯文本）。 */
 :is(#rename-modal, #dl-modal) {
-  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体 ≡ 可视窗（键盘节：壳体已收到键盘上沿），
-     对话框在可视窗内居中。勿改回 position:fixed（挂 body 会与壳体脱钩，随键盘下移）。*/
+  /* 键盘适配：absolute inset:0 于 #app 内 ⇒ 遮罩 ≡ 壳体，底部再让出 var(--kb-lift)，
+     对话框就居中在键盘上方的可视区里。勿改回 position:fixed（挂 body 会与壳体脱钩）。*/
   position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000;
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 24px calc(24px + var(--kb-lift, 0px));
 }
 :is(#rename-modal, #dl-modal)[hidden] { display: none; }
 :is(#rename-modal, #dl-modal) .mask { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.24); backdrop-filter: blur(2px); }

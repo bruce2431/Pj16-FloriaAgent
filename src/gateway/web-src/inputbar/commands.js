@@ -6,7 +6,7 @@ import { mentionPathToken } from '../core/mention-syntax.js'
 import { findSession, hashOf } from '../engine/sessions.js'
 import { inputEl, state, ALL } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject } from '../core/util.js'
-import { pendingImages } from './images.js'
+import { pendingImages, uploadedMentionItems } from './images.js'
 import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
@@ -209,9 +209,13 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
       pickSearchKick(() => { if (cmd.open) renderCmdPop() }) // 清单未跑完 → 流式补渲
       return items
     }
-    // 首屏入口：两个上传动作 + 四类入口
+    // 首屏入口：两个上传动作 + 已上传附件的引用行 + 四类入口
     items.push({ kind: 'imgpick', name: pendingImages.length ? '继续选择图片…' : '选择图片…', desc: pendingImages.length ? `已选 ${pendingImages.length}/9 · 自动压缩` : '一次最多 9 张，自动压缩', grp: '上传' })
     items.push({ kind: 'filepick', name: '上传文件…', desc: '任意类型可多选 · 存入 file-cache/（按会话）', grp: '上传' })
+    // 已上传附件的引用行（2026-11-01 根因）：此前只有 @ 后**再输查询词**才经 mentionItems 列出，
+    // 首屏看不到刚传的图 → 用户实测「上传的图片 @ 这个渲染缺失」。数据源与 @ 搜索同一份
+    // （images.js uploadedMentionItems），只列行不渲缩略图（2026-10-22 定案：缩略图只在底栏胶囊）。
+    items.push(...uploadedMentionItems().map((it) => ({ ...it, desc: it.attKind === 'img' ? '插入图片引用' : '插入文件引用', grp: '上传' })))
     // 首屏四个入口是导航不是数据：底栏有文字也不过滤（否则「有文字点 +」会只剩上传两行，像坏了）
     for (const v of CMD_VIEWS) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
     return items
@@ -284,7 +288,7 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
         const gh = flat || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
         return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}</button>`
@@ -356,6 +360,8 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
     if (cmd.mentionMode) { if (it.kind !== 'pathwait') selectMentionItem(it); return }
     if (it.kind === 'imgpick') { $('img-file').click(); return }
     if (it.kind === 'filepick') { $('file-upload').click(); return }
+    // 已上传附件引用行（+ 模式）：引用原文追加到输入栏末尾（@ 模式走上方的 selectMentionItem 就地替换）。
+    if (it.kind === 'attref') { composerAppendText(it.md + ' '); closeCmdPop(); return }
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
     // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
     // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。

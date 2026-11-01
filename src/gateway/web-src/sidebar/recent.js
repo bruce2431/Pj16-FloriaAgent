@@ -94,8 +94,9 @@ import { renderList, renderProject } from './mgr.js'
     // 2026-09-26 行操作入口 = 右键（桌面）/ 长按（触屏）唤出浮窗，三点按钮已删除（见 openRowMenu）
     // 置顶标记只在调用方显式要求时渲染（work 侧栏传 true）——chat 侧栏即使同一会话已置顶也不出图钉
     const pinIco = showPin && isPinned(hashOf(s)) ? `<span class="pin-ico" title="已置顶">${I.dshPin}</span>` : ''
+    // 置顶图钉在行尾（2026-11-01 用户定案，照 dsh）：标题从行首正常起排、省略号区域不被图钉侵占
     return `<button class="sess-item${on ? ' on' : ''}" data-hash="${esc(hashOf(s))}" title="${esc(s.file)}">
-      <span class="dot${dotCls}"></span>${pinIco}<span class="title">${esc(s.title)}</span>${projTag}</button>`
+      <span class="dot${dotCls}"></span><span class="title">${esc(s.title)}</span>${projTag}${pinIco}</button>`
   }
 
   // ---------- 真触屏判定（2026-09-05）：iPadOS Safari 桌面模式报 hover:hover+pointer:fine（与 macOS

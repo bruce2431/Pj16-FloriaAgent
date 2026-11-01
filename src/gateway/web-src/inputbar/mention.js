@@ -45,7 +45,7 @@ import { MGR } from '../sidebar/mgr-data.js'
   // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
   // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
   // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
-  const GROUP_OF = { imgpick: '上传', filepick: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
+  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
   function groupOf(it) {
     return GROUP_OF[it.kind] || '指令'
   }
@@ -365,7 +365,8 @@ import { MGR } from '../sidebar/mgr-data.js'
       return
     }
     // 已上传附件（待办 6）：把正文 md 引用原文写回 doc（与自动插入同一形态，CM 行内直渲）。
-    if (it.kind === 'imgpick' || it.kind === 'filepick') {
+    // kind=attref（images.js uploadedMentionItems 唯一产出）；imgpick/filepick 只作首屏上传动作行。
+    if (it.kind === 'attref') {
       const pos = cmView ? cmView.state.selection.main.from : mention.anchor
       composerReplaceRange(mention.anchor, pos, it.md + ' ')
       closeMentionPop()
