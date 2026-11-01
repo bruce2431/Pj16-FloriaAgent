@@ -307,8 +307,11 @@ import { renderList, renderProject } from './mgr.js'
     let ly = r ? r.bottom + 4 : y
     const w = pop.offsetWidth
     const h = pop.offsetHeight
+    // 越界下限取**可视**视口底（键盘上沿）：innerHeight 是布局视口，键盘在场不缩，按它 clamp 会落进键盘后。
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
     lx = Math.max(8, Math.min(lx, window.innerWidth - w - 8))
-    ly = Math.max(8, Math.min(ly, window.innerHeight - h - 8))
+    ly = Math.max(8, Math.min(ly, viewBottom - h - 8))
     pop.style.left = Math.round(lx) + 'px'
     pop.style.top = Math.round(ly) + 'px'
     pop.addEventListener('click', (e) => {

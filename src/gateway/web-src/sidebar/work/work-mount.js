@@ -186,7 +186,7 @@
       e.stopPropagation()
       const b = e.target.closest('[data-wkproj]')
       if (!b) return
-      // 每行都是 findProjects 的一个真 label（含工作区根「全局根 · 散装对话」）——统一走 selectProject
+      // 每行都是 findProjects 的一个真项目 label（长期/临时两组，不含工作区根 · 散装对话）——统一走 selectProject
       selectProject(b.dataset.wkproj)
     })
     // 侧栏收起钮：与 chat 的 #panel-collapse 同语义（只管把侧栏收起；再开走折叠态的汉堡）

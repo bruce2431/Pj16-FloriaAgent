@@ -1,3 +1,4 @@
+import { isTempProjLabel } from '../../core/util.js'
 import { activePreviewFrame, setPreviewActiveHook, setRailExtItems, takePendingCardPayload, warmProjectBackend } from '../../feature/preview-frame.js'
 import { renderRailExt } from '../rail-ext.js'
 // 右栏预览与工具页态：预览帧挂载 renderWorkPreview / 页态唯一写口 setPvPane（setPvTab 与侧栏 api setPane('workspace') 是它的入口）/ 顶栏工具栏胶囊 + tab 条渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
@@ -42,6 +43,10 @@ import { renderRailExt } from '../rail-ext.js'
     if (body) body.hidden = !!tool && !!tool.pane
     const cap = $('wk-tb-tool')
     if (!cap) return
+    // 临时项目（根级时间戳任务区）不渲染工具栏胶囊（2026-10-30 用户定案）：右栏在 applyPanes 已被收掉，
+    // 这里只管胶囊本身显隐。CSS 须显式 `#wk-tb-tool[hidden]{display:none}`——`.wk-tb-pill` 的
+    // `display:inline-flex` 会盖掉 UA 的 `[hidden]`。
+    cap.hidden = isTempProjLabel(state.workProj)
     const on = state.wkPreview
     cap.classList.toggle('on', on)
     cap.title = on ? '关闭' : '工具栏'

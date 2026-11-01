@@ -19,11 +19,19 @@ import { state } from './ui-state.js'
     timer = setTimeout(() => (toastEl.hidden = true), 2600)
   }
 
+  // 临时项目 = 根级时间戳任务区（`<YYYYMMDDHHMMSS>-名称`，后端 findProjects 一并产出为 scope='project'）。
+  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、工具栏胶囊不渲染、新建会话也落
+  // 全局根（2026-10-30 用户定案）。判据只认 label 形态这一条，不新增 scope 值。
+  const TEMP_PROJ_RE = /^\d{8,14}-/
+  const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')
+
   // 新会话的落项目（唯一真源）：work 模式 = 「在项目中工作」，目标项目恒 = 工作项目（state.workProj）；
   // 其余情况 = chat 侧栏/初始界面选的 state.newProject（null = 全局）。所有建会话/上传的落项目判定
   // 都读本函数——写死 state.newProject 的消费点会在 work 模式下漏掉工作项目（会话落到全局）。
+  // 临时项目例外：返回空串（= 全局根），否则新会话带临时项目 label，会从「展示全局会话」的列表里消失。
   function newSessionProject() {
-    return state.sbMode === 'work' && state.workProj ? state.workProj : state.newProject
+    if (state.sbMode !== 'work' || !state.workProj) return state.newProject
+    return isTempProjLabel(state.workProj) ? '' : state.workProj
   }
 
   // 手机端（≤720px）：侧栏为全屏抽屉，选择会话后自动收起
@@ -35,6 +43,7 @@ import { state } from './ui-state.js'
 export {
   esc,
   isMobile,
+  isTempProjLabel,
   isTouch,
   newSessionProject,
   toast,

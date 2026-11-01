@@ -51,8 +51,8 @@
   // **绝不 reparent**：卡里挂着 engine/state.js 模块级 const 引用的 messagesEl / inputWrap / charEl 单例，
   // 搬 DOM 会丢消息流与输入草稿（Pj18 #chat-pane 的同款约束）。
   // 锚点 = 当前可见的下沉内容栏（文件 tab 的 #work-editor）→ 整个 #chat-area；预览列固定最右不参与。
-  // 坐标一律在 #chat-area 局部系算：#app 在键盘态被 transform（body.kb-open），position:fixed 的视口
-  // 坐标会整体漂走，故用 absolute + #chat-area（position:relative）作包含块，左右上下全数相减。
+  // 坐标一律在 #chat-area 局部系算：用 absolute + #chat-area（position:relative）作包含块，左右上下
+  // 全数相减——与壳体（body）在键盘态怎么定位无关，量到的恒是局部几何。
   const WK_ASSIST_PAD = 8      // 浮卡/输入栏与锚栏左右各留的白
   const WK_ASSIST_BOT = 24     // 距主区底部的距离（浮卡写 top、输入栏写 bottom，两态共用这一个值）
   // 正常底栏（#input-wrap.docked）在会话卡内的底距：top: calc(100% - 22px) —— 收敛输入栏要与它
@@ -75,6 +75,12 @@
     const b = chatArea.getBoundingClientRect()
     return b.width > 0 ? b : null
   }
+  // 浮卡尺寸上限的基准高 = **可视**视口高：键盘在场时布局视口（innerHeight）不缩，按它算上限会让
+  // 浮卡比可见区还高、上下被键盘裁掉。visualViewport 是键盘几何唯一真源（同 engine/viewport.js）。
+  function wkViewportH() {
+    const vv = window.visualViewport
+    return Math.round(vv && vv.height > 0 ? vv.height : window.innerHeight)
+  }
   // 锚点 = 当前可见的下沉内容栏（文件 tab 的 #work-editor）→ 整个 #chat-area。预览列固定最右、
   // 不再作锚（浮卡不会压到它）；#work-editor 仅在文件 tab 正在显示时有宽（够宽才算「正在看的栏」）。
   function wkAssistAnchor() {
@@ -89,7 +95,7 @@
     return Math.max(WK_ASSIST_MIN_W, Math.round(a.width - WK_ASSIST_PAD * 2))
   }
   function wkAssistH() {
-    const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+    const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
     return Math.max(WK_ASSIST_MIN_H, Math.min(state.wkAssistH || 430, max))
   }
   function wkClearAssistBox() {
@@ -133,7 +139,7 @@
     put(wkAssistH())
     const d = wkFloatEmptyDeficit()
     if (d > 0.5) {
-      const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+      const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
       put(Math.min(wkAssistH() + 2 * d, Math.max(max, WK_ASSIST_MIN_H)))
     }
   }
@@ -207,7 +213,7 @@
           dragging = true
           document.body.classList.add('wk-assist-dragging') // ③ 拖拽期关掉内嵌内容 pointer-events
         }
-        const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+        const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
         state.wkAssistH = Math.round(Math.max(WK_ASSIST_MIN_H, Math.min(max, startH + (ev.clientY - y0))))
         wkPlaceAssistFloat()
       }

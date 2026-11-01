@@ -11,13 +11,18 @@
   const $ = (id) => document.getElementById(id)
 
   // 2026-10-24 收口：图标表（I + fileIcon）整体移入 UI 基础包
-  // `SubPj1-遥测网页/packages/web/src/icons.js`，产物 /webui/floria-web.iife.js 先于 app.js 同步加载并挂
+  // `SubPj1-FloriaWebUI安装包开发/packages/web/src/icons.js`，产物 /webui/floria-web.iife.js 先于 app.js 同步加载并挂
   // window.FloriaWeb。缺包即抛错（不回落本地副本——回落会让两份图标表各自漂移）。
   if (!window.FloriaWeb) throw new Error('@floria/web 包未加载（/webui/floria-web.iife.js 须先于 app.js）')
   const {
     I,
     fileIcon,
   } = window.FloriaWeb
+
+  // 页面壳 / 搜索 / 分类 / 卡片 / 动作位 / 详情头的结构与绑定在包内（mgr.js + mgr.css），
+  // 业务侧只提供数据与回调。缺包即抛错（不回落本地副本）。
+  if (!window.FloriaWeb) throw new Error('@floria/web 包未加载（/webui/floria-web.iife.js 须先于 app.js）')
+  const MgrUI = window.FloriaWeb.mgr
 
   // ---------- 管理视图数据源（2026-08-15 起接后端 /gateway/plugins：真实已安装插件/技能 + 官方市场） ----------
   // 结构镜像后端返回：{ plugins:{personal,public}, skills:{personal,public} }，每项 {n, d, v, inst}。
@@ -87,12 +92,7 @@
     }
     return MODELS
   }
-  const MGR_PALETTE = ['#5b8ff9', '#61a1c2', '#7b6bd6', '#5aa57a', '#d98a4a', '#c96a6a', '#4aa3a0', '#a06ba8', '#6b8f71', '#b48a5a']
-  function mgrColor(n) {
-    let h = 0
-    for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0
-    return MGR_PALETTE[h % MGR_PALETTE.length]
-  }
+  // 色块取色（mgrColor）已随管理页通用 UI 收进 @floria/web 包（mgr.color），本层不再持有第二份调色板。
   // 供应商判定（2026-10-05 自 views/cards/models/models-card.js 迁入数据层——模型卡与输入栏模型菜单
   // 共用唯一一份；卡片去兄弟子系统横向依赖后经此取用）。key 优先（模型类环境变量名带供应商前缀），
   // 通用 model 键或未命中则按模型串前缀。
@@ -974,11 +974,19 @@ function setConnUp(v) { connUp = v }
     timer = setTimeout(() => (toastEl.hidden = true), 2600)
   }
 
+  // 临时项目 = 根级时间戳任务区（`<YYYYMMDDHHMMSS>-名称`，后端 findProjects 一并产出为 scope='project'）。
+  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、工具栏胶囊不渲染、新建会话也落
+  // 全局根（2026-10-30 用户定案）。判据只认 label 形态这一条，不新增 scope 值。
+  const TEMP_PROJ_RE = /^\d{8,14}-/
+  const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')
+
   // 新会话的落项目（唯一真源）：work 模式 = 「在项目中工作」，目标项目恒 = 工作项目（state.workProj）；
   // 其余情况 = chat 侧栏/初始界面选的 state.newProject（null = 全局）。所有建会话/上传的落项目判定
   // 都读本函数——写死 state.newProject 的消费点会在 work 模式下漏掉工作项目（会话落到全局）。
+  // 临时项目例外：返回空串（= 全局根），否则新会话带临时项目 label，会从「展示全局会话」的列表里消失。
   function newSessionProject() {
-    return state.sbMode === 'work' && state.workProj ? state.workProj : state.newProject
+    if (state.sbMode !== 'work' || !state.workProj) return state.newProject
+    return isTempProjLabel(state.workProj) ? '' : state.workProj
   }
 
   // 手机端（≤720px）：侧栏为全屏抽屉，选择会话后自动收起
@@ -4038,8 +4046,11 @@ function setLastNavHash(v) { lastNavHash = v }
     let ly = r ? r.bottom + 4 : y
     const w = pop.offsetWidth
     const h = pop.offsetHeight
+    // 越界下限取**可视**视口底（键盘上沿）：innerHeight 是布局视口，键盘在场不缩，按它 clamp 会落进键盘后。
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
     lx = Math.max(8, Math.min(lx, window.innerWidth - w - 8))
-    ly = Math.max(8, Math.min(ly, window.innerHeight - h - 8))
+    ly = Math.max(8, Math.min(ly, viewBottom - h - 8))
     pop.style.left = Math.round(lx) + 'px'
     pop.style.top = Math.round(ly) + 'px'
     pop.addEventListener('click', (e) => {
@@ -4593,9 +4604,13 @@ function setFirstSendHash(v) { firstSendHash = v }
   function renderSearch() {
     const q = sInput.value.trim().toLowerCase()
     const inWork = searchInWork()
+    // work 下范围 = 当前工作项目的会话；临时项目（根级时间戳任务区）的范围 = 全局根散装会话
+    // （与侧栏聊天列表 / workScopeOk 同一判据，2026-10-30）。
+    const temp = isTempProjLabel(state.workProj)
+    const inScope = (s) => (temp ? s.projectScope === 'global' : s.projectScope === 'project' && s.projectLabel === state.workProj)
     const rows = sorted().filter(
       (s) =>
-        (!inWork || (s.projectScope === 'project' && s.projectLabel === state.workProj)) &&
+        (!inWork || inScope(s)) &&
         (!q || s.title.toLowerCase().includes(q) || (s.projectLabel || '').toLowerCase().includes(q)),
     )
     const sessHtml = rows
@@ -5060,10 +5075,11 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 详情页状态是卡内瞬态（MGR_DETAIL，模块级、不落盘）：切 kind/cat/搜索/刷新均回列表。
   let MGR_DETAIL = null // { kind, key }；key = 名称（插件/技能）或应用 id
   let PLUGINS_CTX = null // 当前挂载 ctx（列表/详情互跳的唯一重渲口）
+  let PLUGINS_BODY = null // 当前卡体（网格局部重渲的落点，卡外 refreshCard 也走它）
 
   const pluginsCardDef = {
     id: 'plugins', title: '插件', tip: '插件 / 技能 / 应用', icon: 'plug', tab: true,
-    mount(body, ctx) { PLUGINS_CTX = ctx; renderMgrPlugins(body, ctx) },
+    mount(body, ctx) { PLUGINS_CTX = ctx; PLUGINS_BODY = body; renderMgrPlugins(body, ctx) },
     refresh() { renderMgrGrid() },
   }
   registerCard(pluginsCardDef)
@@ -5079,136 +5095,102 @@ function setFirstSendHash(v) { firstSendHash = v }
       : v.kind === 'skills'
         ? '个人 = 已安装技能（扫描便携根 .claude/skills）· 公开 = 官方市场技能'
         : '个人 = 已安装插件（扫描便携根 .claude/plugins）· 公开 = 官方市场插件'
-    body.innerHTML =
-      '<div class="mgr-pane">' +
+    MgrUI.browse(body, {
       // 顶层切换＝「插件 / 技能 / 应用」三态：应用与插件/技能同轴，故并入同一段控件（原在公开/个人行）
-      '<div class="mgr-top">' +
-      '<div class="mgr-kind">' +
-      `<button class="mgr-kind-btn${v.kind === 'plugins' ? ' on' : ''}" data-kind="plugins">插件</button>` +
-      `<button class="mgr-kind-btn${v.kind === 'skills' ? ' on' : ''}" data-kind="skills">技能</button>` +
-      `<button class="mgr-kind-btn${v.kind === 'apps' ? ' on' : ''}" data-kind="apps">应用</button>` +
-      '</div>' +
-      '</div>' +
-      `<div class="mgr-head"><h2 class="mgr-title">${kindName}</h2><div class="mgr-sub">${sub}</div></div>` +
-      `<div class="mgr-search">${I.mag}<input id="mgr-q" type="text" placeholder="${isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…'}" value="${esc(v.q)}"></div>` +
+      kinds: [
+        { id: 'plugins', label: '插件' },
+        { id: 'skills', label: '技能' },
+        { id: 'apps', label: '应用' },
+      ],
+      kind: v.kind,
+      title: kindName,
+      sub,
+      search: {
+        placeholder: isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…',
+        value: v.q,
+      },
       // 公开/个人只对「插件 / 技能」轴有意义，应用态不显示该行
-      (isApps
-        ? ''
-        : '<div class="mgr-cats">' +
-          `<button class="mgr-cat${v.cat === 'public' ? ' on' : ''}" data-cat="public">公开</button>` +
-          `<button class="mgr-cat${v.cat === 'personal' ? ' on' : ''}" data-cat="personal">个人</button>` +
-          '</div>') +
-      '<div class="mgr-grid" id="mgr-grid"></div>' +
-      `<div class="mgr-foot">${isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描'}</div>` +
-      '</div>'
+      cats: isApps ? [] : [{ id: 'public', label: '公开' }, { id: 'personal', label: '个人' }],
+      cat: v.cat,
+      foot: isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描',
+      onKind(id) { v.kind = id; saveMgrView(); ctx.rerender() },
+      onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
+      onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
+      onItem(key) { openDetail(key) },
+      onAction(key) { toggleApp(key) },
+      onRetry() { loadMgrData(true) },
+    })
     renderMgrGrid()
     if (!isApps) loadMgrData(false) // 真实数据：首次进入拉取，刷新按钮 force 重拉（应用目录由 registry 拉）
-    const pane = body.querySelector('.mgr-pane')
-    pane.querySelectorAll('.mgr-kind-btn').forEach((b) =>
-      b.addEventListener('click', () => {
-        v.kind = b.dataset.kind
-        saveMgrView()
-        ctx.rerender()
-      }),
-    )
-    pane.querySelectorAll('.mgr-cat').forEach((b) =>
-      b.addEventListener('click', () => {
-        v.cat = b.dataset.cat
-        saveMgrView()
-        ctx.rerender()
-      }),
-    )
-    const q = $('mgr-q')
-    if (q) q.addEventListener('input', () => { v.q = q.value; saveMgrView(); renderMgrGrid() })
   }
 
   // ---------- 列表 ----------
   // 插件/技能/应用卡片网格（按 kind + cat + 搜索词过滤；应用数据源 = registry 的 APP_CATALOG）
   function renderMgrGrid() {
+    if (PLUGINS_BODY) MgrUI.grid(PLUGINS_BODY, gridOpts())
+  }
+
+  // 网格数据：结构/绑定在包（MgrUI.grid），本函数只做业务过滤与条目映射。
+  function gridOpts() {
     const v = state.mgrView
-    const grid = $('mgr-grid')
-    if (!grid) return
     // 「应用」kind：列出工作区根申报的全部应用，右侧 + / ✓ 切换启用（启用即侧栏出现该应用 tab）
     if (v.kind === 'apps') {
       const q = (v.q || '').trim().toLowerCase()
       const rows = appCatalog().filter((a) => !q || a.title.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
-      grid.innerHTML = rows.length
-        ? rows.map(appCardHtml).join('')
-        : '<div class="mgr-empty">没有匹配的应用（工作区根 .claude/preview/preview.json 未申报应用）</div>'
-      bindGrid(grid)
-      return
+      return {
+        items: rows.map(appItem),
+        empty: '没有匹配的应用（工作区根 .claude/preview/preview.json 未申报应用）',
+        onItem: openDetail,
+        onAction: toggleApp,
+      }
     }
     const label = v.kind === 'skills' ? '技能' : '插件'
-    if (MGR_LOADING) {
-      grid.innerHTML = '<div class="mgr-empty">加载真实清单中…</div>'
-      return
-    }
-    if (MGR_ERR) {
-      grid.innerHTML =
-        '<div class="mgr-empty">清单加载失败：' + esc(MGR_ERR) +
-        '<br><button class="mgr-retry" id="mgr-retry">重试</button></div>'
-      const retry = $('mgr-retry')
-      if (retry) retry.addEventListener('click', () => loadMgrData(true))
-      return
-    }
+    if (MGR_LOADING) return { loading: '加载真实清单中…' }
+    if (MGR_ERR) return { error: { message: MGR_ERR }, onRetry: () => loadMgrData(true) }
     const src = (MGR && MGR[v.kind] && MGR[v.kind][v.cat]) || []
     const q = (v.q || '').trim().toLowerCase()
-    const rows = q ? src.filter((x) => x.n.toLowerCase().includes(q) || x.d.toLowerCase().includes(q)) : src
-    grid.innerHTML = rows.length
-      ? rows.map(mgrCardHtml).join('')
-      : `<div class="mgr-empty">没有匹配的${label}</div>`
-    bindGrid(grid)
+    const rows = q ? src.filter((x) => x.n.toLowerCase().includes(q) || (x.d || '').toLowerCase().includes(q)) : src
+    return {
+      items: rows.map(pluginItem),
+      empty: `没有匹配的${label}`,
+      onItem: openDetail,
+    }
   }
-  // 网格事件委托：点卡身进详情；点动作位（应用启停）只切启用态，不进详情
-  function bindGrid(grid) {
-    grid.querySelectorAll('.mgr-card').forEach((card) =>
-      card.addEventListener('click', (e) => {
-        const act = e.target.closest('.mgr-act-btn')
-        const v = state.mgrView
-        if (act) {
-          if (v.kind !== 'apps' || !act.dataset.app) return
-          e.stopPropagation()
-          setAppEnabled(act.dataset.app, !isAppEnabled(act.dataset.app))
-          renderMgrGrid() // 启用态只影响本网格按钮，局部重渲即可（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）
-          return
-        }
-        MGR_DETAIL = { kind: v.kind, key: card.dataset.key }
-        if (PLUGINS_CTX) PLUGINS_CTX.rerender()
-      }),
-    )
+
+  function openDetail(key) {
+    MGR_DETAIL = { kind: state.mgrView.kind, key }
+    if (PLUGINS_CTX) PLUGINS_CTX.rerender()
   }
-  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}
-  function mgrCardHtml(x) {
-    return (
-      `<div class="mgr-card" data-key="${esc(x.n)}" data-kind="item">` +
-      `<div class="mgr-ic" style="background:${mgrColor(x.n)}">${esc((x.n[0] || '?').toUpperCase())}</div>` +
-      `<div class="mgr-meta"><div class="mgr-name">${esc(x.n)}</div><div class="mgr-desc">${esc(x.d || '暂无描述')}</div></div>` +
-      actBtnHtml(!!x.inst, { title: x.inst ? '已安装' : '未安装' }) +
-      '</div>'
-    )
-  }
-  // 应用胶囊：+（未启用）/ ✓（已启用）为唯一动作；点卡身进详情。
-  // 图标 = 应用自己申报的 `icon`（preview.json → normExtCards → APP_CATALOG，见 ext-decl.js），
-  // 不按 id 上色块、不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
-  function appCardHtml(a) {
+
+  // 应用卡片：动作位是真开关。图标 = 应用自己申报的 `icon`（preview.json → normExtCards → APP_CATALOG，
+  // 见 ext-decl.js）；不按 id 上色块、不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
+  function appItem(a) {
     const on = isAppEnabled(a.id)
-    const ico = I[a.icon]
-    const icEl = ico
-      ? `<div class="mgr-ic ic">${ico}</div>`
-      : `<div class="mgr-ic" style="background:${mgrColor(a.id)}">${esc((a.title[0] || '?').toUpperCase())}</div>`
-    return (
-      `<div class="mgr-card" data-key="${esc(a.id)}" data-kind="app">${icEl}` +
-      `<div class="mgr-meta"><div class="mgr-name">${esc(a.title)}</div>` +
-      `<div class="mgr-desc">${esc(a.path)}</div></div>` +
-      actBtnHtml(on, { app: a.id, title: on ? '已启用（点击停用）' : '未启用（点击启用）' }) +
-      '</div>'
-    )
+    return {
+      key: a.id,
+      name: a.title,
+      desc: a.path,
+      icon: I[a.icon] || '',
+      action: { on, key: a.id, title: on ? '已启用（点击停用）' : '未启用（点击启用）' },
+    }
   }
-  // 动作位（Codex 风）：细线 +（未安装/未启用）/ ✓（已安装/已启用）。
-  // 插件/技能没有安装 API，此位是纯状态指示（点击落到卡身、进详情）；应用位是真开关（bindGrid 里拦）。
-  function actBtnHtml(on, opt) {
-    const app = opt && opt.app ? ` data-app="${esc(opt.app)}"` : ''
-    return `<button class="mgr-act-btn${on ? ' on' : ''}"${app} title="${esc((opt && opt.title) || '')}">${on ? I.dshCheck : I.dshPlus}</button>`
+
+  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}；动作位是纯状态指示（点击落到卡身、进详情）。
+  function pluginItem(x) {
+    return {
+      key: x.n,
+      name: x.n,
+      desc: x.d || '暂无描述',
+      action: { on: !!x.inst, title: x.inst ? '已安装' : '未安装' },
+    }
+  }
+
+  // 应用启停：启用态只影响本网格（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）；详情页内切换则整页重渲。
+  function toggleApp(key) {
+    if (!key) return
+    setAppEnabled(key, !isAppEnabled(key))
+    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
+    renderMgrGrid()
   }
 
   // ---------- 详情页（卡内子页；返回 = 清 MGR_DETAIL 重渲） ----------
@@ -5219,7 +5201,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       const a = appCatalog().find((x) => x.id === key)
       if (!a) return null
       return {
-        kind, key, ico: I[a.icon], color: mgrColor(a.id), initial: (a.title[0] || '?').toUpperCase(),
+        kind, key, ico: I[a.icon] || '', color: MgrUI.color(a.id), initial: (a.title[0] || '?').toUpperCase(),
         name: a.title, desc: '', ver: '', inst: isAppEnabled(a.id),
         typeLabel: '应用', sourceLabel: '工作区根 .claude/preview 申报',
         path: a.path, appId: a.id, installedLabel: isAppEnabled(a.id) ? '已启用' : '未启用',
@@ -5233,7 +5215,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const isSkill = kind === 'skills'
     const personal = v.cat === 'personal'
     return {
-      kind, key, ico: '', color: mgrColor(x.n), initial: (x.n[0] || '?').toUpperCase(),
+      kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
       name: x.n, desc: x.d || '', ver: x.v || '', inst: !!x.inst,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: personal ? '本地已安装' : '公开市场',
@@ -5245,9 +5227,6 @@ function setFirstSendHash(v) { firstSendHash = v }
   function renderMgrDetail(body, ctx) {
     const it = detailItem()
     if (!it) { MGR_DETAIL = null; return renderMgrPlugins(body, ctx) }
-    const icEl = it.ico
-      ? `<div class="mgr-dl-ic ic">${it.ico}</div>`
-      : `<div class="mgr-dl-ic" style="background:${it.color}">${esc(it.initial)}</div>`
     const info = [
       ['类型', it.typeLabel],
       ['来源', it.sourceLabel],
@@ -5255,43 +5234,39 @@ function setFirstSendHash(v) { firstSendHash = v }
       ['状态', it.installedLabel],
     ]
     if (it.path) info.push(['位置', it.path])
-    // 上游仓库（仅应用）：值可编辑，写回工作区根 .claude/preview/preview.json 的 cards[].repo。
-    // 展示为链接只认 http(s)——用户输入的串不得直接进 href（javascript: 等）。
+    // 详情头动作位：应用 = 真开关（key = appId）；插件/技能 = 状态指示（无 key，不可点）。
+    const action = it.appId
+      ? { on: it.inst, key: it.appId, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
+      : { on: it.inst, title: it.installedLabel }
+    MgrUI.detail(body, {
+      typeLabel: it.typeLabel,
+      name: it.name,
+      sub: `${it.typeLabel} · ${it.sourceLabel}`,
+      icon: it.ico,
+      color: it.color,
+      initial: it.initial,
+      action,
+      desc: it.desc,
+      info,
+      extraHtml: repoRowHtml(it),
+      onBack() { MGR_DETAIL = null; ctx.rerender() },
+      onAction(key) { toggleApp(key) },
+      onMounted(host) { bindRepoEdit(host, it, ctx) },
+    })
+  }
+
+  // 上游仓库（仅应用）：值可编辑，写回工作区根 .claude/preview/preview.json 的 cards[].repo。
+  // 展示为链接只认 http(s)——用户输入的串不得直接进 href（javascript: 等）。业务行 HTML 由本卡负责。
+  function repoRowHtml(it) {
+    if (!it.appId) return ''
     const safeRepo = /^https?:\/\/[^\s]+$/i.test(it.repo || '') ? it.repo : ''
-    const repoRow = it.appId
-      ? '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
-        (it.repo
-          ? (safeRepo
-            ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(it.repo)}</a>`
-            : `<span class="mgr-repo-plain">${esc(it.repo)}</span>`)
-          : '<span class="mgr-repo-empty">未填写</span>') +
-        `<button class="mgr-repo-edit" type="button">${it.repo ? '修改' : '填写'}</button></dd></div>`
-      : ''
-    body.innerHTML =
-      '<div class="mgr-pane mgr-detail">' +
-      `<div class="mgr-crumb"><button class="mgr-back">${I.collapse}<span>${it.typeLabel}</span></button><span class="mgr-crumb-sep">/</span><span class="mgr-crumb-cur">${esc(it.name)}</span></div>` +
-      '<div class="mgr-dl-hd">' + icEl +
-      `<div class="mgr-dl-hdmeta"><h2 class="mgr-dl-name">${esc(it.name)}</h2>` +
-      `<div class="mgr-dl-sub">${esc(it.typeLabel)} · ${esc(it.sourceLabel)}</div></div>` +
-      actBtnHtml(it.inst, { app: it.appId, title: it.appId ? (it.inst ? '已启用（点击停用）' : '未启用（点击启用）') : it.installedLabel }) +
-      '</div>' +
-      `<p class="mgr-dl-desc">${esc(it.desc || '暂无介绍。')}</p>` +
-      '<div class="mgr-dl-sec"><h3 class="mgr-dl-sech">信息</h3><dl class="mgr-dl-kv">' +
-      info.map(([k, val]) => `<div class="mgr-dl-kvrow"><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join('') +
-      repoRow +
-      '</dl></div>' +
-      '</div>'
-    bindRepoEdit(body, it, ctx)
-    const back = body.querySelector('.mgr-back')
-    if (back) back.addEventListener('click', () => { MGR_DETAIL = null; ctx.rerender() })
-    // 应用详情页的动作位是真开关：切启用态后就地重渲详情（不回落列表）
-    const act = body.querySelector('.mgr-act-btn')
-    if (act && act.dataset.app) {
-      act.addEventListener('click', () => {
-        setAppEnabled(act.dataset.app, !isAppEnabled(act.dataset.app))
-        ctx.rerender()
-      })
-    }
+    return '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
+      (it.repo
+        ? (safeRepo
+          ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(it.repo)}</a>`
+          : `<span class="mgr-repo-plain">${esc(it.repo)}</span>`)
+        : '<span class="mgr-repo-empty">未填写</span>') +
+      `<button class="mgr-repo-edit" type="button">${it.repo ? '修改' : '填写'}</button></dd></div>`
   }
 
   // 上游仓库编辑：点「填写/修改」就地换输入框；保存 = 读 preview.json（带 ETag 基线）→ 改该卡 repo →
@@ -5989,8 +5964,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     const r = snap.rect || { left: 0, bottom: 0 }
     const w = pop.offsetWidth
     const h = pop.offsetHeight
+    // 越界下限取**可视**视口底（键盘上沿）：innerHeight 是布局视口，键盘在场不缩，按它 clamp 会落进键盘后。
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
     pop.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px'
-    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, window.innerHeight - h - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, viewBottom - h - 8))) + 'px'
     const ta = pop.querySelector('.cmp-in')
     ta.focus()
     pop.addEventListener('mousedown', (e) => e.stopPropagation()) // 浮层内按下不算「点外部」
@@ -6334,10 +6312,13 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 工作项目，其会话的 projectLabel 就是该 label，与项目 label 空间不重叠（待办 #7 收尾，2026-10-15）。
   // 调用点 = 进入 work 模式 / 切换工作项目 / 路由渲染会话前（chat/route.js renderSession）。
   // 会话尚未落地（findSession 查无 = 列表未拉或刷新中）时不判——「未知」不等于「别的项目」。
+  // 临时项目（根级时间戳任务区）的在辖会话 = 全局根散装会话（它没有自有会话，见 work-files.js 列表口径）。
   function workScopeOk(hash) {
     if (state.sbMode !== 'work' || !state.workProj || !hash) return true
     const s = findSession(hash)
-    return !s || s.projectLabel === state.workProj
+    if (!s) return true
+    if (isTempProjLabel(state.workProj)) return s.projectScope === 'global'
+    return s.projectLabel === state.workProj
   }
   function enforceWorkScope() {
     if (!workScopeOk(state.currentHash)) navigate('#/')
@@ -6522,6 +6503,12 @@ function setFirstSendHash(v) { firstSendHash = v }
     const willFile = state.sbMode === 'work' && wkShownTab() === 'file'
     if (wasFile && !willFile) wkEdCaptureScroll()
     if (state.sbMode === 'work') {
+      // 临时项目（根级时间戳任务区）不提供右栏：工具栏胶囊不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
+      // 切项目留在场就是悬空态。归一只在这一处（布局落地 = 唯一写口），状态直接写、不再嵌套 applyPanes。
+      if (isTempProjLabel(state.workProj) && state.wkPreview) {
+        state.wkPreview = false
+        state.wkPvTab = ''
+      }
       if (!state.wkAssist && !state.workFile && !state.wkPreview) {
         state.wkAssist = true
         state.wkMainTab = 'chat'
@@ -6589,6 +6576,10 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (body) body.hidden = !!tool && !!tool.pane
     const cap = $('wk-tb-tool')
     if (!cap) return
+    // 临时项目（根级时间戳任务区）不渲染工具栏胶囊（2026-10-30 用户定案）：右栏在 applyPanes 已被收掉，
+    // 这里只管胶囊本身显隐。CSS 须显式 `#wk-tb-tool[hidden]{display:none}`——`.wk-tb-pill` 的
+    // `display:inline-flex` 会盖掉 UA 的 `[hidden]`。
+    cap.hidden = isTempProjLabel(state.workProj)
     const on = state.wkPreview
     cap.classList.toggle('on', on)
     cap.title = on ? '关闭' : '工具栏'
@@ -6834,8 +6825,8 @@ function setFirstSendHash(v) { firstSendHash = v }
   // **绝不 reparent**：卡里挂着 engine/state.js 模块级 const 引用的 messagesEl / inputWrap / charEl 单例，
   // 搬 DOM 会丢消息流与输入草稿（Pj18 #chat-pane 的同款约束）。
   // 锚点 = 当前可见的下沉内容栏（文件 tab 的 #work-editor）→ 整个 #chat-area；预览列固定最右不参与。
-  // 坐标一律在 #chat-area 局部系算：#app 在键盘态被 transform（body.kb-open），position:fixed 的视口
-  // 坐标会整体漂走，故用 absolute + #chat-area（position:relative）作包含块，左右上下全数相减。
+  // 坐标一律在 #chat-area 局部系算：用 absolute + #chat-area（position:relative）作包含块，左右上下
+  // 全数相减——与壳体（body）在键盘态怎么定位无关，量到的恒是局部几何。
   const WK_ASSIST_PAD = 8      // 浮卡/输入栏与锚栏左右各留的白
   const WK_ASSIST_BOT = 24     // 距主区底部的距离（浮卡写 top、输入栏写 bottom，两态共用这一个值）
   // 正常底栏（#input-wrap.docked）在会话卡内的底距：top: calc(100% - 22px) —— 收敛输入栏要与它
@@ -6858,6 +6849,12 @@ function setFirstSendHash(v) { firstSendHash = v }
     const b = chatArea.getBoundingClientRect()
     return b.width > 0 ? b : null
   }
+  // 浮卡尺寸上限的基准高 = **可视**视口高：键盘在场时布局视口（innerHeight）不缩，按它算上限会让
+  // 浮卡比可见区还高、上下被键盘裁掉。visualViewport 是键盘几何唯一真源（同 engine/viewport.js）。
+  function wkViewportH() {
+    const vv = window.visualViewport
+    return Math.round(vv && vv.height > 0 ? vv.height : window.innerHeight)
+  }
   // 锚点 = 当前可见的下沉内容栏（文件 tab 的 #work-editor）→ 整个 #chat-area。预览列固定最右、
   // 不再作锚（浮卡不会压到它）；#work-editor 仅在文件 tab 正在显示时有宽（够宽才算「正在看的栏」）。
   function wkAssistAnchor() {
@@ -6872,7 +6869,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     return Math.max(WK_ASSIST_MIN_W, Math.round(a.width - WK_ASSIST_PAD * 2))
   }
   function wkAssistH() {
-    const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+    const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
     return Math.max(WK_ASSIST_MIN_H, Math.min(state.wkAssistH || 430, max))
   }
   function wkClearAssistBox() {
@@ -6916,7 +6913,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     put(wkAssistH())
     const d = wkFloatEmptyDeficit()
     if (d > 0.5) {
-      const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+      const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
       put(Math.min(wkAssistH() + 2 * d, Math.max(max, WK_ASSIST_MIN_H)))
     }
   }
@@ -6990,7 +6987,7 @@ function setFirstSendHash(v) { firstSendHash = v }
           dragging = true
           document.body.classList.add('wk-assist-dragging') // ③ 拖拽期关掉内嵌内容 pointer-events
         }
-        const max = Math.round(window.innerHeight * WK_ASSIST_MAX_VH)
+        const max = Math.round(wkViewportH() * WK_ASSIST_MAX_VH)
         state.wkAssistH = Math.round(Math.max(WK_ASSIST_MIN_H, Math.min(max, startH + (ev.clientY - y0))))
         wkPlaceAssistFloat()
       }
@@ -7047,11 +7044,11 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 原取名 `projList` 与 inputbar/commands.js 的同名函数撞车（后者在后 ⇒ 覆盖本函数），
   // 本函数返回 group 对象数组、后者返回 label 字符串数组 ⇒ 下拉渲染出 7 行空按钮。
   // 由 `probes/probe-web-module-scope.ts` 看住这条不变量。
-  // 项目列表 = findProjects 的全部组：scope==='project' 的各项目 + scope==='global' 的工作区根
-  // （label「全局根 · 散装对话」）。工作区根 = 一个特殊项目，与项目同构走同一条文件树/会话链
-  // （待办 #7 收尾，2026-10-15）——两 scope 的 label 空间不重叠，故按唯一 label 命中即够。
+  // 项目列表 = findProjects 中 scope==='project' 的组（Pj 长期项目 + 根级时间戳任务区，一视同仁平铺）。
+  // 工作区根「全局根 · 散装对话」不进这份列表（2026-10-30 用户定案：work 项目选择器只给项目，
+  // 散装区不占一格；后端仍照旧产出该组，散装会话/笔新建/全局预览不受影响）。
   function wkProjGroups() {
-    return (state.projects || []).filter((g) => g && g.label && (g.scope === 'project' || g.scope === 'global'))
+    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
   }
 
   // 项目名 + 底部卡 + 下拉内容 = 同一份 state.projects 的同一次渲染（2026-09-25 修）。
@@ -7075,8 +7072,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     const box = $('wk-proj-pop')
     if (!box) return
     const ps = wkProjGroups()
-    // 工作区根（「全局根 · 散装对话」）与项目并列同一份 wkProjGroups（待办 #7 收尾）：不再另设
-    // 「工作区」行/第三态——它就是列表里的一行，选中即 selectProject(真 label)，走同一条项目链。
+    // 一张平铺列表：Pj 项目与根级时间戳项目不加分组标题、不分先后批次（2026-10-30 用户定案）。
+    // 每行统一 selectProject(真 label)，与项目/全局根同构的文件树、会话、预览链零特判。
     box.innerHTML = ps.length
       ? ps
           .map(
@@ -7129,8 +7126,14 @@ function setFirstSendHash(v) { firstSendHash = v }
       // 置顶排序（2026-10-18）：wkPins 命中的会话恒排在 sessCmp 之前（组内仍按 sessCmp：
       // 状态在线优先 + 创建时间新→旧）。只作用于 work 侧栏列表，chat 侧栏 renderList/renderProject 不变。
       const pinRank = (s) => (isPinned(hashOf(s)) ? 0 : 1)
+      // 临时项目（根级时间戳任务区）没有自有会话：列表改展示**全局根散装会话**（2026-10-30 用户定案）。
+      // 判据走同一枚 isTempProjLabel；新建会话也落全局根（core/util.js newSessionProject），故入列的
+      // 新会话就在这份列表里，不会「发完就消失」。
+      const temp = isTempProjLabel(state.workProj)
       const list = state.workProj
-        ? ALL.filter((s) => s.projectLabel === state.workProj).sort((a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b))
+        ? ALL.filter((s) => (temp ? s.projectScope === 'global' : s.projectLabel === state.workProj)).sort(
+            (a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b),
+          )
         : []
       // 新建入口 = tab 行工具区的加号（updateWkTools 控制显隐），列表顶部不再占一行大按钮
       if (!state.workProj) return '<div class="wk-empty">先在上方选择一个项目</div>'
@@ -11472,7 +11475,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       e.stopPropagation()
       const b = e.target.closest('[data-wkproj]')
       if (!b) return
-      // 每行都是 findProjects 的一个真 label（含工作区根「全局根 · 散装对话」）——统一走 selectProject
+      // 每行都是 findProjects 的一个真项目 label（长期/临时两组，不含工作区根 · 散装对话）——统一走 selectProject
       selectProject(b.dataset.wkproj)
     })
     // 侧栏收起钮：与 chat 的 #panel-collapse 同语义（只管把侧栏收起；再开走折叠态的汉堡）
@@ -14959,27 +14962,24 @@ async function addImageUrls(urls, target) {
   // 变量名不能叫 stageSync——拼接后全模块共享同一 IIFE 作用域，会与 chat/stage.js 的 function 声明重名。
   let stageSyncFn = () => {}
 
-  // ---------- 键盘弹出适配（2026-09-19）----------
-  // 不变量（五轮定案，用户「整个界面连侧栏一起上下」，要「整页平移」）：应用是一块**刚性板**，
-  // 键盘弹出时整体上移一个键盘高 —— 侧栏/背景/底栏连成一体走，内部零重排，只有消息流窗口收窄。
-  // 几何：L = html clientHeight（=100dvh，移动端键盘不改布局视口，只压可视视口）；浏览器为露出
-  // 焦点元素会让整个画面向上位移 pan —— 同一份位移落在两条**互斥**通道之一，随平台变：
-  //   iOS  ：上顶可视视口（vv.offsetTop > 0，页面不滚 ⇒ window.scrollY = 0）；
-  //   iPad ：滚布局视口（window.scrollY > 0，而 offsetTop 恒 0 不报）。
-  // 故 pan = max(offsetTop, scrollY)：取二者较大即浏览器实际施加的屏幕位移；**不可取和**——同源的
-  // 平台上两值会相等（iOS offsetTop 即滚动量），相加就把一份位移算两遍（over-lift）。max 对
-  // 「谁在报」不设赌注，两种平台都恰好取到那一份。
-  // 屏幕上的完整键盘高 total = L − vv.height（= kb + pan，**与浏览器怎么分配这份位移无关**）：
-  // 我们只写自己那份 kb = max(0, L − pan − vv.height)，剩下的 pan 由浏览器自己施加 ⇒ 两者之和
-  // 恒为 total，pan 再怎么变（含瞬时的「上顶→回落」）画面总位移都不变 ⇒ 不抖。**不抵消 pan**
-  // （四轮教训：用主线程写样式去抵消合成器线程的位移天生晚一帧，一帧错位就是「先向上→立即下拉
-  // →恢复」的往复；五轮再证：把该补的量补足，浏览器那半份就自然被吸收，无需迎战）。
-  // 可视窗：app 顶部被推出屏外的条带高 = total，故 app 内的可视窗 = [total, L]（--kb-total）——
-  // 消息流窗口（#chat-scroll margin-top）与三个覆盖层（top）同取此值；底栏恒在 app 底边（22px 口径），
-  // 空态底栏随 .g-stage 台面比例（76.75%）一并被顶起——都不再各自补位移。
-  // 相位（二轮）：--kb / --kb-total / kb-open 类全部在事件回调里**同步**写（只写样式属性，不读取
-  // 布局、不触发布局）；仅「弹层余量实测 + stageSync 占位重算」走 rAF 合帧（连续量、晚一帧不可见；
-  // 且逐事件量算 getBoundingClientRect 会强制布局，拖累上顶过程）。
+  // ---------- 键盘弹出适配（2026-11-01 重构：壳体跟随可视视口）----------
+  // 不变量（用户定案）：键盘弹出时**顶部不动、应用变矮到底栏贴键盘上沿**，不整页上移。
+  // 几何：L = html clientHeight（布局视口，移动端键盘不缩它）；浏览器为露出被聚焦元素会移动画面，
+  // 位移落在两条**互斥**通道之一，随平台变：
+  //   iOS / iPadOS：上顶**可视视口**（vv.offsetTop > 0）；
+  //   另有平台滚**布局视口**（window.scrollY > 0）。
+  // **只有 offsetTop 进公式**：壳体是 `body{position:fixed}`，布局滚动（scrollY）不移动 fixed 元素
+  // ——那份位移对本应用**视觉上不存在**；把它补进 top 就等于凭空把壳体往下推一个键盘高，
+  // 而浏览器一收滚动再推回 0 = 可见的「回弹」。所以 pan = max(0, vv.offsetTop) 单通道。
+  // 修法（行业通行做法，MDN VisualViewport「simulate position: device-fixed」/ openchamber /
+  // DSHA composer-keyboard-lift）：壳体直接**定位到可视视口矩形**——`body{position:fixed}` 取
+  //   height = vv.height，top = pan（把可视视口那份上顶在布局坐标里补回来）。
+  // 于是屏幕坐标恒等于 [0, vv.height]：顶边钉在屏顶，底边钉在键盘上沿。
+  // **纯可视视口派生**：appH/pan 只由 visualViewport 算出，不含任何自引用量（不读 #app
+  // 自身 rect、不用恒等式），故不存在「写样式→改测量→再写样式」的回环——这正是旧整页平移方案
+  // 抖动的根因（DSHA 记录：rect 已含自己施加的位移，不把已施加量加回去就会自激振荡）。
+  // 相位：--app-h / --app-pan / kb-open 全部在事件回调里**同步**写（只写样式属性，不读布局）；
+  // 「弹层余量实测 + stageSync 占位重算」走 rAF 合帧。
   // 底栏子件（三轮，用户「底栏的子部件也要适配」）：底栏上所有向上弹出的子件（@提及 / 命令菜单 /
   // 任务浮窗 / 项目·模型·上下文弹层）都贴在栏体上沿外展开，旧写法上限是 vh 或定值——vh 是布局
   // 视口，键盘在场不缩，键盘越高弹层上半截越落在可视区外（够不着）。统一出口 = settle 实测写
@@ -14987,24 +14987,23 @@ async function addImageUrls(urls, target) {
   // 键盘起落、底栏多行长高、空态↔会话态迁移全由这一条量算吸收，弹层不再各自复刻视口公式。
   // 以**底栏上沿**量 = 对所有子件都是安全上界（栏内 chip 系锚点更低、实际可用更多；取本值只会
   // 让内容多滚一点，绝不越出可视区）。
-  // 纯几何（探针直测本函数，勿复制公式）：L/vvH/vvTop/scrollY/scale/editing → { kb 我们补的位移,
-  // total 屏幕上完整键盘高 = app 顶部被推出屏外的条带高 = 可视窗顶在 app 内的偏移 }。
-  function kbGeometry(L, vvH, vvTop, scrollY, scale, editing) {
-    // 捏合缩放不是键盘：scale≠1 时 vv 同样变矮，必须排除（否则缩放会误当键盘抬底栏）
-    if (!editing || scale > 1.01) return { kb: 0, total: 0 }
-    // 浏览器位移的通道二选一（见文件头几何段）：offsetTop（上顶可视视口）或 scrollY（滚布局视口）。
-    // 取较大者为实际屏幕位移；两者均夹非负（本页无正常滚动，负值只可能来自回弹）。
-    const pan = Math.max(0, vvTop, scrollY)
-    const kb = Math.max(0, L - pan - vvH)
-    return { kb, total: kb + pan }
+  // 纯几何（探针直测本函数，勿复制公式）：L/vvH/vvTop/scale/editing
+  //   → { appH 壳体高, pan 壳体在布局坐标里的下移量 }。
+  // 无键盘/捏合缩放/非文本聚焦时原样返回 { appH: L, pan: 0 }（fail-open：不动壳体）。
+  function kbGeometry(L, vvH, vvTop, scale, editing) {
+    // 捏合缩放不是键盘：scale≠1 时 vv 同样变矮，必须排除（否则缩放会误当键盘缩壳）
+    if (!editing || scale > 1.01) return { appH: L, pan: 0 }
+    if (!(vvH > 0) || vvH >= L) return { appH: L, pan: 0 }   // 键盘未在场
+    // 只有可视视口上顶需要补（见文件头几何段）：壳体是 fixed，scrollY 不影响它的屏幕位置。
+    const pan = Math.max(0, vvTop)
+    return { appH: Math.round(vvH), pan: Math.round(pan) }
   }
 
-  // 弹层可用高度（纯几何，探针直测本函数，勿复制公式）：底栏上沿到屏顶的距离 − 呼吸常量。
-  // barTop = 底栏上沿在 **app 内** 的布局 y（由两个 rect 相减得来：app 自身的位移在差里自动抵消，
-  // 于是「位移落在上顶还是文档滚动」这个口径问题被消灭，量到的是纯布局量），lift = 应用整体视觉
-  // 上移量（= total）。margin 含弹层底距锚点的 gap(4~10px) 与顶部呼吸余量。
-  function popRoom(barTop, lift, margin) {
-    return Math.max(0, Math.round(barTop - lift - margin))
+  // 弹层可用高度（纯几何，探针直测本函数，勿复制公式）：底栏上沿在 **app 内** 的布局 y − 呼吸常量。
+  // barTop 由两个 rect 相减得来（底栏 rect 与 #app rect），壳体定位在哪个布局坐标里都会自动抵消，
+  // 量到的恒是「底栏上沿离 app 顶边多远」；app 顶边即屏顶，故它就是屏上可用高度。
+  function popRoom(barTop, margin) {
+    return Math.max(0, Math.round(barTop - margin))
   }
 
   // 编辑中判定：只有文本输入在场才会弹键盘（非文本聚焦不应触发任何位移）。
@@ -15024,26 +15023,32 @@ async function addImageUrls(urls, target) {
   // 故 --bar-room 已直接是「弹层可安全占用的高度」，消费点不必各自再减间距）
   const BAR_ROOM_MARGIN = 20
 
-  let lastTotal = 0   // 同步段算得的「屏幕上的完整键盘高」，供延迟段量算复用（避免回读 CSS 变量）
+  let lastGeom = ''   // 上一次写入的 {appH,pan} 指纹：恒等则零写，并作为抖动收敛环的停止判据
   let settleRaf = 0
 
-  // 应用段（同步段与延迟段共用）：读可视视口/滚动 → 写 --kb / --kb-total / kb-open。纯写样式属性，
-  // 不读元素布局（不触发布局）。
+  // 应用段（同步段与延迟段共用）：读可视视口/滚动 → 写 --app-h / --app-pan / kb-open。
+  // 纯写样式属性，不读元素布局（不触发布局）；返回值 = 几何是否变化。
   function applyGeometry() {
     const vv = window.visualViewport
-    if (!vv) return
+    if (!vv) return false
     const root = document.documentElement
-    const { kb, total } = kbGeometry(root.clientHeight, vv.height, vv.offsetTop, window.scrollY, vv.scale, isEditing())
-    lastTotal = total
-    root.style.setProperty('--kb', kb + 'px')
-    root.style.setProperty('--kb-total', total + 'px')
-    document.body.classList.toggle('kb-open', kb > 0) // 同时是「#app 位移」规则的开关（见 styles.css 键盘节）
+    const { appH, pan } = kbGeometry(root.clientHeight, vv.height, vv.offsetTop, vv.scale, isEditing())
+    const sig = appH + '/' + pan
+    if (sig !== lastGeom) {
+      lastGeom = sig
+      root.style.setProperty('--app-h', appH + 'px')
+      root.style.setProperty('--app-pan', pan + 'px')
+      document.body.classList.toggle('kb-open', appH < root.clientHeight)
+      return true
+    }
+    return false
   }
 
   // 同步段：与视觉变化同帧（事件回调内直调，接合视觉视口上顶/键盘起落）
   function syncKeyboard() {
-    applyGeometry()
+    applyGeometry()   // 同任务内先落一次（把「写完到下一帧」的空窗压到最小）
     scheduleSettle()
+    wakePin()         // 再挂收敛环，续跟后续帧
   }
 
   // 延迟段（rAF 合帧）：弹层余量实测 + 消息流占位/跟随按新几何重算
@@ -15052,16 +15057,16 @@ async function addImageUrls(urls, target) {
     const vv = window.visualViewport
     if (!vv) return
     // 二次应用：事件后一帧可视视口分量（尤其 iPad 那条 scrollY 通道）可能才落定，同步段拿到的是
-    // 中间态；此帧以最终值重算一次，把 --kb/--kb-total 收敛到位（applyGeometry 幂等，值未变即零写）。
+    // 中间态；此帧以最终值重算一次，把 --app-h/--app-pan 收敛到位（applyGeometry 幂等，值未变即零写）。
     applyGeometry()
     const wrap = document.getElementById('input-wrap')
     const app = document.getElementById('app')
     // 底栏上方可视余量（底栏子件的弹层收口唯一出口）：两个 rect 相减 = 底栏上沿在 app 内的布局 y，
-    // app 的位移（我们写的 --kb 与浏览器施加的上顶/滚动）在差里全部抵消 ⇒ 量到的与位移口径无关；
-    // 再减掉整体上移量 --kb-total，才是「离用户看到的顶边多远」。
+    // 壳体定位与浏览器施加的上顶/滚动在差里全部抵消 ⇒ 量到的与位移口径无关；app 顶边即屏顶，
+    // 故该值直接就是「底栏上沿离屏顶多远」。
     if (wrap && app) {
       const barTop = wrap.getBoundingClientRect().top - app.getBoundingClientRect().top
-      const barRoom = popRoom(barTop, lastTotal, BAR_ROOM_MARGIN)
+      const barRoom = popRoom(barTop, BAR_ROOM_MARGIN)
       document.documentElement.style.setProperty('--bar-room', barRoom + 'px')
       // composer 遮罩（#composer-mask）高度基准：底栏自身布局高（offsetHeight，不含 FLIP 期间施加
       // 在 #input-wrap 上的内联 scale 变换）。多行输入 / 接管卡长高时 ResizeObserver(wrap) → settle
@@ -15074,14 +15079,35 @@ async function addImageUrls(urls, target) {
 
   function scheduleSettle() { if (!settleRaf) settleRaf = requestAnimationFrame(settle) }
 
+  // 抖动收敛环（openchamber useMobileViewportPin 的 pinTracker 同法）：Safari 在键盘动画期间
+  // 可能不派发 visualViewport 事件，只靠事件会让壳体停在中间某帧。键盘在场的整段时间里逐帧复算
+  // （只写样式属性，零布局读取），几何连续 1s 不变才停 —— 键盘起落期帧帧对齐，静止期不耗电。
+  let pinRaf = 0, pinTimer = 0, pinUntil = 0
+  function pinTick() {
+    pinRaf = 0
+    if (applyGeometry()) pinUntil = performance.now() + 1000
+    if (performance.now() >= pinUntil) {
+      // 已静止：降级为低频巡检（键盘仍可能在打字后长高，如候选词条增高）
+      if (document.body.classList.contains('kb-open')) pinTimer = setTimeout(wakePin, 250)
+      return
+    }
+    pinRaf = requestAnimationFrame(pinTick)
+    scheduleSettle()
+  }
+  function wakePin() {
+    clearTimeout(pinTimer); pinTimer = 0
+    pinUntil = performance.now() + 1000
+    if (!pinRaf) pinRaf = requestAnimationFrame(pinTick)
+  }
+
   // 启动注册（app.js 启动序列调用）；无 visualViewport（旧浏览器）时零行为
   function initViewport() {
     const vv = window.visualViewport
     if (!vv) return
     vv.addEventListener('resize', syncKeyboard)
     vv.addEventListener('scroll', syncKeyboard) // 缩放/上顶改变 offsetTop，同样要同帧重算
-    // 位移落在**布局滚动**通道的平台（iPad）：window 滚动改的是 window.scrollY，vv 不派发事件，
-    // 必须另行监听，否则那条通道的键盘位移无人重算（symptom = 整页上移过冲）。
+    // 布局滚动不作为几何输入（fixed 壳体免疫），但某些平台键盘上顶只伴随 window 滚动事件、
+    // 不派 vv 事件 —— 这里只当**唤醒信号**（重算仍只读 visualViewport），无害且覆盖事件缺口。
     window.addEventListener('scroll', syncKeyboard)
     window.addEventListener('orientationchange', syncKeyboard)
     // 底栏自身「尺寸」类变化（多行长高 / 接管卡换高 / 窗口缩放的回流）同样要重量：--bar-room 取自
@@ -15090,12 +15116,12 @@ async function addImageUrls(urls, target) {
     const wrap = document.getElementById('input-wrap')
     if (wrap) {
       new ResizeObserver(scheduleSettle).observe(wrap)
-      // 「位移」类变化 ResizeObserver 看不到（观察者只报尺寸）：键盘收起 --kb 归零、空态↔会话态迁移
+      // 「位移」类变化 ResizeObserver 看不到（观察者只报尺寸）：键盘收起 --app-h 回满、空态↔会话态迁移
       // 都让 #input-wrap 的 top/transform 走 0.55s 过渡，而 settle 在事件后一帧读 rect，拿到的是动画
       // 中间值 —— 此时量出的 --bar-room 是「收起前」的小值，且其后不再有任何事件重量 ⇒ 值被钉死，
       // 底栏子件弹层上限 min(设计上限, --bar-room) 随之永久卡小、内容被 overflow 截断。
       // 守护不变量 = --bar-room 恒对应底栏**到位**后的位置；过渡结束即到位，故此刻重量一次。
-      // 只听 end：中断（transitioncancel）只会由新的 --kb/几何改动引起，那条路已各自排了 settle。
+      // 只听 end：中断（transitioncancel）只会由新的 --app-h/几何改动引起，那条路已各自排了 settle。
       wrap.addEventListener('transitionend', (e) => { if (e.target === wrap) scheduleSettle() })
     }
     syncKeyboard()
@@ -15287,8 +15313,11 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
     const r = snap.rect || { left: 0, bottom: 0 }
     const w = pop.offsetWidth
     const h = pop.offsetHeight
+    // 越界下限取**可视**视口底（键盘上沿）：innerHeight 是布局视口，键盘在场不缩，按它 clamp 会落进键盘后。
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
     pop.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px'
-    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, window.innerHeight - h - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, viewBottom - h - 8))) + 'px'
     pop.addEventListener('mousedown', (e) => e.stopPropagation()) // 浮窗内按下不算「点外部」
     pop.querySelectorAll('.qp-row').forEach((b) =>
       b.addEventListener('click', () => {

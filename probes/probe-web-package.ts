@@ -3,7 +3,7 @@
  * probe-web-package —— @floria/web UI 基础包与 Floria 的接缝不变量（2026-10-24）
  *
  * 结构锁点：
- *   1) 包在 `SubPj1-遥测网页/packages/web/`：src 只放无业务状态的底座（icons/dom/theme），
+ *   1) 包在 `SubPj1-FloriaWebUI安装包开发/packages/web/`：src 只放无业务状态的底座（icons/dom/theme），
  *      build.ts 产出 ESM + IIFE（window.FloriaWeb）+ CSS 三件。
  *   2) Floria 的 webui/ 是包的产物副本（逐字节一致）——图标/令牌唯一真源在包，Floria 不复刻。
  *   3) index.html：webui CSS 在 styles.css 之前、webui IIFE 在 app.js 之前；sw CORE 预缓存两件。
@@ -15,7 +15,7 @@ import { resolve } from 'path'
 
 const ROOT = resolve(import.meta.dir, '..')
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8')
-const PKG = '../SubPj1-遥测网页/packages/web'
+const PKG = '../SubPj1-FloriaWebUI安装包开发/packages/web'
 
 let pass = 0
 let fail = 0
@@ -99,6 +99,19 @@ else bad('core/icons.js 仍内联 SVG —— 违反唯一真源')
 const bundle = read('scripts/bundle-web-modules.ts')
 if (/const PIECES[\s\S]{0,120}\{ file: 'core\/icons\.js', part: 1 \}/.test(bundle)) ok('bundle PIECES 首段仍是 core/icons.js（转调先于所有消费方）')
 else bad('bundle PIECES 中 core/icons.js 不在最前')
+
+// ---- 6. 管理页通用 UI 在包内（结构 + 样式单一真源） ----
+const pkgMgr = read(`${PKG}/src/mgr.js`)
+if (/export function mgrBrowse/.test(pkgMgr) && /export function mgrDetail/.test(pkgMgr) && /export const mgr = \{/.test(pkgMgr)) ok('包 src/mgr.js 持有 browse/detail 与 mgr 聚合导出')
+else bad('包 src/mgr.js 缺管理页组件导出')
+const pkgMgrCss = read(`${PKG}/src/mgr.css`)
+if (/\.mgr-card \{/.test(pkgMgrCss) && /\.mgr-dl-hd \{/.test(pkgMgrCss)) ok('包 src/mgr.css 持有管理页结构样式')
+else bad('包 src/mgr.css 缺 .mgr-card/.mgr-dl-hd')
+if (!/\.mgr-card \{/.test(css) && !/\.mgr-dl-hd \{/.test(css)) ok('styles.css 不再持有管理页结构样式（真源在包）')
+else bad('styles.css 仍持有 .mgr-card/.mgr-dl-hd —— 两份真源会漂移')
+const mgrSeam = read('src/gateway/web-src/core/mgr-ui.js')
+if (/window\.FloriaWeb\.mgr/.test(mgrSeam) && /const MgrUI = /.test(mgrSeam)) ok('core/mgr-ui.js 转调 window.FloriaWeb.mgr（缺包直接抛错）')
+else bad('core/mgr-ui.js 未按接缝模式转调')
 
 console.log(`\n${pass}/${fail}`)
 process.exit(fail === 0 ? 0 : 1)

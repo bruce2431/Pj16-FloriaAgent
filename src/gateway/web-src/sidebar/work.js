@@ -4,7 +4,7 @@ import { navigate } from '../chat/route.js'
 import { needToken, apiUrl } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
 import { ALL, chatArea, sessionCard, state } from '../engine/state.js'
-import { esc, isMobile, toast } from '../core/util.js'
+import { esc, isMobile, isTempProjLabel, toast } from '../core/util.js'
 import { saveWork } from '../core/storage.js'
 import { loadSessions, sessCmp, findSession } from '../engine/sessions.js'
 import { currentCardId } from '../engine/registry.js'
@@ -62,10 +62,13 @@ import { clearWkFrameTools, registerWkFrameTools, registerWkTool, wkToolDef, wkT
   // 工作项目，其会话的 projectLabel 就是该 label，与项目 label 空间不重叠（待办 #7 收尾，2026-10-15）。
   // 调用点 = 进入 work 模式 / 切换工作项目 / 路由渲染会话前（chat/route.js renderSession）。
   // 会话尚未落地（findSession 查无 = 列表未拉或刷新中）时不判——「未知」不等于「别的项目」。
+  // 临时项目（根级时间戳任务区）的在辖会话 = 全局根散装会话（它没有自有会话，见 work-files.js 列表口径）。
   function workScopeOk(hash) {
     if (state.sbMode !== 'work' || !state.workProj || !hash) return true
     const s = findSession(hash)
-    return !s || s.projectLabel === state.workProj
+    if (!s) return true
+    if (isTempProjLabel(state.workProj)) return s.projectScope === 'global'
+    return s.projectLabel === state.workProj
   }
   function enforceWorkScope() {
     if (!workScopeOk(state.currentHash)) navigate('#/')

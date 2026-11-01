@@ -1,4 +1,5 @@
 // 右栏页态内容补挂 + 侧栏（项目选择/项目列表/文件树/自动对账/数据补齐）与其渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
+import { isTempProjLabel } from '../../core/util.js'
 import { bindRowPeek, isPinned, peekClear } from '../recent.js'
 import { cmtInvalidate, cmtLoad } from '../../feature/comment/comment-data.js'
 import { cmtRender } from '../../feature/comment/comment-panel.js'
@@ -51,11 +52,11 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
   // 原取名 `projList` 与 inputbar/commands.js 的同名函数撞车（后者在后 ⇒ 覆盖本函数），
   // 本函数返回 group 对象数组、后者返回 label 字符串数组 ⇒ 下拉渲染出 7 行空按钮。
   // 由 `probes/probe-web-module-scope.ts` 看住这条不变量。
-  // 项目列表 = findProjects 的全部组：scope==='project' 的各项目 + scope==='global' 的工作区根
-  // （label「全局根 · 散装对话」）。工作区根 = 一个特殊项目，与项目同构走同一条文件树/会话链
-  // （待办 #7 收尾，2026-10-15）——两 scope 的 label 空间不重叠，故按唯一 label 命中即够。
+  // 项目列表 = findProjects 中 scope==='project' 的组（Pj 长期项目 + 根级时间戳任务区，一视同仁平铺）。
+  // 工作区根「全局根 · 散装对话」不进这份列表（2026-10-30 用户定案：work 项目选择器只给项目，
+  // 散装区不占一格；后端仍照旧产出该组，散装会话/笔新建/全局预览不受影响）。
   function wkProjGroups() {
-    return (state.projects || []).filter((g) => g && g.label && (g.scope === 'project' || g.scope === 'global'))
+    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
   }
 
   // 项目名 + 底部卡 + 下拉内容 = 同一份 state.projects 的同一次渲染（2026-09-25 修）。
@@ -79,8 +80,8 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
     const box = $('wk-proj-pop')
     if (!box) return
     const ps = wkProjGroups()
-    // 工作区根（「全局根 · 散装对话」）与项目并列同一份 wkProjGroups（待办 #7 收尾）：不再另设
-    // 「工作区」行/第三态——它就是列表里的一行，选中即 selectProject(真 label)，走同一条项目链。
+    // 一张平铺列表：Pj 项目与根级时间戳项目不加分组标题、不分先后批次（2026-10-30 用户定案）。
+    // 每行统一 selectProject(真 label)，与项目/全局根同构的文件树、会话、预览链零特判。
     box.innerHTML = ps.length
       ? ps
           .map(
@@ -133,8 +134,14 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
       // 置顶排序（2026-10-18）：wkPins 命中的会话恒排在 sessCmp 之前（组内仍按 sessCmp：
       // 状态在线优先 + 创建时间新→旧）。只作用于 work 侧栏列表，chat 侧栏 renderList/renderProject 不变。
       const pinRank = (s) => (isPinned(hashOf(s)) ? 0 : 1)
+      // 临时项目（根级时间戳任务区）没有自有会话：列表改展示**全局根散装会话**（2026-10-30 用户定案）。
+      // 判据走同一枚 isTempProjLabel；新建会话也落全局根（core/util.js newSessionProject），故入列的
+      // 新会话就在这份列表里，不会「发完就消失」。
+      const temp = isTempProjLabel(state.workProj)
       const list = state.workProj
-        ? ALL.filter((s) => s.projectLabel === state.workProj).sort((a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b))
+        ? ALL.filter((s) => (temp ? s.projectScope === 'global' : s.projectLabel === state.workProj)).sort(
+            (a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b),
+          )
         : []
       // 新建入口 = tab 行工具区的加号（updateWkTools 控制显隐），列表顶部不再占一行大按钮
       if (!state.workProj) return '<div class="wk-empty">先在上方选择一个项目</div>'

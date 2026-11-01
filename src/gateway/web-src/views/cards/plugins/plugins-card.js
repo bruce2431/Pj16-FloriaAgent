@@ -1,12 +1,15 @@
 // 插件卡（管理视图「插件」tab：顶层三态 插件 / 技能 / 应用）（2026-10-01 卡片化：自 sidebar/mgr.js 迁出；
 // 2026-10-10 增「应用」kind——工作区根申报的界面单元，点 + 启用；唯一手改处，web/app.js 为生成物）
 // 2026-10-30 列表改 Codex 风格：动作位统一细线图标（未安装 + / 已安装 ✓），点整卡进入卡内详情页。
+// 2026-11-01 页面壳/搜索/分类/卡片/动作位/详情头抽进 @floria/web 的 mgr 组件族（core/mgr-ui.js 接缝）：
+// 本卡只提供数据、过滤与启停，结构一律由包渲染；禁止在卡内复刻 mgr 结构与样式。
 
 import { I } from '../../../core/icons.js'
+import { MgrUI } from '../../../core/mgr-ui.js'
 import { state } from '../../../engine/state.js'
 import { esc, toast } from '../../../core/util.js'
 import { saveMgrView } from '../../../core/storage.js'
-import { MGR, MGR_ERR, MGR_LOADING, loadMgrData, mgrColor } from '../../../sidebar/mgr-data.js'
+import { MGR, MGR_ERR, MGR_LOADING, loadMgrData } from '../../../sidebar/mgr-data.js'
 import { registerCard } from '../../../engine/registry.js'
 import { appCatalog, globalLabel, isAppEnabled, setAppEnabled, syncGlobalPlugins } from '../../../engine/ext-runtime.js'
 import { apiUrl } from '../../../engine/gateway.js'
@@ -20,10 +23,11 @@ import { apiUrl } from '../../../engine/gateway.js'
   // 详情页状态是卡内瞬态（MGR_DETAIL，模块级、不落盘）：切 kind/cat/搜索/刷新均回列表。
   let MGR_DETAIL = null // { kind, key }；key = 名称（插件/技能）或应用 id
   let PLUGINS_CTX = null // 当前挂载 ctx（列表/详情互跳的唯一重渲口）
+  let PLUGINS_BODY = null // 当前卡体（网格局部重渲的落点，卡外 refreshCard 也走它）
 
   const pluginsCardDef = {
     id: 'plugins', title: '插件', tip: '插件 / 技能 / 应用', icon: 'plug', tab: true,
-    mount(body, ctx) { PLUGINS_CTX = ctx; renderMgrPlugins(body, ctx) },
+    mount(body, ctx) { PLUGINS_CTX = ctx; PLUGINS_BODY = body; renderMgrPlugins(body, ctx) },
     refresh() { renderMgrGrid() },
   }
   registerCard(pluginsCardDef)
@@ -39,136 +43,102 @@ import { apiUrl } from '../../../engine/gateway.js'
       : v.kind === 'skills'
         ? '个人 = 已安装技能（扫描便携根 .claude/skills）· 公开 = 官方市场技能'
         : '个人 = 已安装插件（扫描便携根 .claude/plugins）· 公开 = 官方市场插件'
-    body.innerHTML =
-      '<div class="mgr-pane">' +
+    MgrUI.browse(body, {
       // 顶层切换＝「插件 / 技能 / 应用」三态：应用与插件/技能同轴，故并入同一段控件（原在公开/个人行）
-      '<div class="mgr-top">' +
-      '<div class="mgr-kind">' +
-      `<button class="mgr-kind-btn${v.kind === 'plugins' ? ' on' : ''}" data-kind="plugins">插件</button>` +
-      `<button class="mgr-kind-btn${v.kind === 'skills' ? ' on' : ''}" data-kind="skills">技能</button>` +
-      `<button class="mgr-kind-btn${v.kind === 'apps' ? ' on' : ''}" data-kind="apps">应用</button>` +
-      '</div>' +
-      '</div>' +
-      `<div class="mgr-head"><h2 class="mgr-title">${kindName}</h2><div class="mgr-sub">${sub}</div></div>` +
-      `<div class="mgr-search">${I.mag}<input id="mgr-q" type="text" placeholder="${isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…'}" value="${esc(v.q)}"></div>` +
+      kinds: [
+        { id: 'plugins', label: '插件' },
+        { id: 'skills', label: '技能' },
+        { id: 'apps', label: '应用' },
+      ],
+      kind: v.kind,
+      title: kindName,
+      sub,
+      search: {
+        placeholder: isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…',
+        value: v.q,
+      },
       // 公开/个人只对「插件 / 技能」轴有意义，应用态不显示该行
-      (isApps
-        ? ''
-        : '<div class="mgr-cats">' +
-          `<button class="mgr-cat${v.cat === 'public' ? ' on' : ''}" data-cat="public">公开</button>` +
-          `<button class="mgr-cat${v.cat === 'personal' ? ' on' : ''}" data-cat="personal">个人</button>` +
-          '</div>') +
-      '<div class="mgr-grid" id="mgr-grid"></div>' +
-      `<div class="mgr-foot">${isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描'}</div>` +
-      '</div>'
+      cats: isApps ? [] : [{ id: 'public', label: '公开' }, { id: 'personal', label: '个人' }],
+      cat: v.cat,
+      foot: isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描',
+      onKind(id) { v.kind = id; saveMgrView(); ctx.rerender() },
+      onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
+      onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
+      onItem(key) { openDetail(key) },
+      onAction(key) { toggleApp(key) },
+      onRetry() { loadMgrData(true) },
+    })
     renderMgrGrid()
     if (!isApps) loadMgrData(false) // 真实数据：首次进入拉取，刷新按钮 force 重拉（应用目录由 registry 拉）
-    const pane = body.querySelector('.mgr-pane')
-    pane.querySelectorAll('.mgr-kind-btn').forEach((b) =>
-      b.addEventListener('click', () => {
-        v.kind = b.dataset.kind
-        saveMgrView()
-        ctx.rerender()
-      }),
-    )
-    pane.querySelectorAll('.mgr-cat').forEach((b) =>
-      b.addEventListener('click', () => {
-        v.cat = b.dataset.cat
-        saveMgrView()
-        ctx.rerender()
-      }),
-    )
-    const q = $('mgr-q')
-    if (q) q.addEventListener('input', () => { v.q = q.value; saveMgrView(); renderMgrGrid() })
   }
 
   // ---------- 列表 ----------
   // 插件/技能/应用卡片网格（按 kind + cat + 搜索词过滤；应用数据源 = registry 的 APP_CATALOG）
   function renderMgrGrid() {
+    if (PLUGINS_BODY) MgrUI.grid(PLUGINS_BODY, gridOpts())
+  }
+
+  // 网格数据：结构/绑定在包（MgrUI.grid），本函数只做业务过滤与条目映射。
+  function gridOpts() {
     const v = state.mgrView
-    const grid = $('mgr-grid')
-    if (!grid) return
     // 「应用」kind：列出工作区根申报的全部应用，右侧 + / ✓ 切换启用（启用即侧栏出现该应用 tab）
     if (v.kind === 'apps') {
       const q = (v.q || '').trim().toLowerCase()
       const rows = appCatalog().filter((a) => !q || a.title.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
-      grid.innerHTML = rows.length
-        ? rows.map(appCardHtml).join('')
-        : '<div class="mgr-empty">没有匹配的应用（工作区根 .claude/preview/preview.json 未申报应用）</div>'
-      bindGrid(grid)
-      return
+      return {
+        items: rows.map(appItem),
+        empty: '没有匹配的应用（工作区根 .claude/preview/preview.json 未申报应用）',
+        onItem: openDetail,
+        onAction: toggleApp,
+      }
     }
     const label = v.kind === 'skills' ? '技能' : '插件'
-    if (MGR_LOADING) {
-      grid.innerHTML = '<div class="mgr-empty">加载真实清单中…</div>'
-      return
-    }
-    if (MGR_ERR) {
-      grid.innerHTML =
-        '<div class="mgr-empty">清单加载失败：' + esc(MGR_ERR) +
-        '<br><button class="mgr-retry" id="mgr-retry">重试</button></div>'
-      const retry = $('mgr-retry')
-      if (retry) retry.addEventListener('click', () => loadMgrData(true))
-      return
-    }
+    if (MGR_LOADING) return { loading: '加载真实清单中…' }
+    if (MGR_ERR) return { error: { message: MGR_ERR }, onRetry: () => loadMgrData(true) }
     const src = (MGR && MGR[v.kind] && MGR[v.kind][v.cat]) || []
     const q = (v.q || '').trim().toLowerCase()
-    const rows = q ? src.filter((x) => x.n.toLowerCase().includes(q) || x.d.toLowerCase().includes(q)) : src
-    grid.innerHTML = rows.length
-      ? rows.map(mgrCardHtml).join('')
-      : `<div class="mgr-empty">没有匹配的${label}</div>`
-    bindGrid(grid)
+    const rows = q ? src.filter((x) => x.n.toLowerCase().includes(q) || (x.d || '').toLowerCase().includes(q)) : src
+    return {
+      items: rows.map(pluginItem),
+      empty: `没有匹配的${label}`,
+      onItem: openDetail,
+    }
   }
-  // 网格事件委托：点卡身进详情；点动作位（应用启停）只切启用态，不进详情
-  function bindGrid(grid) {
-    grid.querySelectorAll('.mgr-card').forEach((card) =>
-      card.addEventListener('click', (e) => {
-        const act = e.target.closest('.mgr-act-btn')
-        const v = state.mgrView
-        if (act) {
-          if (v.kind !== 'apps' || !act.dataset.app) return
-          e.stopPropagation()
-          setAppEnabled(act.dataset.app, !isAppEnabled(act.dataset.app))
-          renderMgrGrid() // 启用态只影响本网格按钮，局部重渲即可（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）
-          return
-        }
-        MGR_DETAIL = { kind: v.kind, key: card.dataset.key }
-        if (PLUGINS_CTX) PLUGINS_CTX.rerender()
-      }),
-    )
+
+  function openDetail(key) {
+    MGR_DETAIL = { kind: state.mgrView.kind, key }
+    if (PLUGINS_CTX) PLUGINS_CTX.rerender()
   }
-  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}
-  function mgrCardHtml(x) {
-    return (
-      `<div class="mgr-card" data-key="${esc(x.n)}" data-kind="item">` +
-      `<div class="mgr-ic" style="background:${mgrColor(x.n)}">${esc((x.n[0] || '?').toUpperCase())}</div>` +
-      `<div class="mgr-meta"><div class="mgr-name">${esc(x.n)}</div><div class="mgr-desc">${esc(x.d || '暂无描述')}</div></div>` +
-      actBtnHtml(!!x.inst, { title: x.inst ? '已安装' : '未安装' }) +
-      '</div>'
-    )
-  }
-  // 应用胶囊：+（未启用）/ ✓（已启用）为唯一动作；点卡身进详情。
-  // 图标 = 应用自己申报的 `icon`（preview.json → normExtCards → APP_CATALOG，见 ext-decl.js），
-  // 不按 id 上色块、不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
-  function appCardHtml(a) {
+
+  // 应用卡片：动作位是真开关。图标 = 应用自己申报的 `icon`（preview.json → normExtCards → APP_CATALOG，
+  // 见 ext-decl.js）；不按 id 上色块、不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
+  function appItem(a) {
     const on = isAppEnabled(a.id)
-    const ico = I[a.icon]
-    const icEl = ico
-      ? `<div class="mgr-ic ic">${ico}</div>`
-      : `<div class="mgr-ic" style="background:${mgrColor(a.id)}">${esc((a.title[0] || '?').toUpperCase())}</div>`
-    return (
-      `<div class="mgr-card" data-key="${esc(a.id)}" data-kind="app">${icEl}` +
-      `<div class="mgr-meta"><div class="mgr-name">${esc(a.title)}</div>` +
-      `<div class="mgr-desc">${esc(a.path)}</div></div>` +
-      actBtnHtml(on, { app: a.id, title: on ? '已启用（点击停用）' : '未启用（点击启用）' }) +
-      '</div>'
-    )
+    return {
+      key: a.id,
+      name: a.title,
+      desc: a.path,
+      icon: I[a.icon] || '',
+      action: { on, key: a.id, title: on ? '已启用（点击停用）' : '未启用（点击启用）' },
+    }
   }
-  // 动作位（Codex 风）：细线 +（未安装/未启用）/ ✓（已安装/已启用）。
-  // 插件/技能没有安装 API，此位是纯状态指示（点击落到卡身、进详情）；应用位是真开关（bindGrid 里拦）。
-  function actBtnHtml(on, opt) {
-    const app = opt && opt.app ? ` data-app="${esc(opt.app)}"` : ''
-    return `<button class="mgr-act-btn${on ? ' on' : ''}"${app} title="${esc((opt && opt.title) || '')}">${on ? I.dshCheck : I.dshPlus}</button>`
+
+  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}；动作位是纯状态指示（点击落到卡身、进详情）。
+  function pluginItem(x) {
+    return {
+      key: x.n,
+      name: x.n,
+      desc: x.d || '暂无描述',
+      action: { on: !!x.inst, title: x.inst ? '已安装' : '未安装' },
+    }
+  }
+
+  // 应用启停：启用态只影响本网格（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）；详情页内切换则整页重渲。
+  function toggleApp(key) {
+    if (!key) return
+    setAppEnabled(key, !isAppEnabled(key))
+    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
+    renderMgrGrid()
   }
 
   // ---------- 详情页（卡内子页；返回 = 清 MGR_DETAIL 重渲） ----------
@@ -179,7 +149,7 @@ import { apiUrl } from '../../../engine/gateway.js'
       const a = appCatalog().find((x) => x.id === key)
       if (!a) return null
       return {
-        kind, key, ico: I[a.icon], color: mgrColor(a.id), initial: (a.title[0] || '?').toUpperCase(),
+        kind, key, ico: I[a.icon] || '', color: MgrUI.color(a.id), initial: (a.title[0] || '?').toUpperCase(),
         name: a.title, desc: '', ver: '', inst: isAppEnabled(a.id),
         typeLabel: '应用', sourceLabel: '工作区根 .claude/preview 申报',
         path: a.path, appId: a.id, installedLabel: isAppEnabled(a.id) ? '已启用' : '未启用',
@@ -193,7 +163,7 @@ import { apiUrl } from '../../../engine/gateway.js'
     const isSkill = kind === 'skills'
     const personal = v.cat === 'personal'
     return {
-      kind, key, ico: '', color: mgrColor(x.n), initial: (x.n[0] || '?').toUpperCase(),
+      kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
       name: x.n, desc: x.d || '', ver: x.v || '', inst: !!x.inst,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: personal ? '本地已安装' : '公开市场',
@@ -205,9 +175,6 @@ import { apiUrl } from '../../../engine/gateway.js'
   function renderMgrDetail(body, ctx) {
     const it = detailItem()
     if (!it) { MGR_DETAIL = null; return renderMgrPlugins(body, ctx) }
-    const icEl = it.ico
-      ? `<div class="mgr-dl-ic ic">${it.ico}</div>`
-      : `<div class="mgr-dl-ic" style="background:${it.color}">${esc(it.initial)}</div>`
     const info = [
       ['类型', it.typeLabel],
       ['来源', it.sourceLabel],
@@ -215,43 +182,39 @@ import { apiUrl } from '../../../engine/gateway.js'
       ['状态', it.installedLabel],
     ]
     if (it.path) info.push(['位置', it.path])
-    // 上游仓库（仅应用）：值可编辑，写回工作区根 .claude/preview/preview.json 的 cards[].repo。
-    // 展示为链接只认 http(s)——用户输入的串不得直接进 href（javascript: 等）。
+    // 详情头动作位：应用 = 真开关（key = appId）；插件/技能 = 状态指示（无 key，不可点）。
+    const action = it.appId
+      ? { on: it.inst, key: it.appId, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
+      : { on: it.inst, title: it.installedLabel }
+    MgrUI.detail(body, {
+      typeLabel: it.typeLabel,
+      name: it.name,
+      sub: `${it.typeLabel} · ${it.sourceLabel}`,
+      icon: it.ico,
+      color: it.color,
+      initial: it.initial,
+      action,
+      desc: it.desc,
+      info,
+      extraHtml: repoRowHtml(it),
+      onBack() { MGR_DETAIL = null; ctx.rerender() },
+      onAction(key) { toggleApp(key) },
+      onMounted(host) { bindRepoEdit(host, it, ctx) },
+    })
+  }
+
+  // 上游仓库（仅应用）：值可编辑，写回工作区根 .claude/preview/preview.json 的 cards[].repo。
+  // 展示为链接只认 http(s)——用户输入的串不得直接进 href（javascript: 等）。业务行 HTML 由本卡负责。
+  function repoRowHtml(it) {
+    if (!it.appId) return ''
     const safeRepo = /^https?:\/\/[^\s]+$/i.test(it.repo || '') ? it.repo : ''
-    const repoRow = it.appId
-      ? '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
-        (it.repo
-          ? (safeRepo
-            ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(it.repo)}</a>`
-            : `<span class="mgr-repo-plain">${esc(it.repo)}</span>`)
-          : '<span class="mgr-repo-empty">未填写</span>') +
-        `<button class="mgr-repo-edit" type="button">${it.repo ? '修改' : '填写'}</button></dd></div>`
-      : ''
-    body.innerHTML =
-      '<div class="mgr-pane mgr-detail">' +
-      `<div class="mgr-crumb"><button class="mgr-back">${I.collapse}<span>${it.typeLabel}</span></button><span class="mgr-crumb-sep">/</span><span class="mgr-crumb-cur">${esc(it.name)}</span></div>` +
-      '<div class="mgr-dl-hd">' + icEl +
-      `<div class="mgr-dl-hdmeta"><h2 class="mgr-dl-name">${esc(it.name)}</h2>` +
-      `<div class="mgr-dl-sub">${esc(it.typeLabel)} · ${esc(it.sourceLabel)}</div></div>` +
-      actBtnHtml(it.inst, { app: it.appId, title: it.appId ? (it.inst ? '已启用（点击停用）' : '未启用（点击启用）') : it.installedLabel }) +
-      '</div>' +
-      `<p class="mgr-dl-desc">${esc(it.desc || '暂无介绍。')}</p>` +
-      '<div class="mgr-dl-sec"><h3 class="mgr-dl-sech">信息</h3><dl class="mgr-dl-kv">' +
-      info.map(([k, val]) => `<div class="mgr-dl-kvrow"><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join('') +
-      repoRow +
-      '</dl></div>' +
-      '</div>'
-    bindRepoEdit(body, it, ctx)
-    const back = body.querySelector('.mgr-back')
-    if (back) back.addEventListener('click', () => { MGR_DETAIL = null; ctx.rerender() })
-    // 应用详情页的动作位是真开关：切启用态后就地重渲详情（不回落列表）
-    const act = body.querySelector('.mgr-act-btn')
-    if (act && act.dataset.app) {
-      act.addEventListener('click', () => {
-        setAppEnabled(act.dataset.app, !isAppEnabled(act.dataset.app))
-        ctx.rerender()
-      })
-    }
+    return '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
+      (it.repo
+        ? (safeRepo
+          ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(it.repo)}</a>`
+          : `<span class="mgr-repo-plain">${esc(it.repo)}</span>`)
+        : '<span class="mgr-repo-empty">未填写</span>') +
+      `<button class="mgr-repo-edit" type="button">${it.repo ? '修改' : '填写'}</button></dd></div>`
   }
 
   // 上游仓库编辑：点「填写/修改」就地换输入框；保存 = 读 preview.json（带 ETag 基线）→ 改该卡 repo →
@@ -320,9 +283,5 @@ import { apiUrl } from '../../../engine/gateway.js'
   }
 
 export {
-  appCardHtml,
-  mgrCardHtml,
   pluginsCardDef,
-  renderMgrGrid,
-  renderMgrPlugins,
 }

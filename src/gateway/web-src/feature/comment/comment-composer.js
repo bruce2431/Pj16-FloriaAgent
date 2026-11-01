@@ -28,8 +28,11 @@ import { cmtAdd, cmtHookEnsurePane, cmtId } from './comment-data.js'
     const r = snap.rect || { left: 0, bottom: 0 }
     const w = pop.offsetWidth
     const h = pop.offsetHeight
+    // 越界下限取**可视**视口底（键盘上沿）：innerHeight 是布局视口，键盘在场不缩，按它 clamp 会落进键盘后。
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
     pop.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px'
-    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, window.innerHeight - h - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(r.bottom + 6, viewBottom - h - 8))) + 'px'
     const ta = pop.querySelector('.cmp-in')
     ta.focus()
     pop.addEventListener('mousedown', (e) => e.stopPropagation()) // 浮层内按下不算「点外部」

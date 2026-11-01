@@ -16,6 +16,9 @@ const OUT = './src/gateway/web/app.js'
 // 改顺序 = 挪本表行；改分段 = 动源文件里的 marker（增删普通行不破坏定位）。
 const PIECES: { file: string; part: number }[] = [
   { file: 'core/icons.js', part: 1 },
+  // 管理页通用 UI 接缝（@floria/web 的 mgr 组件族）：与 icons 同属包接缝，须先于全部消费方
+  // （views/cards/plugins/plugins-card.js 等）；缺包抛错，不在 Floria 内复刻结构。
+  { file: 'core/mgr-ui.js', part: 1 },
   { file: 'sidebar/mgr-data.js', part: 1 },
   // 界面状态纯数据（core/ui-state.js，2026-10-10 自 engine/state.js 下移）须先于 engine/state.js 与
   // core/{util,storage}.js（三件均 import 它）。

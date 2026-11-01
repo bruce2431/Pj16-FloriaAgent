@@ -4,7 +4,7 @@ import { navigate } from '../chat/route.js'
 import { I } from '../core/icons.js'
 import { hashOf, sorted } from '../engine/sessions.js'
 import { bubblePop, overlay, sInput, state } from '../engine/state.js'
-import { esc, isMobile } from '../core/util.js'
+import { esc, isMobile, isTempProjLabel } from '../core/util.js'
 import { setPanel, itemHtml } from './recent.js'
 /* @module sidebar/bubble-search.js */
   // ---------- 气泡弹层 ----------
@@ -46,9 +46,13 @@ import { setPanel, itemHtml } from './recent.js'
   function renderSearch() {
     const q = sInput.value.trim().toLowerCase()
     const inWork = searchInWork()
+    // work 下范围 = 当前工作项目的会话；临时项目（根级时间戳任务区）的范围 = 全局根散装会话
+    // （与侧栏聊天列表 / workScopeOk 同一判据，2026-10-30）。
+    const temp = isTempProjLabel(state.workProj)
+    const inScope = (s) => (temp ? s.projectScope === 'global' : s.projectScope === 'project' && s.projectLabel === state.workProj)
     const rows = sorted().filter(
       (s) =>
-        (!inWork || (s.projectScope === 'project' && s.projectLabel === state.workProj)) &&
+        (!inWork || inScope(s)) &&
         (!q || s.title.toLowerCase().includes(q) || (s.projectLabel || '').toLowerCase().includes(q)),
     )
     const sessHtml = rows

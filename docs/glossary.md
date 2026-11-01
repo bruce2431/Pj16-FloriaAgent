@@ -29,7 +29,7 @@
 | web 独立会话 | wsession | web 端「笔/项目+」新建的独立 CLI 进程会话 | |
 | 会话间通信 | `session_send` 工具 / `session-message` 帧 | 会话 A 的 agent 向会话 B 发一条消息，B 侧以与 user 消息同构的形态接收（空闲开回合/忙则排队/离线自动拉起），气泡外带来源灰字行；**无授权门**——会话目录内任何会话可发，唯一硬门是寻址（sid 精确 > 标题唯一，不猜不兜底）。链路 → [core.md](core.md) 末节 + [gateway.md](gateway.md) §13 | 跨会话消息/会话互发 |
 | 来源灰字行 | `.msg .who`（气泡外）/ `.q-who`（排队区） | 「来自 会话：X」小灰字；**在气泡容器内、`.body` 之前**（气泡上方，文档流占位，不影响几何）；**随其气泡一侧对齐**——用户气泡右对齐故来源行右对齐（`.msg.user .who { align-self: flex-end }`；CLI 侧同义的行盒 flex-end） | |
-| UI 基础包 | `@floria/web` / `window.FloriaWeb` | 网页 UI 的无业务底座：主题令牌（明/暗）、reset、统一滚动条、图标表 `I`/`fileIcon`、`esc`/`fromHtml`。唯一真源 `SubPj1-遥测网页/packages/web/`，Floria 部署 `web/webui/floria-web.{iife.js,css}`，[web-ui.md §72](web-ui.md) | 网页 UI 包 |
+| UI 基础包 | `@floria/web` / `window.FloriaWeb` | 网页 UI 的无业务底座：主题令牌（明/暗）、reset、统一滚动条、图标表 `I`/`fileIcon`、`esc`/`fromHtml`、管理页通用 UI `mgr`（页面壳/搜索/分类/卡片/动作位/详情头）。唯一真源 `SubPj1-FloriaWebUI安装包开发/packages/web/`，Floria 部署 `web/webui/floria-web.{iife.js,css}`，[web-ui.md §72](web-ui.md) | 网页 UI 包 |
 
 ## 侧栏与会话管理
 

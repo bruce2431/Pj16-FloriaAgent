@@ -1,4 +1,5 @@
 // 布局落地：模式切换 applySbMode / 侧栏开关锚定 / 聊天 tab 开集与关合 / 主区三列不变量 applyPanes。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
+import { isTempProjLabel } from '../../core/util.js'
 /* @module sidebar/work/work-layout.js */
 
   // 面板与主区布局按 state 落地。启动恢复与运行期切换共用这一条路径（无第二份初始化旁路）。
@@ -144,6 +145,12 @@
     const willFile = state.sbMode === 'work' && wkShownTab() === 'file'
     if (wasFile && !willFile) wkEdCaptureScroll()
     if (state.sbMode === 'work') {
+      // 临时项目（根级时间戳任务区）不提供右栏：工具栏胶囊不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
+      // 切项目留在场就是悬空态。归一只在这一处（布局落地 = 唯一写口），状态直接写、不再嵌套 applyPanes。
+      if (isTempProjLabel(state.workProj) && state.wkPreview) {
+        state.wkPreview = false
+        state.wkPvTab = ''
+      }
       if (!state.wkAssist && !state.workFile && !state.wkPreview) {
         state.wkAssist = true
         state.wkMainTab = 'chat'

@@ -142,3 +142,78 @@ html[data-theme="dark"] {
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+
+
+/* 管理页通用 UI（mgr.js 的结构样式）：列表页壳 / 分段切换 / 搜索 / 分类 / 卡片网格 /
+   动作位 / 空态与重试 / 详情头。业务只管数据与回调，样式全部在这里，随 floria-web.css 发布。
+   侧栏 tab 行（.mgr-tabs/.mgr-tab）与业务自定义行（如 .mgr-repo-*）不在此文件。 */
+
+.mgr-pane { width: 100%; }
+.mgr-top { display: flex; align-items: center; justify-content: space-between; min-height: 40px; margin-bottom: 28px; }
+.mgr-kind { display: inline-flex; background: var(--active); border-radius: 10px; padding: 3px; gap: 2px; }
+/* 各钮恒 font-weight:600（颜色区分选中），避免 400↔600 切换时 CJK 字宽/字型亚像素变化引起微位移 */
+.mgr-kind-btn { padding: 6px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); transition: background 0.15s, color 0.15s; }
+.mgr-kind-btn.on { background: var(--bg); color: var(--text); box-shadow: var(--shadow-sm); }
+.mgr-acts { display: flex; gap: 4px; }
+.mgr-act { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-2); transition: background 0.15s, color 0.15s; }
+.mgr-act:hover { background: var(--hover); color: var(--text); }
+.mgr-act svg { width: 18px; height: 18px; }
+.mgr-head { margin-bottom: 18px; }
+.mgr-title { font-size: 26px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); }
+.mgr-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.mgr-search { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 9px 16px; margin-bottom: 22px; max-width: 420px; transition: border-color 0.15s, box-shadow 0.15s; }
+.mgr-search:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(77, 107, 254, 0.12); }
+.mgr-search svg { width: 16px; height: 16px; color: var(--text-2); flex: none; }
+.mgr-search input { border: none; outline: none; flex: 1; font-size: 14px; background: transparent; color: var(--text); }
+.mgr-search input::placeholder { color: var(--text-3); }
+.mgr-cats { display: flex; gap: 8px; margin-bottom: 16px; }
+.mgr-cat { padding: 5px 16px; border-radius: 999px; font-size: 13px; background: var(--hover); color: var(--text-2); transition: background 0.15s, color 0.15s; }
+.mgr-cat:hover { color: var(--text); }
+.mgr-cat.on { background: var(--active); color: var(--text); font-weight: 600; }
+.mgr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.mgr-card { display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.mgr-card:hover { border-color: var(--border-soft); background: var(--hover); }
+.mgr-ic { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 19px; font-weight: 700; flex: none; user-select: none; }
+/* 带自有 icon 的项（如应用申报图标）= 无底色块，图标随主题前景色，尺寸与首字块一致 */
+.mgr-ic.ic { background: none; color: var(--text-2); }
+.mgr-ic.ic svg { width: 24px; height: 24px; }
+.mgr-meta { flex: 1; min-width: 0; }
+.mgr-name { font-size: 15px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.mgr-desc { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 动作位（Codex 风）：细线 + = 未安装/未启用，✓ = 已安装/已启用；悬停才浮底 */
+.mgr-act-btn { flex: none; width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); transition: background 0.15s, color 0.15s; }
+.mgr-act-btn svg { width: 17px; height: 17px; }
+.mgr-act-btn:hover { background: var(--active); color: var(--text); }
+.mgr-act-btn.on { color: #22c55e; }
+.mgr-act-btn.on:hover { color: #16a34a; }
+.mgr-empty { grid-column: 1 / -1; padding: 42px 0; text-align: center; color: var(--text-3); font-size: 13px; }
+.mgr-retry { display: inline-flex; align-items: center; gap: 4px; margin-top: 12px; padding: 7px 16px; border-radius: 999px; font-size: 13px; background: var(--btn-bg, #4d6bfe); color: #fff; border: none; cursor: pointer; }
+.mgr-retry:hover { opacity: 0.9; }
+.mgr-foot { margin-top: 26px; text-align: center; font-size: 12px; color: var(--text-3); }
+/* 卡内详情页：面包屑 + 大图标头 + 介绍 + 信息表 */
+.mgr-detail { max-width: 820px; }
+.mgr-crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 26px; font-size: 13px; color: var(--text-2); }
+.mgr-back { display: inline-flex; align-items: center; gap: 3px; padding: 5px 10px 5px 4px; border-radius: 8px; color: var(--text-2); transition: background 0.15s, color 0.15s; }
+.mgr-back:hover { background: var(--hover); color: var(--text); }
+.mgr-back svg { width: 15px; height: 15px; transform: rotate(180deg); }
+.mgr-crumb-sep { color: var(--text-3); }
+.mgr-crumb-cur { color: var(--text); font-weight: 600; }
+.mgr-dl-hd { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+.mgr-dl-ic { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 24px; font-weight: 700; flex: none; user-select: none; }
+.mgr-dl-ic.ic { background: none; color: var(--text-2); }
+.mgr-dl-ic.ic svg { width: 30px; height: 30px; }
+.mgr-dl-hdmeta { flex: 1; min-width: 0; }
+.mgr-dl-name { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; color: var(--text); }
+.mgr-dl-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.mgr-dl-desc { font-size: 14px; line-height: 1.8; color: var(--text); margin: 0 0 30px; white-space: pre-wrap; word-break: break-word; }
+.mgr-dl-sech { font-size: 13px; font-weight: 600; color: var(--text-2); padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.mgr-dl-kv { display: flex; flex-direction: column; }
+.mgr-dl-kvrow { display: flex; gap: 16px; padding: 9px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+.mgr-dl-kvrow dt { width: 88px; flex: none; color: var(--text-2); }
+.mgr-dl-kvrow dd { color: var(--text); word-break: break-all; }
+
+@media (max-width: 720px) {
+  .mgr-grid { grid-template-columns: 1fr; }
+  .mgr-title { font-size: 22px; }
+  .mgr-acts { display: none; }
+}

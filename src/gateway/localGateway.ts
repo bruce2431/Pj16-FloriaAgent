@@ -1332,9 +1332,12 @@ function findProjects(root: string): ProjectInfo[] {
   for (const e of entries) {
     if (!e.isDirectory()) continue
     if (e.name.startsWith('.')) continue
-    if (/^\d{8,14}-/.test(e.name)) continue // 根级临时任务目录
+    // 根级时间戳目录（临时任务区）也是一等项目（2026-10-30 用户定案）：它们通常没有 `.claude/projects`，
+    // 但 work 模式要直接在其文件树里读写，故按「目录名即项目 label」放行——`dir` 仍按同一公式给出
+    // （可能不存在：会话扫描/SSE watch 各自 try/catch 跳过，`/gateway/project` 只用 dir 上两级取项目根）。
+    const isTempTaskDir = /^\d{8,14}-/.test(e.name)
     const pd = join(root, e.name, '.claude', 'projects')
-    if (isDir(pd)) {
+    if (isDir(pd) || isTempTaskDir) {
       // hasPreview：项目自带 .claude/preview/（网页渲染，点击项目胶囊时前端 iframe 加载替换界面）
       const previewDir = join(root, e.name, '.claude', 'preview')
       const info: ProjectInfo = { label: e.name, dir: pd, scope: 'project', hasPreview: isDir(previewDir) }

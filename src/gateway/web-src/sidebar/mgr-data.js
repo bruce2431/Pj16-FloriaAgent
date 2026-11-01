@@ -76,12 +76,7 @@ import { refreshCard } from '../engine/registry.js'
     }
     return MODELS
   }
-  const MGR_PALETTE = ['#5b8ff9', '#61a1c2', '#7b6bd6', '#5aa57a', '#d98a4a', '#c96a6a', '#4aa3a0', '#a06ba8', '#6b8f71', '#b48a5a']
-  function mgrColor(n) {
-    let h = 0
-    for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0
-    return MGR_PALETTE[h % MGR_PALETTE.length]
-  }
+  // 色块取色（mgrColor）已随管理页通用 UI 收进 @floria/web 包（mgr.color），本层不再持有第二份调色板。
   // 供应商判定（2026-10-05 自 views/cards/models/models-card.js 迁入数据层——模型卡与输入栏模型菜单
   // 共用唯一一份；卡片去兄弟子系统横向依赖后经此取用）。key 优先（模型类环境变量名带供应商前缀），
   // 通用 model 键或未命中则按模型串前缀。
@@ -123,6 +118,5 @@ export {
   MODELS_LOADING,
   loadMgrData,
   loadModelsData,
-  mgrColor,
   modelProviderOf,
 }

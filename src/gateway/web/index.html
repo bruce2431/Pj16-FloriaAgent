@@ -26,9 +26,9 @@
   <!-- KaTeX 公式样式（2026-10-06）：须排在 /styles.css 之前，本项目的 .math-block/.md-math 覆盖其后 -->
   <link rel="stylesheet" href="/vendor/katex/katex.min.css?v=473" />
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
-       app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-遥测网页/packages/web/。 -->
-  <link rel="stylesheet" href="/webui/floria-web.css?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=629" />
+       app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
+  <link rel="stylesheet" href="/webui/floria-web.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=634" />
 </head>
 <body>
 <div id="app">
@@ -399,7 +399,7 @@
 <script src="/vendor/fflate.js?v=1"></script>
 <!-- UI 基础包 IIFE（2026-10-24）：挂 window.FloriaWeb（I / fileIcon / esc / fromHtml / VERSION），
      核心图标表改为转调本全局。须在 app.js 之前加载，缺包时模块直接抛错。 -->
-<script src="/webui/floria-web.iife.js?v=1"></script>
-<script src="/app.js?v=629"></script>
+<script src="/webui/floria-web.iife.js?v=2"></script>
+<script src="/app.js?v=634"></script>
 </body>
 </html>
