@@ -5,7 +5,7 @@
  *   输入 l1.cog/{cog_graph.json, community.json} + l2.mem/mem.db（证据片段）
  *   输出 l1.cog/cog2.json —— 读侧 retriever cognitionRoute 概念层（name×2/desc×1
  *   关键词打分）+ embedCogCache（`${name} ${description}` 向量）+ neuron_list 的
- *   cog2_count 全部消费此文件；记录字段形状照真身库 Neuron-李京瑾 cog2.json 1:1。
+ *   cog2_count 全部消费此文件；记录字段形状照真身库 cog2.json 1:1。
  *
  * 与 Python 的两处有意偏离（定案）：
  *   1. 规模/密度硬门（size 2~6、density ≥0.3）不用——本库社群本就 >6，是否「异质到

@@ -11,7 +11,7 @@ export function hasChinese(text: string): boolean {
 
 // 停用词（retriever.py _STOP_WORDS）
 const STOP_WORDS = new Set([
-  '李京瑾', '马天越', '用户', '我', '你', '他', '她', '的', '了', '是', '在', '不', '和', '就', '都',
+  '用户', '我', '你', '他', '她', '的', '了', '是', '在', '不', '和', '就', '都',
 ])
 
 // 爬虫技能库通用词（retriever.py _GENERIC_TOKENS）：认知层匹配只统计非通用领域词

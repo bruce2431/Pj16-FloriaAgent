@@ -44,10 +44,9 @@ interface Proj {
 }
 
 const PROJECTS: Proj[] = [
-  // Pj1（李京瑾行为模拟）与 Pj12（HEISM）已归档离盘（2026-09-18 核实），无项目目录即无神经元落位，不列
-  { dir: 'Pj2-个人心理分析项目', id: 'PJ2', hint: '马天越心理状态追踪与历次心理评估' },
+  // Pj1 与 Pj12（HEISM）已归档离盘（2026-09-18 核实），无项目目录即无神经元落位，不列
   { dir: 'Pj5-Fe2O3-NiO异质结DFT计算', id: 'PJ5', hint: 'Fe₂O₃-NiO 异质结 DFT/VASP 计算与超算上机' },
-  { dir: 'Pj11-LoRAMoE的混合专家架构', id: 'PJ11', hint: 'LoRAMoE 混合专家架构与李京瑾 RAG 记忆库' },
+  { dir: 'Pj11-LoRAMoE的混合专家架构', id: 'PJ11', hint: 'LoRAMoE 混合专家架构与 RAG 记忆库' },
   { dir: 'Pj13-RAG综述论文', id: 'PJ13', hint: 'RAG 综述论文与 PDF 精读预览前端' },
   { dir: 'Pj14-艺术作品创作', id: 'PJ14', hint: 'AI 动画制作与 ComfyUI 预览工作台' },
   { dir: 'Pj15-本地媒体资源库', id: 'PJ15', hint: '0zijun 本地媒体资源库前端与录入管线' },
