@@ -7,10 +7,10 @@ import { findSession, hashOf } from '../engine/sessions.js'
 import { inputEl, state, ALL } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject } from '../core/util.js'
 import { pendingImages, uploadedMentionItems } from './images.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickHome, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
-import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
+import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../sidebar/mgr-data.js'
 /* @module inputbar/commands.js */
   // ---------- 命令菜单 + 模型选择（2026-08-21 dsh 输入栏逻辑移植）----------
   // ⚠️ 数据源 = 本地内置展示数据（⚠️ 非 dsh 真实注册表、非网关接口）：
@@ -44,7 +44,7 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, submitting: false, confirming: null, acknowledged: false, error: null }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
   // 「+」浮窗的入口视图（2026-10-25 用户定案：扁平分组的工具栏太乱，改为入口形式——首屏只列
   // 上传动作 + 四类入口，点进某一类后展示该类**全部**条目，不截断；底栏有查询词时退回跨类搜索）。
   const CMD_VIEWS = [
@@ -160,16 +160,32 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
     }
     return out
   }
-  // 技能行 = 插件 + 技能（MGR 同源）
+  // 行尾项目标记：项目 label 取编号前缀（`Pj8-工作区机械臂设计` → `Pj8`），无编号则整串。
+  function projTag(label) {
+    const m = /^((?:Sub)?Pj\d+)/i.exec(String(label || ''))
+    return m ? m[1] : String(label || '')
+  }
+  // 技能行 = 插件 + 技能（MGR 同源）+ **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
+  // 项目判定与 + 浮窗文件组同一处（pickHome：会话所属项目 / work 工作项目，空串 = 无项目上下文）。
   function cmdSkillRows(match, grp) {
     const out = []
+    const proj = pickHome()
+    const ps = projSkillsOf(proj)
+    if (ps.list.length) {
+      for (const s of ps.list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    }
     if (!MGR) return out
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     return out
   }
   // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
-  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图含「返回」行）。
+  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
+  // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
+  // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
+  function pickProgressRenders() {
+    return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
+  }
   function pushSearchState(items, base) {
     if (pickAll.err) { items.push({ kind: 'pathwait', name: '索引失败', desc: pickAll.err }); return }
     if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引工作区' }); return }
@@ -184,7 +200,9 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
     // @ 后有查询词 = 跨类扁平全局搜索（不按类隔离、按时间混排）。只输入 @ 而无查询词 =
     // 等价于唤出工具栏首屏（与 + 一致）。+ 模式底栏文本只过滤当前入口视图，从不触发全局搜索。
     if (cmd.view) {
-      items.push({ kind: 'back', name: '返回', grp: '导航' })
+      // 文件视图不叠「导航/返回」（2026-11-05 用户定案）：它自带「上级目录」，两行同图标上箭头 + 两个分组标题
+      // 看着像两栏叠在一起；文件视图的退出走 Esc / 点浮窗外（pathup 行同时承担层内上行）。
+      if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(match, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
@@ -242,7 +260,9 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
     if (fresh) {
       // 首次打开确保技能清单/目录层已加载（异步），加载完用当前状态重渲
       loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
-      refreshPick(() => { if (cmd.open) renderCmdPop() })
+      // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
+      ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
     }
   }
   function openCmdPopMention() { openCmdPop(true) }
@@ -272,6 +292,13 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
     cmd.items = cmdEntries()
     // 视图切换/查询变化后条目数会变：高亮下标夹回合法区间，否则回车会选中 undefined。
     cmd.active = Math.min(cmd.active, Math.max(0, cmd.items.length - 1))
+    // 滚动位置跨重渲保持（2026-11-05 根因）：列表在文件索引流式进度/数据落地时会整体重渲，
+    // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
+    // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
+    // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
+    const prevVp = cmdPop.querySelector('.viewport')
+    const keepTop = prevVp ? prevVp.scrollTop : 0
+    const prevActive = cmd.prevActive
     let html = ''
     if (cmd.error !== null) {
       html += `<div class="error" role="alert"><span class="errorText">${esc(cmd.error)}</span>${cmd.status === 'failed' ? `<button type="button" class="retry">重试</button>` : ''}</div>`
@@ -291,15 +318,21 @@ import { MGR, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
         const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
-        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}</button>`
+        const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
+        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
       }).join('')}</div>`
     }
     cmdPop.innerHTML = html
     cmdPop.hidden = false
     cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
     cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
-    const on = cmdPop.querySelector('.row.rowActive')
-    if (on) on.scrollIntoView({ block: 'nearest' })
+    const vp = cmdPop.querySelector('.viewport')
+    if (vp) vp.scrollTop = keepTop
+    if (cmd.active !== prevActive) {
+      const on = cmdPop.querySelector('.row.rowActive')
+      if (on) on.scrollIntoView({ block: 'nearest' })
+    }
+    cmd.prevActive = cmd.active
   }
   // 风险确认门（dsh RiskConfirmation + Modal 移植）：全屏遮罩 + 居中对话框，checkbox 勾选后才可确认
   function renderRiskModal() {

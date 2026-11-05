@@ -49,6 +49,34 @@
     }
     return MGR
   }
+  // 项目级技能清单（GET /gateway/plugins?label=<项目>）：项目根 .claude/skills/*/SKILL.md 的 frontmatter，
+  // 返回 [{n, d, inst}]。与 MGR（便携根清单）分离——按项目 label 各自缓存，切项目不串。
+  async function loadProjectSkills(label) {
+    if (!label) return []
+    const res = await fetch(apiUrl('/gateway/plugins?label=' + encodeURIComponent(label)))
+    const data = await res.json()
+    if (!data || !Array.isArray(data.skills)) throw new Error((data && data.error) || 'bad response')
+    return data.skills
+  }
+  // 项目技能按 label 的进程内缓存（+ 工具栏与 @ 搜索共用一份）：{list, loaded, loading, err}。
+  // ensureProjectSkills 同一 label 只发一次请求（在途期间复用同一 Promise），失败记 err 并在下次调用时重试。
+  const PROJ_SKILLS = new Map()
+  function projSkillsOf(label) {
+    if (!label) return { list: [], loaded: true, loading: false, err: '' }
+    let r = PROJ_SKILLS.get(label)
+    if (!r) { r = { list: [], loaded: false, loading: false, err: '' }; PROJ_SKILLS.set(label, r) }
+    return r
+  }
+  function ensureProjectSkills(label) {
+    const r = projSkillsOf(label)
+    if (!label || r.loaded || r.loading) return Promise.resolve(r.list)
+    r.loading = true
+    r.err = ''
+    return loadProjectSkills(label)
+      .then((list) => { r.list = list; r.loaded = true; return r.list })
+      .catch((e) => { r.err = (e && e.message) || String(e); return r.list })
+      .then((list) => { r.loading = false; return list })
+  }
   // 模型配置数据源（/gateway/models：便携根 settings.json 的 model + 模型类环境变量；只读展示）
   let MODELS = null
   let MODELS_LOADING = false
@@ -5091,11 +5119,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const v = state.mgrView
     const isApps = v.kind === 'apps'
     const kindName = isApps ? '应用' : v.kind === 'skills' ? '技能' : '插件'
-    const sub = isApps
-      ? '工作区根 .claude/preview 申报的界面单元 · 启用后侧栏出现该应用 tab'
-      : v.kind === 'skills'
-        ? '个人 = 已安装技能（扫描便携根 .claude/skills）· 公开 = 官方市场技能'
-        : '个人 = 已安装插件（扫描便携根 .claude/plugins）· 公开 = 官方市场插件'
+    // 不传 sub / foot：插件 tab 不展示「申报说明」「数据源」这类提示文案（2026-11-02 用户定案）。
     MgrUI.browse(body, {
       // 顶层切换＝「插件 / 技能 / 应用」三态：应用与插件/技能同轴，故并入同一段控件（原在公开/个人行）
       kinds: [
@@ -5105,7 +5129,6 @@ function setFirstSendHash(v) { firstSendHash = v }
       ],
       kind: v.kind,
       title: kindName,
-      sub,
       search: {
         placeholder: isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…',
         value: v.q,
@@ -5113,7 +5136,6 @@ function setFirstSendHash(v) { firstSendHash = v }
       // 公开/个人只对「插件 / 技能」轴有意义，应用态不显示该行
       cats: isApps ? [] : [{ id: 'public', label: '公开' }, { id: 'personal', label: '个人' }],
       cat: v.cat,
-      foot: isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描',
       onKind(id) { v.kind = id; saveMgrView(); ctx.rerender() },
       onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
       onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
@@ -5764,20 +5786,35 @@ function setFirstSendHash(v) { firstSendHash = v }
     return WK_TOOL_DEFS.length ? WK_TOOL_DEFS[0].id : ''
   }
 
-  // tab 条渲染（唯一口）：预览工作区卡片在前（每卡一枚，名称取 card.json 的 title，data-wkcard 定址），
-  // 其后 = 宿主注册序 + 帧申报序（wkToolDefs）。**无卡项目的旧形态保留首枚「预览」页签**
-  // （data-wkpv="" → 回传统单页 index.html）；有卡时不再渲染它——卡片就是预览页本身。
+  // 当前项目有没有可视预览：预览卡（.claude/preview/<id>/card.json 申报）或传统单页
+  // .claude/preview/index.html（groups 的 hasPreview）。两者皆无 = 没有预览页。
+  // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
+  function wkPreviewAvailable(label) {
+    return !!label && (previewCardsFor(label).length > 0 || hasPreviewOf(label))
+  }
+  function wkPreviewKnown(label) {
+    return !!label && wkProjGroups().length > 0 && previewCardsReadyFor(label)
+  }
+
+  // tab 条渲染（唯一口）：预览相关页签只在该项目**确有可视预览**时出现——
+  // 有卡 = 每卡一枚（名称取 card.json 的 title，data-wkcard 定址）；无卡但有传统单页 = 单枚「预览」
+  // （data-wkpv="" → 回 index.html）；两者皆无 = 不渲染预览页签，只留工具页签（2026-11-02 用户定案）。
   // active 态由 work.js applyPvTab 落（卡 = state.wkPvCard，工具 = state.wkPvTab）。
   // 注：data-wkpv="" 仍被 [data-wkpv] 属性存在选择器命中，故点击委托（work-mount.js）不用改。
   function renderWkToolTabs() {
     const box = $('wk-pv-tabs')
     if (!box) return
     const cards = previewCardsFor(state.workProj)
-    const head = (cards.length ? '' : '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>') +
-      cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
-    box.innerHTML = head + wkToolDefs().map(
+    const head = cards.length
+      ? cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
+      : hasPreviewOf(state.workProj)
+        ? '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>'
+        : ''
+    const html = head + wkToolDefs().map(
       (t) => `<button type="button" class="wk-pv-tab" data-wkpv="${esc(t.id)}">${esc(t.title)}</button>`,
     ).join('')
+    // 本函数会被项目列表落地 / applyPanes / 帧激活反复调用：内容不变不重写 DOM（同 renderWorkBody 口径）。
+    if (box.innerHTML !== html) box.innerHTML = html
   }
 
   // 类名一律 cmt* 前缀：全部模块顶层声明共享一个 IIFE 作用域（见 probe-web-module-scope）。
@@ -6261,8 +6298,8 @@ function setFirstSendHash(v) { firstSendHash = v }
   const {
     edCMG, edCmg, cmMathExt,
     editorApiGet, editorApiRegister, editorApiSetActive, editorApiUnregister, editorCommand, makeEditorFacade,
-    attachmentUrl, insertAttachmentMarkdown, isDocumentAttachment, isImageAttachment,
-    uploadAttachment, edAttImgPlugin, edAttFilePlugin,
+    attachmentUrl, insertAttachmentMarkdown, insertTexImages, isDocumentAttachment, isImageAttachment,
+    uploadAttachment, uploadProjectAttachment, edAttImgPlugin, edAttFilePlugin,
     copyRenderedImages, copyRenderedSelection,
     renderMarkdown, toggleTask,
     insertAtCursorCM, surroundExt, toggleTaskLineCM, wrapKeymap, wrapSelectionCM,
@@ -6554,10 +6591,19 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // 右栏 UI 落地（唯一处，纯渲染、不挂帧）：预览态 → 显 #wk-pv-body、隐全部工具 pane；工具态 → 隐预览帧、
-  // 显该注册工具 pane（其余 pane 恒隐）。tab 条随栏在场常驻（首枚恒为「预览」，预览态下即 active）。
+  // 显该注册工具 pane（其余 pane 恒隐）。tab 条随栏在场常驻（预览页签只在项目确有可视预览时渲染）。
   // 顶栏「工具栏」胶囊跟着走：栏不在场 = 「工具栏」+ 插件图标（点它开栏），在场 = 「关闭」+ ✕（点它收栏）。
   // 未注册的 wkPvTab（旧持久化值 / 工具被摘）落成「无 pane 在场」，切一次 tab 即归一。
   function applyPvTab() {
+    // tab 条随数据对账：项目列表 / 预览卡表异步落地后，页签集合可能变化（卡出现或消失）。
+    renderWkToolTabs()
+    // 没有可视预览（无卡、无传统 preview 页）⇒ 预览页态不存在：栏开着时页态归一到首个工具页，
+    // 否则 tab 条只剩工具页签、内容区却停在空预览（2026-11-02 用户定案）。仅「已知没有」才归一，
+    // 数据未就绪时保持原页态（否则切到有预览的项目会被先归一成评论页）。
+    if (state.wkPreview && !state.wkPvTab && wkPreviewKnown(state.workProj) && !wkPreviewAvailable(state.workProj)) {
+      const first = wkToolDefs()[0]
+      if (first) state.wkPvTab = first.id
+    }
     const id = state.wkPvTab
     const tool = id ? wkToolDef(id) : null
     const bar = $('wk-pv-tabs')
@@ -6719,6 +6765,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 项目清单未就绪（token/设备门未解锁时 loadSessions 早退 ⇒ state.projects 为空）：此刻 hasPreview
     // 不可信，不挂任何源。等门后补拉的 ensureWork 再入。
     if (!wkProjGroups().length) return
+    // 已知该项目没有可视预览（无卡、无传统 preview 页）：不挂任何源——预览页签也不渲染，
+    // 页态由 applyPvTab 归一到工具页，正常不会走到这里。
+    if (wkPreviewKnown(state.workProj) && !wkPreviewAvailable(state.workProj)) return
     const label = state.workProj
     // 卡表未就绪：先取申报（与外部卡同一请求），落地后重渲 tab 条再挂帧——
     // 不能先挂传统 index.html，再被卡表纠正（那是一次多余的整页导航）。
@@ -7279,6 +7328,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     renderTopbar() // 顶栏与会话列表同拍对账（2026-10-13 待办 13）：wkTabName 按会话标题渲染，
     // SSE 改题/集合变化只会先落到 renderWorkChrome 这条链——缺这口时顶栏胶囊标题要等下一次
     // applyPanes（用户交互）才追上，「更新不及时」的根因即此。innerHTML 比对，未变零写 DOM。
+    renderWkToolTabs() // groups 的 hasPreview 可能随磁盘变化（.claude/preview 增删）→ 预览页签同拍对账
     if (state.workProj) await loadProjectTree(state.workProj, silent)
     else renderWorkBody() // 未选项目时列表/空态也要跟上（loadProjectTree 早退不渲染）
     if (body && sc && body.scrollTop !== sc) body.scrollTop = sc
@@ -11869,6 +11919,9 @@ function setFirstSendHash(v) { firstSendHash = v }
   // @floria/cm6 摊出的 copyRenderedSelection（公式块还原 `$…$`/`$$…$$` 源码，整块覆盖用 data-md
   // 原文，块内碎片/非消息区返回 null）→ 回落纯文本。此拦截是全局唯一入口（msg-actions 不再另起 copy 监听）。
   document.addEventListener('copy', (e) => {
+    // 上游已处理（如 CodeMirror6 在 contentDOM 自写全文剪贴板并 preventDefault，只 preventDefault 不阻断冒泡）：
+    // 此时再用 window.getSelection().toString() 覆盖，只会拿到 CM6 视口内已渲染的行 → 长选区复制被截断。
+    if (e.defaultPrevented) return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed) return
     const text = copyRenderedSelection({ selection: sel }) || sel.toString()
@@ -12493,6 +12546,9 @@ function setFirstSendHash(v) { firstSendHash = v }
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
       if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
     }
+    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
+    const proj = pickHome()
+    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
       for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
       for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
@@ -12747,7 +12803,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, submitting: false, confirming: null, acknowledged: false, error: null }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
   // 「+」浮窗的入口视图（2026-10-25 用户定案：扁平分组的工具栏太乱，改为入口形式——首屏只列
   // 上传动作 + 四类入口，点进某一类后展示该类**全部**条目，不截断；底栏有查询词时退回跨类搜索）。
   const CMD_VIEWS = [
@@ -12863,16 +12919,32 @@ function setFirstSendHash(v) { firstSendHash = v }
     }
     return out
   }
-  // 技能行 = 插件 + 技能（MGR 同源）
+  // 行尾项目标记：项目 label 取编号前缀（`Pj8-工作区机械臂设计` → `Pj8`），无编号则整串。
+  function projTag(label) {
+    const m = /^((?:Sub)?Pj\d+)/i.exec(String(label || ''))
+    return m ? m[1] : String(label || '')
+  }
+  // 技能行 = 插件 + 技能（MGR 同源）+ **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
+  // 项目判定与 + 浮窗文件组同一处（pickHome：会话所属项目 / work 工作项目，空串 = 无项目上下文）。
   function cmdSkillRows(match, grp) {
     const out = []
+    const proj = pickHome()
+    const ps = projSkillsOf(proj)
+    if (ps.list.length) {
+      for (const s of ps.list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    }
     if (!MGR) return out
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     return out
   }
   // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
-  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图含「返回」行）。
+  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
+  // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
+  // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
+  function pickProgressRenders() {
+    return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
+  }
   function pushSearchState(items, base) {
     if (pickAll.err) { items.push({ kind: 'pathwait', name: '索引失败', desc: pickAll.err }); return }
     if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引工作区' }); return }
@@ -12887,7 +12959,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     // @ 后有查询词 = 跨类扁平全局搜索（不按类隔离、按时间混排）。只输入 @ 而无查询词 =
     // 等价于唤出工具栏首屏（与 + 一致）。+ 模式底栏文本只过滤当前入口视图，从不触发全局搜索。
     if (cmd.view) {
-      items.push({ kind: 'back', name: '返回', grp: '导航' })
+      // 文件视图不叠「导航/返回」（2026-11-05 用户定案）：它自带「上级目录」，两行同图标上箭头 + 两个分组标题
+      // 看着像两栏叠在一起；文件视图的退出走 Esc / 点浮窗外（pathup 行同时承担层内上行）。
+      if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(match, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
@@ -12945,7 +13019,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (fresh) {
       // 首次打开确保技能清单/目录层已加载（异步），加载完用当前状态重渲
       loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
-      refreshPick(() => { if (cmd.open) renderCmdPop() })
+      // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
+      ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
     }
   }
   function openCmdPopMention() { openCmdPop(true) }
@@ -12975,6 +13051,13 @@ function setFirstSendHash(v) { firstSendHash = v }
     cmd.items = cmdEntries()
     // 视图切换/查询变化后条目数会变：高亮下标夹回合法区间，否则回车会选中 undefined。
     cmd.active = Math.min(cmd.active, Math.max(0, cmd.items.length - 1))
+    // 滚动位置跨重渲保持（2026-11-05 根因）：列表在文件索引流式进度/数据落地时会整体重渲，
+    // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
+    // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
+    // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
+    const prevVp = cmdPop.querySelector('.viewport')
+    const keepTop = prevVp ? prevVp.scrollTop : 0
+    const prevActive = cmd.prevActive
     let html = ''
     if (cmd.error !== null) {
       html += `<div class="error" role="alert"><span class="errorText">${esc(cmd.error)}</span>${cmd.status === 'failed' ? `<button type="button" class="retry">重试</button>` : ''}</div>`
@@ -12994,15 +13077,21 @@ function setFirstSendHash(v) { firstSendHash = v }
         const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
-        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}</button>`
+        const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
+        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
       }).join('')}</div>`
     }
     cmdPop.innerHTML = html
     cmdPop.hidden = false
     cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
     cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
-    const on = cmdPop.querySelector('.row.rowActive')
-    if (on) on.scrollIntoView({ block: 'nearest' })
+    const vp = cmdPop.querySelector('.viewport')
+    if (vp) vp.scrollTop = keepTop
+    if (cmd.active !== prevActive) {
+      const on = cmdPop.querySelector('.row.rowActive')
+      if (on) on.scrollIntoView({ block: 'nearest' })
+    }
+    cmd.prevActive = cmd.active
   }
   // 风险确认门（dsh RiskConfirmation + Modal 移植）：全屏遮罩 + 居中对话框，checkbox 勾选后才可确认
   function renderRiskModal() {
@@ -14728,28 +14817,46 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
   // 正文引用按 target 分：composer 不插（只进胶囊）；work 插 `![名](file-cache/…)`（CM 行内直渲）。
   // 落盘失败时视觉上行仍有效（无 attName、@ 不可引用，发送链 [Image #N] 照旧上行）。
   // target = editorCommand 落点 id（'composer' 底栏 / 'work' 编辑卡片），缺省底栏
-  async function addImageFiles(files, target) {
+  // filePath = work 编辑卡片当前文件相对路径（kernel paste 钩子传入；缺省读 state.workFile）。
+  // 编辑卡片图片粘贴按扩展名分流（2026-11-02）：`.tex` → 落 <tex 目录>/image/ + `\includegraphics`；
+  // `.md`/`.markdown` → 原 md 引用链；**其它扩展名不响应图片粘贴**（不落 file-cache、不插引用）。
+  async function addImageFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
     const toComposer = tgtEd === 'composer'
+    const workPath = String(filePath || state.workFile || '')
+    const isTex = !toComposer && /\.tex$/i.test(workPath)
+    const isMd = !toComposer && /\.(md|markdown)$/i.test(workPath)
+    const texNames = []
     for (const f of files) {
       if (!/^image\//.test(f.type)) continue
       // 张数上限只约束底栏发送链（pendingImages 是发送态）；编辑卡正文引用不占名额
       if (toComposer && pendingImages.length >= 9) { toast('一次最多 9 张图片'); break }
       let enc
       try { enc = await encodeImg(f) } catch { toast('图片读取失败'); continue }
-      const att = await uploadAttachment(f)
       // 模块化分流（2026-10-21 待办）：work 编辑卡 = 只落盘 + 写正文引用，**不写底栏 pending/胶囊**。
       // 旧实现无论 target 都 push pendingImages + renderImgPills，导致编辑卡粘贴的图串进底栏胶囊行。
       if (!toComposer) {
+        if (isTex) {
+          // tex 图片落 tex 所在目录的 image/（网关递归建目录、同名 -1/-2 去重），正文插 includegraphics
+          const slash = Math.max(workPath.lastIndexOf('/'), workPath.lastIndexOf('\\'))
+          const dir = slash >= 0 ? workPath.slice(0, slash) : ''
+          const att = await uploadProjectAttachment(f, state.workProj, dir ? dir + '/image' : 'image')
+          if (att) texNames.push(att.name)
+          continue
+        }
+        if (!isMd) continue // 编辑卡片仅 md / tex 响应图片粘贴
+        const att = await uploadAttachment(f)
         if (att) insertAttachmentMarkdown(tgtEd, att)
         continue
       }
+      const att = await uploadAttachment(f)
       if (att) { enc.attName = att.name; enc.attRel = att.rel } // @ 浮窗可引用的键（落盘成功才有）
       pendingImages.push(enc)
       // 底栏（composer）上传 = 只进胶囊行待发，**不自动往输入框正文插引用**（2026-10-16 待办 2：
       // 「不要自动在正文渲染，被图片胶囊劫持」）。
       renderImgPills()
     }
+    if (texNames.length) insertTexImages(tgtEd, texNames) // 多张按原顺序，各一行 includegraphics
     if (toComposer) syncGwSend()
   }
   // 文件附件（+ 浮窗「上传文件」/粘贴）：上传落盘 → pendingFiles 入列（发送侧 [文件:占位] 自动相对化）

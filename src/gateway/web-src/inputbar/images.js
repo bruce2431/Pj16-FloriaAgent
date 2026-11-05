@@ -106,28 +106,46 @@ import { syncGwSend } from './send.js'
   // 正文引用按 target 分：composer 不插（只进胶囊）；work 插 `![名](file-cache/…)`（CM 行内直渲）。
   // 落盘失败时视觉上行仍有效（无 attName、@ 不可引用，发送链 [Image #N] 照旧上行）。
   // target = editorCommand 落点 id（'composer' 底栏 / 'work' 编辑卡片），缺省底栏
-  async function addImageFiles(files, target) {
+  // filePath = work 编辑卡片当前文件相对路径（kernel paste 钩子传入；缺省读 state.workFile）。
+  // 编辑卡片图片粘贴按扩展名分流（2026-11-02）：`.tex` → 落 <tex 目录>/image/ + `\includegraphics`；
+  // `.md`/`.markdown` → 原 md 引用链；**其它扩展名不响应图片粘贴**（不落 file-cache、不插引用）。
+  async function addImageFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
     const toComposer = tgtEd === 'composer'
+    const workPath = String(filePath || state.workFile || '')
+    const isTex = !toComposer && /\.tex$/i.test(workPath)
+    const isMd = !toComposer && /\.(md|markdown)$/i.test(workPath)
+    const texNames = []
     for (const f of files) {
       if (!/^image\//.test(f.type)) continue
       // 张数上限只约束底栏发送链（pendingImages 是发送态）；编辑卡正文引用不占名额
       if (toComposer && pendingImages.length >= 9) { toast('一次最多 9 张图片'); break }
       let enc
       try { enc = await encodeImg(f) } catch { toast('图片读取失败'); continue }
-      const att = await uploadAttachment(f)
       // 模块化分流（2026-10-21 待办）：work 编辑卡 = 只落盘 + 写正文引用，**不写底栏 pending/胶囊**。
       // 旧实现无论 target 都 push pendingImages + renderImgPills，导致编辑卡粘贴的图串进底栏胶囊行。
       if (!toComposer) {
+        if (isTex) {
+          // tex 图片落 tex 所在目录的 image/（网关递归建目录、同名 -1/-2 去重），正文插 includegraphics
+          const slash = Math.max(workPath.lastIndexOf('/'), workPath.lastIndexOf('\\'))
+          const dir = slash >= 0 ? workPath.slice(0, slash) : ''
+          const att = await uploadProjectAttachment(f, state.workProj, dir ? dir + '/image' : 'image')
+          if (att) texNames.push(att.name)
+          continue
+        }
+        if (!isMd) continue // 编辑卡片仅 md / tex 响应图片粘贴
+        const att = await uploadAttachment(f)
         if (att) insertAttachmentMarkdown(tgtEd, att)
         continue
       }
+      const att = await uploadAttachment(f)
       if (att) { enc.attName = att.name; enc.attRel = att.rel } // @ 浮窗可引用的键（落盘成功才有）
       pendingImages.push(enc)
       // 底栏（composer）上传 = 只进胶囊行待发，**不自动往输入框正文插引用**（2026-10-16 待办 2：
       // 「不要自动在正文渲染，被图片胶囊劫持」）。
       renderImgPills()
     }
+    if (texNames.length) insertTexImages(tgtEd, texNames) // 多张按原顺序，各一行 includegraphics
     if (toComposer) syncGwSend()
   }
   // 文件附件（+ 浮窗「上传文件」/粘贴）：上传落盘 → pendingFiles 入列（发送侧 [文件:占位] 自动相对化）

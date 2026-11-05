@@ -1345,7 +1345,9 @@ body.kb-open #input-wrap { transition: none; }
   padding: 2px 8px; border: 1px solid transparent; border-radius: 6px;
   background: transparent; font-size: 12px; color: var(--ink); cursor: pointer;
 }
-#cmd-pop .viewport { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+/* 滚动条不渲染（2026-11-05 用户定案）：滚动能力保留，只隐藏条——与 #recent-body / .wk-body 同口径 */
+#cmd-pop .viewport { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+#cmd-pop .viewport::-webkit-scrollbar { display: none; }
 /* 命令类别分组标题（2026-09-09：等宽浮窗对齐 ChatGPT + 菜单形态——分组标题 + 图标行；尺寸对齐 .mp-sec） */
 #cmd-pop .grp { font-size: 12px; font-weight: 600; color: var(--ink-3); padding: 8px 8px 4px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #cmd-pop .row {
@@ -1368,6 +1370,11 @@ body.kb-open #input-wrap { transition: none; }
 #cmd-pop .detail { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #cmd-pop .check { display: inline-flex; flex: none; color: var(--ink); }
 #cmd-pop .check svg { width: 16px; height: 16px; }
+/* 项目技能行尾的编号标记（项目根 .claude/skills 的条目）：随 .detail 之后贴右，窄号不换行 */
+#cmd-pop .projTag {
+  flex: none; margin-left: 4px; padding: 0 5px; border: 1px solid var(--hairline-2); border-radius: 6px;
+  font-size: 11px; line-height: 16px; color: var(--ink-3); white-space: nowrap;
+}
 
 /* 风险确认门（dsh RiskConfirmation + Modal 完全移植：全屏遮罩 + 居中 r24 对话框，
    warning 行 + checkbox 认可 + footer[outline 取消 / primary 确认]） */
@@ -2491,6 +2498,11 @@ body.wk-resizing { cursor: col-resize; user-select: none; }
 .cmt-acts button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
 .cmt-acts button:hover { background: var(--hover); color: var(--text); }
 .cmt-acts button.danger:hover { color: #e0603f; border-color: #e0603f; }
+/* 滑条一律不渲染（2026-11-05 用户定案：侧栏列表与右栏工具页内容只用滚轮/触摸滚动，不出可见滑条）。
+   经典滚动条环境靠 scrollbar-width:none + ::-webkit-scrollbar 双写；滚轮/触摸滚动能力不变。 */
+#recent-body, .wk-body, #wk-proj-pop, .cmt-list { scrollbar-width: none; -ms-overflow-style: none; }
+#recent-body::-webkit-scrollbar, .wk-body::-webkit-scrollbar, #wk-proj-pop::-webkit-scrollbar,
+.cmt-list::-webkit-scrollbar { display: none; }
 /* 顶栏工具栏胶囊（#wk-tb-tool）：形 = .wk-tb-pill（与聊天胶囊同款），active = 面板在场（.wk-tb-pill.on）。 */
 /* 原文评论标记（阅读态）：被批注的行/块加暖色底 + 左侧竖条；已解决 = 中性灰淡显。
    命中元素既有块级（md 标题/引用/列表项）也有行内（段落行 span、代码行 span），故只用

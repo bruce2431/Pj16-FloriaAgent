@@ -20,10 +20,19 @@ import { renderRailExt } from '../rail-ext.js'
   }
 
   // 右栏 UI 落地（唯一处，纯渲染、不挂帧）：预览态 → 显 #wk-pv-body、隐全部工具 pane；工具态 → 隐预览帧、
-  // 显该注册工具 pane（其余 pane 恒隐）。tab 条随栏在场常驻（首枚恒为「预览」，预览态下即 active）。
+  // 显该注册工具 pane（其余 pane 恒隐）。tab 条随栏在场常驻（预览页签只在项目确有可视预览时渲染）。
   // 顶栏「工具栏」胶囊跟着走：栏不在场 = 「工具栏」+ 插件图标（点它开栏），在场 = 「关闭」+ ✕（点它收栏）。
   // 未注册的 wkPvTab（旧持久化值 / 工具被摘）落成「无 pane 在场」，切一次 tab 即归一。
   function applyPvTab() {
+    // tab 条随数据对账：项目列表 / 预览卡表异步落地后，页签集合可能变化（卡出现或消失）。
+    renderWkToolTabs()
+    // 没有可视预览（无卡、无传统 preview 页）⇒ 预览页态不存在：栏开着时页态归一到首个工具页，
+    // 否则 tab 条只剩工具页签、内容区却停在空预览（2026-11-02 用户定案）。仅「已知没有」才归一，
+    // 数据未就绪时保持原页态（否则切到有预览的项目会被先归一成评论页）。
+    if (state.wkPreview && !state.wkPvTab && wkPreviewKnown(state.workProj) && !wkPreviewAvailable(state.workProj)) {
+      const first = wkToolDefs()[0]
+      if (first) state.wkPvTab = first.id
+    }
     const id = state.wkPvTab
     const tool = id ? wkToolDef(id) : null
     const bar = $('wk-pv-tabs')
@@ -185,6 +194,9 @@ import { renderRailExt } from '../rail-ext.js'
     // 项目清单未就绪（token/设备门未解锁时 loadSessions 早退 ⇒ state.projects 为空）：此刻 hasPreview
     // 不可信，不挂任何源。等门后补拉的 ensureWork 再入。
     if (!wkProjGroups().length) return
+    // 已知该项目没有可视预览（无卡、无传统 preview 页）：不挂任何源——预览页签也不渲染，
+    // 页态由 applyPvTab 归一到工具页，正常不会走到这里。
+    if (wkPreviewKnown(state.workProj) && !wkPreviewAvailable(state.workProj)) return
     const label = state.workProj
     // 卡表未就绪：先取申报（与外部卡同一请求），落地后重渲 tab 条再挂帧——
     // 不能先挂传统 index.html，再被卡表纠正（那是一次多余的整页导航）。

@@ -176,6 +176,9 @@ import { setPanel } from '../sidebar/recent.js'
   // @floria/cm6 摊出的 copyRenderedSelection（公式块还原 `$…$`/`$$…$$` 源码，整块覆盖用 data-md
   // 原文，块内碎片/非消息区返回 null）→ 回落纯文本。此拦截是全局唯一入口（msg-actions 不再另起 copy 监听）。
   document.addEventListener('copy', (e) => {
+    // 上游已处理（如 CodeMirror6 在 contentDOM 自写全文剪贴板并 preventDefault，只 preventDefault 不阻断冒泡）：
+    // 此时再用 window.getSelection().toString() 覆盖，只会拿到 CM6 视口内已渲染的行 → 长选区复制被截断。
+    if (e.defaultPrevented) return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed) return
     const text = copyRenderedSelection({ selection: sel }) || sel.toString()

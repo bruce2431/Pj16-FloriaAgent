@@ -33,6 +33,34 @@ import { refreshCard } from '../engine/registry.js'
     }
     return MGR
   }
+  // 项目级技能清单（GET /gateway/plugins?label=<项目>）：项目根 .claude/skills/*/SKILL.md 的 frontmatter，
+  // 返回 [{n, d, inst}]。与 MGR（便携根清单）分离——按项目 label 各自缓存，切项目不串。
+  async function loadProjectSkills(label) {
+    if (!label) return []
+    const res = await fetch(apiUrl('/gateway/plugins?label=' + encodeURIComponent(label)))
+    const data = await res.json()
+    if (!data || !Array.isArray(data.skills)) throw new Error((data && data.error) || 'bad response')
+    return data.skills
+  }
+  // 项目技能按 label 的进程内缓存（+ 工具栏与 @ 搜索共用一份）：{list, loaded, loading, err}。
+  // ensureProjectSkills 同一 label 只发一次请求（在途期间复用同一 Promise），失败记 err 并在下次调用时重试。
+  const PROJ_SKILLS = new Map()
+  function projSkillsOf(label) {
+    if (!label) return { list: [], loaded: true, loading: false, err: '' }
+    let r = PROJ_SKILLS.get(label)
+    if (!r) { r = { list: [], loaded: false, loading: false, err: '' }; PROJ_SKILLS.set(label, r) }
+    return r
+  }
+  function ensureProjectSkills(label) {
+    const r = projSkillsOf(label)
+    if (!label || r.loaded || r.loading) return Promise.resolve(r.list)
+    r.loading = true
+    r.err = ''
+    return loadProjectSkills(label)
+      .then((list) => { r.list = list; r.loaded = true; return r.list })
+      .catch((e) => { r.err = (e && e.message) || String(e); return r.list })
+      .then((list) => { r.loading = false; return list })
+  }
   // 模型配置数据源（/gateway/models：便携根 settings.json 的 model + 模型类环境变量；只读展示）
   let MODELS = null
   let MODELS_LOADING = false
@@ -117,6 +145,9 @@ export {
   MODELS_ERR,
   MODELS_LOADING,
   loadMgrData,
+  ensureProjectSkills,
   loadModelsData,
+  loadProjectSkills,
   modelProviderOf,
+  projSkillsOf,
 }

@@ -1,7 +1,7 @@
 // work 工具页注册表（2026-10-07，参考 Prism；2026-10-12 单链路：开合归胶囊、页态归本 tab 条）：
 // work 右栏（#work-preview）顶部水平标签栏的登记处。**右栏开/关 = 顶栏胶囊直调侧栏 api
 // setPane('workspace', on)（唯一动作，见 work-mount.js）**；**显示哪一页 = 本 tab 条**
-// （首枚恒为「预览」页签，其后是已注册工具）；active 与页态共用一个状态源 state.wkPvTab
+// （预览页签只在项目确有可视预览时出现，其后是已注册工具）；active 与页态共用一个状态源 state.wkPvTab
 // （'' = 预览页，工具 id = 工具页）。右栏在场时 tab 条常驻（applyPvTab 按 wkPreview 显隐）。
 // 任何模块可调 registerWkTool({ id, title, pane, mount }) 挂一枚工具 tab——本表只做「注册 → 按序渲 tab →
 // 交调用方切内容」，不写任何工具内容（与 engine/registry.js 视图卡同思路）。
@@ -65,20 +65,35 @@ import { previewCardsFor } from '../feature/preview-frame.js'
     return WK_TOOL_DEFS.length ? WK_TOOL_DEFS[0].id : ''
   }
 
-  // tab 条渲染（唯一口）：预览工作区卡片在前（每卡一枚，名称取 card.json 的 title，data-wkcard 定址），
-  // 其后 = 宿主注册序 + 帧申报序（wkToolDefs）。**无卡项目的旧形态保留首枚「预览」页签**
-  // （data-wkpv="" → 回传统单页 index.html）；有卡时不再渲染它——卡片就是预览页本身。
+  // 当前项目有没有可视预览：预览卡（.claude/preview/<id>/card.json 申报）或传统单页
+  // .claude/preview/index.html（groups 的 hasPreview）。两者皆无 = 没有预览页。
+  // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
+  function wkPreviewAvailable(label) {
+    return !!label && (previewCardsFor(label).length > 0 || hasPreviewOf(label))
+  }
+  function wkPreviewKnown(label) {
+    return !!label && wkProjGroups().length > 0 && previewCardsReadyFor(label)
+  }
+
+  // tab 条渲染（唯一口）：预览相关页签只在该项目**确有可视预览**时出现——
+  // 有卡 = 每卡一枚（名称取 card.json 的 title，data-wkcard 定址）；无卡但有传统单页 = 单枚「预览」
+  // （data-wkpv="" → 回 index.html）；两者皆无 = 不渲染预览页签，只留工具页签（2026-11-02 用户定案）。
   // active 态由 work.js applyPvTab 落（卡 = state.wkPvCard，工具 = state.wkPvTab）。
   // 注：data-wkpv="" 仍被 [data-wkpv] 属性存在选择器命中，故点击委托（work-mount.js）不用改。
   function renderWkToolTabs() {
     const box = $('wk-pv-tabs')
     if (!box) return
     const cards = previewCardsFor(state.workProj)
-    const head = (cards.length ? '' : '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>') +
-      cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
-    box.innerHTML = head + wkToolDefs().map(
+    const head = cards.length
+      ? cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
+      : hasPreviewOf(state.workProj)
+        ? '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>'
+        : ''
+    const html = head + wkToolDefs().map(
       (t) => `<button type="button" class="wk-pv-tab" data-wkpv="${esc(t.id)}">${esc(t.title)}</button>`,
     ).join('')
+    // 本函数会被项目列表落地 / applyPanes / 帧激活反复调用：内容不变不重写 DOM（同 renderWorkBody 口径）。
+    if (box.innerHTML !== html) box.innerHTML = html
   }
 
 export {

@@ -28,7 +28,7 @@
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
        app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
   <link rel="stylesheet" href="/webui/floria-web.css?v=3" />
-  <link rel="stylesheet" href="/styles.css?v=646" />
+  <link rel="stylesheet" href="/styles.css?v=654" />
 </head>
 <body>
 <div id="app">
@@ -393,13 +393,13 @@
 <script src="/vendor/katex/katex.min.js?v=473"></script>
 <!-- CM6 编辑层（2026-10-24）：@floria/cm6 包自带的全局 IIFE（CM6 依赖全内联，挂 window.FloriaCM6），
      底栏与 work 编辑区共用。须在 app.js 之前加载；公式渲染调全局 katex，故排在 KaTeX 之后。 -->
-<script src="/cm6/floria-cm6.iife.js?v=4"></script>
+<script src="/cm6/floria-cm6.iife.js?v=5"></script>
 <!-- 解压组件（2026-10-24）：xlsx/docx 预览（web-src/sidebar/work/work-doc.js）用 fflate.unzipSync
      解 OOXML 包；须在 app.js 之前挂到 window.fflate。 -->
 <script src="/vendor/fflate.js?v=1"></script>
 <!-- UI 基础包 IIFE（2026-10-24）：挂 window.FloriaWeb（I / fileIcon / esc / fromHtml / VERSION），
      核心图标表改为转调本全局。须在 app.js 之前加载，缺包时模块直接抛错。 -->
 <script src="/webui/floria-web.iife.js?v=3"></script>
-<script src="/app.js?v=646"></script>
+<script src="/app.js?v=654"></script>
 </body>
 </html>

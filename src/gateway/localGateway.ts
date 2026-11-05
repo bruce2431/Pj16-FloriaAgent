@@ -2001,6 +2001,22 @@ function parseSkillFrontmatter(text: string): { name: string; description: strin
   return out
 }
 
+// 技能目录扫描（唯一处）：只认带 SKILL.md 的目录，名称/描述取 frontmatter，缺省回落目录名。
+// 便携根（listPlugins 的 personal.skills）与项目根（/gateway/plugins?label=）共用本函数——
+// 项目技能 = <项目根>/.claude/skills（项目会话安装落点见工作区规范）。
+function readSkillDir(skillsDir: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  if (!isDir(skillsDir)) return out
+  for (const e of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue
+    const fp = join(skillsDir, e.name, 'SKILL.md')
+    if (!existsSync(fp)) continue
+    const fm = parseSkillFrontmatter(readFileSync(fp, 'utf8'))
+    out.push({ n: fm.name || e.name, d: fm.description, inst: 1 })
+  }
+  return out
+}
+
 function listPlugins(root: string): Record<string, unknown> {
   const pluginsDir = join(root, '.claude', 'plugins')
   const skillsDir = join(root, '.claude', 'skills')
@@ -2022,16 +2038,7 @@ function listPlugins(root: string): Record<string, unknown> {
   }
 
   // 已安装技能（只有带 SKILL.md 的目录才算技能）
-  const personalSkills: Array<Record<string, unknown>> = []
-  if (isDir(skillsDir)) {
-    for (const e of readdirSync(skillsDir, { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name.startsWith('.')) continue
-      const fp = join(skillsDir, e.name, 'SKILL.md')
-      if (!existsSync(fp)) continue
-      const fm = parseSkillFrontmatter(readFileSync(fp, 'utf8'))
-      personalSkills.push({ n: fm.name || e.name, d: fm.description, inst: 1 })
-    }
-  }
+  const personalSkills = readSkillDir(skillsDir)
 
   // 公开市场（官方 marketplace.json 的 plugins[]；技能条目按名称含 skill 归类）
   const marketPlugins: Array<Record<string, unknown>> = []
@@ -2493,8 +2500,21 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     }
     return
   }
+  // ?label=<项目> = 该项目自己的技能清单（项目根 .claude/skills），供 work 右栏「技能」工具页；
+  // 无 label = 便携根清单（管理视图「插件」卡）。两者结构不合并：项目技能只回 {label, skills}。
   if (req.method === 'GET' && url.pathname === '/gateway/plugins') {
+    const plLabel = (url.searchParams.get('label') || '').trim()
     try {
+      if (plLabel) {
+        const plProj = findProjects(root).find((g) => g.label === plLabel)
+        if (!plProj) {
+          sendJson(res, 404, { error: 'project not found' })
+          return
+        }
+        const plDir = resolve(plProj.dir, '..', '..') // <项目根>/.claude/projects → <项目根>
+        sendJson(res, 200, { label: plLabel, skills: readSkillDir(join(plDir, '.claude', 'skills')) })
+        return
+      }
       sendJson(res, 200, listPlugins(root))
     } catch (e) {
       sendError(res, e)

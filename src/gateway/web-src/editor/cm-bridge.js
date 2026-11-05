@@ -26,8 +26,8 @@
   const {
     edCMG, edCmg, cmMathExt,
     editorApiGet, editorApiRegister, editorApiSetActive, editorApiUnregister, editorCommand, makeEditorFacade,
-    attachmentUrl, insertAttachmentMarkdown, isDocumentAttachment, isImageAttachment,
-    uploadAttachment, edAttImgPlugin, edAttFilePlugin,
+    attachmentUrl, insertAttachmentMarkdown, insertTexImages, isDocumentAttachment, isImageAttachment,
+    uploadAttachment, uploadProjectAttachment, edAttImgPlugin, edAttFilePlugin,
     copyRenderedImages, copyRenderedSelection,
     renderMarkdown, toggleTask,
     insertAtCursorCM, surroundExt, toggleTaskLineCM, wrapKeymap, wrapSelectionCM,

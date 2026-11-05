@@ -38,11 +38,7 @@ import { apiUrl } from '../../../engine/gateway.js'
     const v = state.mgrView
     const isApps = v.kind === 'apps'
     const kindName = isApps ? '应用' : v.kind === 'skills' ? '技能' : '插件'
-    const sub = isApps
-      ? '工作区根 .claude/preview 申报的界面单元 · 启用后侧栏出现该应用 tab'
-      : v.kind === 'skills'
-        ? '个人 = 已安装技能（扫描便携根 .claude/skills）· 公开 = 官方市场技能'
-        : '个人 = 已安装插件（扫描便携根 .claude/plugins）· 公开 = 官方市场插件'
+    // 不传 sub / foot：插件 tab 不展示「申报说明」「数据源」这类提示文案（2026-11-02 用户定案）。
     MgrUI.browse(body, {
       // 顶层切换＝「插件 / 技能 / 应用」三态：应用与插件/技能同轴，故并入同一段控件（原在公开/个人行）
       kinds: [
@@ -52,7 +48,6 @@ import { apiUrl } from '../../../engine/gateway.js'
       ],
       kind: v.kind,
       title: kindName,
-      sub,
       search: {
         placeholder: isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…',
         value: v.q,
@@ -60,7 +55,6 @@ import { apiUrl } from '../../../engine/gateway.js'
       // 公开/个人只对「插件 / 技能」轴有意义，应用态不显示该行
       cats: isApps ? [] : [{ id: 'public', label: '公开' }, { id: 'personal', label: '个人' }],
       cat: v.cat,
-      foot: isApps ? '数据源：工作区根 .claude/preview（/gateway/preview-cards）' : '数据源：网关 /gateway/plugins 实时扫描',
       onKind(id) { v.kind = id; saveMgrView(); ctx.rerender() },
       onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
       onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },

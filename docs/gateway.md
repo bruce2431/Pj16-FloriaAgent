@@ -203,13 +203,15 @@ CLI 交互权限弹窗接网关中继——`src/bridge/gatewayPermissionRelay.ts
 
 ## 10. web 插件/技能管理视图数据源（MGR）
 
-入口 = 管理视图三态之一 `/manage/plugins`（另有 projects/models），顶部「插件/技能」切换 + 个人/公开分类 + 搜索过滤，卡片网格渲染（app.js fetch `/gateway/plugins`，每类底部标「数据源：网关实时扫描」）。
+入口 = 管理视图三态之一 `/manage/plugins`（另有 projects/models），顶部「插件/技能/应用」切换 + 个人/公开分类 + 搜索过滤，卡片网格渲染（app.js fetch `/gateway/plugins`；不展示「数据源」类提示文案）。
 
 网关端点 `GET /gateway/plugins`（`localGateway.ts` `listPlugins`，每次请求便携根实时扫描、无缓存）：
 - 已安装插件 = `.claude/plugins/<name>/.claude-plugin/plugin.json`（跳过 `data`/`marketplaces`/隐藏目录）
 - 已安装技能 = `.claude/skills/<name>/SKILL.md` frontmatter（name/description）
 - 公开市场 = `.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` 的 `plugins[]`（名称含 "skill" 归技能类）
 - 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,inst}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+
+**项目技能变体 `GET /gateway/plugins?label=<项目>`**（2026-11-05）：供 work 右栏「技能」工具页。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/skills/*/SKILL.md` frontmatter，响应 `{label, skills:[{n,d,inst}]}`；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单**结构不合并**（只有 `{label, skills}`，不产 plugins/分类）；两处共用同一扫描函数 `readSkillDir`（只认含 `SKILL.md` 的子目录，名称/描述取 frontmatter，缺省回落目录名）。
 
 **定位 = 只读清单**（浏览/检索/已装标记）；装卸/启停/配置仍走 CLI `/plugin`（`ManagePlugins.tsx`），web 不做插件写操作。
 
