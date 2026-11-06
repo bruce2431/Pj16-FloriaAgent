@@ -87,6 +87,9 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'feature/comment/comment-composer.js', part: 1 },
   { file: 'views/cards/comment/comment-panel.js', part: 1 },
   { file: 'views/cards/comment/comment-card.js', part: 1 },
+  // 项目选择器（2026-11-06）：work 侧栏 #wk-proj-pop 与底栏 #proj-pop 共用的唯一实现；
+  // 数据源 = state.projects（后端 findProjects），消费方 commands.js / work-files.js 均在其后。
+  { file: 'feature/project-picker/project-picker.js', part: 1 },
   // work 视图项目槽缺省（WORK_SLOT_DEF，2026-10-10 自 engine/state.js 下移为 work 领域值）：须在 work 侧栏
   // 各件之前（work-mount.js 的 initWork 调 loadWork(WORK_SLOT_DEF)、work-context.js 的 loadWorkSlot 同用）。
   { file: 'sidebar/work-state.js', part: 1 },

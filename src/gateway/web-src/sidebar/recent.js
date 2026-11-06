@@ -320,6 +320,9 @@ import { renderList, renderProject } from './mgr.js'
     pop.addEventListener('click', (e) => {
       const b = e.target.closest('.rm-item')
       if (!b) return
+      // 菜单内部点击必须止于此：closeRowMenu 会把 pop 从 DOM 摘掉，若事件继续冒泡，文档级
+      // 「点空白收起」拿到已脱离文档的 target（closest 一律 null）→ 会把项目的下拉一并误关。
+      e.stopPropagation()
       const src = hit.src
       closeRowMenu()
       src.pick(b.dataset.a, hit.el)

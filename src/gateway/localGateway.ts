@@ -21,7 +21,7 @@
  * HTTP/WS 用 node:http + ws（已验证可打包进 bun 编译产物），不依赖 Bun.serve。
  */
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, openSync, closeSync, truncateSync, watch, mkdirSync, renameSync, createReadStream, type FSWatcher, type Dirent } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, openSync, closeSync, truncateSync, unlinkSync, watch, mkdirSync, renameSync, createReadStream, type FSWatcher, type Dirent } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join, resolve, dirname, extname, basename, sep, isAbsolute, delimiter } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -1165,6 +1165,185 @@ export function trashProjectEntry(projRoot: string, rel: string): EntryOpResult 
   }
   renameSync(abs, to)
   return { ok: true, trash: `.trash/${basename(to)}` }
+}
+
+// ---------- 项目归档 / 临时项目删除（2026-11-06 work 项目行菜单） ----------
+// 工作区根下的项目目录不是「文件树条目」，/gateway/file/* 的 resolveWithinRoot 口径管不到
+// 「整个项目消失」这件事，故单列两个接口。目录真身只有一处：<root>/<label>（findProjects 的
+// dir 上两级），label 必须是根的直接子目录名——任何含分隔符 / `.` / `..` 的写法一律拒。
+function tsStamp(): string {
+  const d = new Date()
+  const p2 = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
+}
+
+// 关掉项目根下所有 SSE watcher。Windows 上 fs.watch 对**子目录**（<项目>/.claude/projects）持有目录句柄，
+// 该句柄会让父目录（项目根）的 rename 返回 EPERM——表现为「包已生成，但移入 .trash 失败」。
+// 实测：watch a/b 后 rename a → EPERM；w.close() 后同一次 rename 立即成功。项目即将整体移走，watch 本就该销毁。
+function closeSseWatchesUnder(projRoot: string): void {
+  const base = resolve(projRoot).toLowerCase()
+  for (const [dir, w] of [...sseWatches]) {
+    const d = resolve(dir).toLowerCase()
+    if (d === base || d.startsWith(base + sep)) {
+      try {
+        w.close()
+      } catch {
+        /* 忽略 */
+      }
+      sseWatches.delete(dir)
+    }
+  }
+}
+
+// 项目目录整体移入 <root>/.trash/：工作区规范禁止 rm，.trash 本身就是撤销位。
+// 归档与「临时项目删除」共用本口；rename 是同卷原子改名，不拷贝内容。
+function moveProjectDirToTrash(
+  root: string,
+  label: string,
+): { ok: true; trash: string } | { ok: false; code: number; error: string } {
+  const projRoot = resolve(root, label)
+  if (!label || label !== basename(label) || label === '.' || label === '..' || dirname(projRoot) !== resolve(root)) {
+    return { ok: false, code: 400, error: 'invalid label' }
+  }
+  if (!existsSync(projRoot) || !statSync(projRoot).isDirectory()) return { ok: false, code: 404, error: 'not found' }
+  closeSseWatchesUnder(projRoot)
+  const trash = join(root, '.trash')
+  mkdirSync(trash, { recursive: true })
+  let to = join(trash, `${tsStamp()}-${label}`)
+  for (let i = 1; existsSync(to); i++) to = join(trash, `${tsStamp()}-${i}-${label}`)
+  try {
+    renameSync(projRoot, to)
+  } catch (e) {
+    return { ok: false, code: 500, error: `移入 .trash 失败：${(e as Error).message}` }
+  }
+  return { ok: true, trash: `.trash/${basename(to)}` }
+}
+
+// 跑一个外部命令并等退出码（归档用系统 tar：流式打包、内存恒定、跨平台自带）。
+// stdout 丢弃（不把 GB 级进度读进内存），stderr 只留尾部 4KB 供失败文案定位——tar 的错误全在 stderr，
+// 只报退出码会把「路径解析失败 / 磁盘满」这类原因糊成一句「压缩失败」。
+function runProcessQuiet(cmd: string, args: string[]): Promise<{ code: number; err: string }> {
+  return new Promise((done) => {
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false })
+    } catch {
+      done({ code: -1, err: '' })
+      return
+    }
+    let err = ''
+    child.stderr?.on('data', (b: Buffer) => {
+      err = (err + b.toString()).slice(-4096)
+    })
+    let settled = false
+    child.on('error', (e) => {
+      if (!settled) {
+        settled = true
+        done({ code: -1, err: String(e?.message || e) })
+      }
+    })
+    child.on('exit', (code) => {
+      if (!settled) {
+        settled = true
+        done({ code: code ?? -1, err: err.trim() })
+      }
+    })
+  })
+}
+
+// Windows 必须用系统自带 bsdtar 的绝对路径：网关继承的 PATH 里常有 Git Bash 的 /usr/bin/tar（MSYS tar），
+// 它把 `F:/@WrokSpace` 的盘符冒号当远端主机（`Cannot connect to WrokSpace/...`，退出码 2）。
+// 非 Windows 直接用 PATH 里的 tar（macOS bsdtar / Linux GNU tar 参数一致）。
+function tarBin(): string {
+  if (process.platform === 'win32') {
+    const p = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    if (existsSync(p)) return p
+  }
+  return 'tar'
+}
+
+// 项目占用判定（2026-11-06）：归档 / 删除会整体改项目目录名，正在该目录里跑的会话（终端 CLI 与
+// web 会话子进程都经 /clients 注册，sid 即 jsonl 路径，启动根可从 sid 还原；两者 cwd 都是项目根）
+// 会瞬间失根。命中即拒绝，让用户先关会话——不自动杀用户会话，也不做「先打包再失败」的半成品。
+// cliClients 在断线重连 ~1s 窗口会暂 miss，再由活动表（带 cwd + pid，TTL 内且进程存活）兜一层。
+// 预览后端（网关自己的子进程）不算用户会话，归档前由调用方 killBackend 停掉。
+function projectUseBlocker(root: string, projRoot: string): string | null {
+  const base = resolve(projRoot).toLowerCase()
+  const inside = (p: string): boolean => {
+    const a = resolve(p).toLowerCase()
+    return a === base || a.startsWith(base + sep)
+  }
+  for (const sid of cliClients.keys()) {
+    const sr = sessionRootFromId(sid, root)
+    if (sr && inside(sr)) return '项目内有在线会话，请先关闭会话再操作'
+  }
+  const now = Date.now()
+  for (const [, act] of sessionActivity) {
+    if (now - act.updatedAt > ACTIVITY_TTL_MS) continue
+    if (act.cwd && act.pid && isPidAlive(act.pid) && inside(act.cwd)) {
+      return '项目内有在线会话，请先关闭会话再操作'
+    }
+  }
+  return null
+}
+
+/**
+ * 项目归档：打包到 <root>/.achrives/<label>-<ts>.tar.gz → 原目录移入 <root>/.trash/。
+ * 格式选 tar.gz 而非 zip：顺序流写、无中央目录索引，进程中断只会截断尾部、不会整包不可读。
+ * 压缩用系统 tar（Windows 10+ 自带 System32\tar.exe，macOS/Linux 自带），不进进程内存。
+ * 归档产物与 .trash 同卷，rename 即完成；tar 失败时清掉半成品，磁盘不留误导性残包。
+ */
+export async function archiveProject(
+  root: string,
+  label: string,
+): Promise<{ ok: true; archive: string; trash: string; bytes: number } | { ok: false; code: number; error: string }> {
+  const projRoot = resolve(root, label)
+  if (!label || label !== basename(label) || label === '.' || label === '..' || dirname(projRoot) !== resolve(root)) {
+    return { ok: false, code: 400, error: 'invalid label' }
+  }
+  if (!existsSync(projRoot) || !statSync(projRoot).isDirectory()) return { ok: false, code: 404, error: 'not found' }
+  const blocker = projectUseBlocker(root, projRoot)
+  if (blocker) return { ok: false, code: 409, error: blocker }
+  killBackend(label) // 预览后端是网关子进程（cwd 在项目内），先停掉再打包/改名
+  const archDir = join(root, '.achrives')
+  mkdirSync(archDir, { recursive: true })
+  let dest = join(archDir, `${label}-${tsStamp()}.tar.gz`)
+  for (let i = 1; existsSync(dest); i++) dest = join(archDir, `${label}-${tsStamp()}-${i}.tar.gz`)
+  const out = await runProcessQuiet(tarBin(), ['-czf', dest, '-C', root, label])
+  if (out.code !== 0) {
+    try {
+      if (existsSync(dest)) unlinkSync(dest) // 本次刚生成的半成品，非用户数据
+    } catch {
+      /* 忽略 */
+    }
+    const why = out.err ? `：${out.err.split('\n').slice(-2).join(' ')}` : ''
+    return { ok: false, code: 500, error: `压缩失败（tar 退出码 ${out.code}）${why}` }
+  }
+  let bytes = 0
+  try {
+    bytes = statSync(dest).size
+  } catch {
+    /* 忽略 */
+  }
+  const moved = moveProjectDirToTrash(root, label)
+  if (!moved.ok) {
+    return { ok: false, code: moved.code, error: `已生成 .achrives/${basename(dest)}，但${moved.error}` }
+  }
+  return { ok: true, archive: `.achrives/${basename(dest)}`, trash: moved.trash, bytes }
+}
+
+/** 临时项目（根级时间戳任务区）删除 = 移入 .trash/；非临时项目一律拒（长期项目只提供归档）。 */
+export function deleteTempProject(
+  root: string,
+  label: string,
+): { ok: true; trash: string } | { ok: false; code: number; error: string } {
+  if (!/^\d{8,14}-/.test(label)) return { ok: false, code: 400, error: '仅临时项目可删除' }
+  const projRoot = resolve(root, label)
+  if (!existsSync(projRoot) || !statSync(projRoot).isDirectory()) return { ok: false, code: 404, error: 'not found' }
+  const blocker = projectUseBlocker(root, projRoot)
+  if (blocker) return { ok: false, code: 409, error: blocker }
+  killBackend(label)
+  return moveProjectDirToTrash(root, label)
 }
 
 /**
@@ -3189,6 +3368,42 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       )
       if (!cOut.ok) sendJson(res, cOut.code, { error: cOut.error })
       else sendJson(res, 200, cOut)
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 项目归档：POST /gateway/project/archive {label} → 打包 .achrives/<label>-<ts>.tar.gz + 原目录进 .trash/
+  // （2026-11-06 work 项目行菜单长按/右键）。只认 findProjects 里 scope==='project' 的真项目。
+  // 大项目打包是分钟级同步等待：前端已 toast 告知「正在归档」，本请求即完成信号。
+  if (req.method === 'POST' && url.pathname === '/gateway/project/archive') {
+    try {
+      const ap = await readReportBody(req)
+      const aLabel = typeof ap.label === 'string' ? ap.label : ''
+      if (!findProjects(root).some((g) => g.scope === 'project' && g.label === aLabel)) {
+        sendJson(res, 404, { error: 'project not found' })
+        return
+      }
+      const aOut = await archiveProject(root, aLabel)
+      if (!aOut.ok) sendJson(res, aOut.code, { error: aOut.error })
+      else sendJson(res, 200, aOut)
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 临时项目删除：POST /gateway/project/delete {label} → 移入 .trash/（仅根级时间戳任务区，2026-11-06）
+  if (req.method === 'POST' && url.pathname === '/gateway/project/delete') {
+    try {
+      const dpj = await readReportBody(req)
+      const dLabel = typeof dpj.label === 'string' ? dpj.label : ''
+      if (!findProjects(root).some((g) => g.scope === 'project' && g.label === dLabel)) {
+        sendJson(res, 404, { error: 'project not found' })
+        return
+      }
+      const dOut = deleteTempProject(root, dLabel)
+      if (!dOut.ok) sendJson(res, dOut.code, { error: dOut.error })
+      else sendJson(res, 200, dOut)
     } catch (e) {
       sendError(res, e)
     }

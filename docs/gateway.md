@@ -331,6 +331,14 @@ work 文件树行操作浮窗（[web-ui.md](web-ui.md) §45）的提交侧。两
 
 **`POST /gateway/file/move`**（2026-10-14，work 文件树拖拽移动）body `{label, path, dir}` → `moveProjectEntry(projRoot, path, dir)`。`dir` = 目标目录（项目根相对，空串 = 项目根，**不自建多级**，不存在或非目录 → **404**）；basename 随源不变（移动不改名，改名走 rename）；移入自身或其子目录 → **400**；目标同名已存在 → **409**；源越界/空 `path` → **403**，不存在 → **404**；已在目标处 → 200 幂等 no-op。成功 `{ok, name, path}`（新项目内相对路径，正斜杠）。
 
+**项目整体归档 / 临时项目删除**（work 项目下拉行的长按 / 右键菜单，[web-ui.md](web-ui.md) §69.1）：这两口动的是**项目目录本身**（`<root>/<label>`），不是项目内条目，故不走 `resolveWithinRoot`——`label` 必须是工作区根的**直接子目录名**（含分隔符 / `.` / `..` → 400），且必须命中 `findProjects` 里 `scope==='project'` 的组（404）。
+
+- **`POST /gateway/project/archive`** body `{label}` → `archiveProject()`：`tar -czf <root>/.achrives/<label>-<YYYYMMDDHHMMSS>.tar.gz -C <root> <label>`（系统 tar：Windows 10+ 自带 `System32\tar.exe`，macOS/Linux 自带；顺序流打包、内存恒定），成功后 `renameSync` 把原目录移入 `<root>/.trash/<ts>-<label>`。**格式选 tar.gz 不选 zip**：无中央目录索引，进程中断只截断尾部、不会整包不可读；`.achrives/` 里的历史 `.zip` 原样保留。tar 失败清掉本次半成品；打包成功但 `.trash` 移动失败（Windows 占用）→ 500，错误文案带已生成的包路径，原目录原地不动。响应 `{ok, archive:'.achrives/<名>', trash:'.trash/<名>', bytes}`。
+- **`POST /gateway/project/delete`** body `{label}` → `deleteTempProject()`：**仅根级时间戳任务区**（`/^\d{8,14}-/`）可删，其余 400；语义 = 目录移入 `<root>/.trash/<ts>-<label>`（禁止 `rm`）。响应 `{ok, trash}`。
+- **移目录前必须关掉本项目的 SSE watcher**：`ensureSseWatches` 对每个项目 watch `<项目>/.claude/projects`，Windows 上该 `fs.watch` 句柄会让**父目录**（项目根）`renameSync` 返回 `EPERM`（实测：watch `a/b` 后 rename `a` 失败，`w.close()` 后同一次 rename 立刻成功）——不关则表现为「tar 已生成，但移入 `.trash` 失败」。故 `moveProjectDirToTrash` 在 rename 前调 `closeSseWatchesUnder(projRoot)`（按路径前缀摘 `sseWatches` 并 close；项目整体移走，watcher 本就该销毁）。
+- **占用防护（两口共用 `projectUseBlocker`）**：项目内有在线会话 → **409** `项目内有在线会话，请先关闭会话再操作`（判据两条：`cliClients` 的 sid 经 `sessionRootFromId` 还原启动根落在项目内；`sessionActivity` 中 TTL 内且 `isPidAlive` 的 `cwd` 落在项目内——后者兜住断线重连 ~1s 的注册空窗）。**不自动杀用户会话**。预览后端是网关自己的子进程（不是用户会话），归档 / 删除前由端点调 `killBackend(label)` 停掉，避免改名后残留进程失根。
+- 两端点同步等待（大项目打包是分钟级）：请求返回即完成信号，前端等待期 toast「正在归档…」。受 `/gateway/*` token 校验保护。
+
 - **探针锚点**：`probes/probe-file-tree-ops.ts`（直接 import 四件真实现：重命名 13 例 + 删除 12 例 + 写内容 10 例〔越界/空 rel 403、不存在与目录 404、基线不符 409 且不覆盖、基线正确写入、无基线强制覆盖〕+ 端点转译/ETag/`SKIP_TREE_DIRS` 文本断言，43 项；临时树建在 `os.tmpdir()`，跑完自清；评论读写 10 例见 §17）；`probes/probe-file-create.ts`（create/upload：26 例——创建文件/目录、落点 ''=项目根、409 不覆盖、落点逃逸 403、落点目录不存在 404、保留名清洗、空名 400、上传落盘/序号避让/递归建目录/逃逸 403/basename 化解）。
 
 ## 17. 项目评论批注端点（`/gateway/comments`，2026-10-06）

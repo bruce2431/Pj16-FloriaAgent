@@ -27,7 +27,7 @@ import { state } from './ui-state.js'
 
   // 会话的项目归属（chat 侧栏唯一判据，2026-11-06 用户定案）：临时项目 label 下的会话按**全局根**对待（''）。
   // 根级时间戳任务区只是 work 的文件树入口，不是可归属的会话项目——chat 侧栏不识别它、也不显示项目标签；
-  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 work-files.js / commands.js projList）。
+  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 feature/project-picker/）。
   const sessionProjLabel = (s) =>
     s && s.projectScope === 'project' && s.projectLabel && !isTempProjLabel(s.projectLabel) ? s.projectLabel : ''
 

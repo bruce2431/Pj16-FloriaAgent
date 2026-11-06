@@ -1310,16 +1310,22 @@ body.kb-open #input-wrap { transition: none; }
   box-shadow: var(--shadow-sm), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
 }
 #proj-pop[hidden] { display: none; }
-#proj-pop .row {
-  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
-  border-radius: 8px; font-size: 13px; color: var(--ink); cursor: pointer; white-space: nowrap;
+/* 项目选择器行（唯一实现 = feature/project-picker/project-picker.js）：底栏 #proj-pop 与 work
+   #wk-proj-pop 共用同一份结构（图标 + 名称 + 选中对勾），尺寸/位置由各自容器决定（2026-11-06）。 */
+.pk-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 8px; border: none; border-radius: 8px; background: transparent;
+  font: inherit; font-size: 13px; color: var(--ink); text-align: left; cursor: pointer; white-space: nowrap;
+  /* 长按是唤出行浮窗的手势：不加这三条，iPad 长按会先触发文本选择 / 系统 callout，浮窗被吃掉（同 .sess-item） */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
-#proj-pop .row:hover { background: var(--hover-ink); }
-#proj-pop .row .pIco { display: inline-flex; flex: none; color: var(--ink-3); }
-#proj-pop .row .pIco svg { width: 14px; height: 14px; display: block; }
-#proj-pop .row .pLabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-#proj-pop .row .check { display: inline-flex; flex: none; color: var(--ink); }
-#proj-pop .row .check svg { width: 16px; height: 16px; display: block; }
+.pk-row:hover { background: var(--hover-ink); }
+.pk-row.on { font-weight: 600; }
+.pk-row .pk-ico { display: inline-flex; flex: none; color: var(--ink-3); }
+.pk-row .pk-ico svg { width: 14px; height: 14px; display: block; }
+.pk-row .pk-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pk-row .pk-check { display: inline-flex; flex: none; color: var(--ink); }
+.pk-row .pk-check svg { width: 16px; height: 16px; display: block; }
 /* ===== 命令菜单 #cmd-pop（dsh PopupSelectView shell 完全移植：PopupSelectView.module.css）=====
    定位 = dsh .card（absolute、bottom:calc(100%+4px)、z100、padding 4px）；
    2026-09-09 等宽化：left:0+right:0 = 与输入栏同宽（#mention-pop 同款做法，#input-wrap 为定位上下文）；
@@ -2263,9 +2269,10 @@ body.touch .folder-head .folder-add { display: inline-flex; } /* 真触屏恒显
 
 #wk-proj-pop { top: calc(100% - 2px); left: 10px; right: 10px; padding: 4px; max-height: 60vh; overflow-y: auto; }
 #wk-proj-pop[hidden], #wk-view-pop[hidden], #wk-new-pop[hidden] { display: none; }
-.wkp-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text); text-align: left; }
-.wkp-row:hover { background: var(--hover); }
-.wkp-row.on { background: var(--active); font-weight: 600; }
+/* work 下拉的行 = 共享 .pk-row，只覆盖 work 树的色变量（尺寸仍由 #wk-proj-pop 容器决定）。 */
+#wk-proj-pop .pk-row { color: var(--text); }
+#wk-proj-pop .pk-row:hover { background: var(--hover); }
+#wk-proj-pop .pk-row.on { background: var(--active); }
 .wkp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .wk-tabs { display: flex; align-items: center; gap: 4px; padding: 0 8px 4px 12px; position: relative; }

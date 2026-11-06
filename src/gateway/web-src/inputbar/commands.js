@@ -6,6 +6,7 @@ import { mentionPathToken } from '../core/mention-syntax.js'
 import { findSession, hashOf } from '../engine/sessions.js'
 import { inputEl, state, ALL } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject, sessionProjLabel } from '../core/util.js'
+import { createProjectPicker } from '../feature/project-picker/project-picker.js'
 import { pendingImages, uploadedMentionItems } from './images.js'
 import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, inHomeProject, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickHome, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
@@ -66,29 +67,40 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
   const modelPop = $('model-pop')
   const modelSeatEl = $('model-seat')
 
-  // ---- 项目选择器（2026-09-02）：初始界面工具行 + 右侧切换目标项目 ----
-  // 数据源=侧栏项目同款（ALL 按 projectLabel 分组派生，最近活跃降序）；选中=state.newProject
-  // （与侧栏项目「+」同链路：首条消息发送时 /gateway/wsession 带 project → 会话落该项目根）。
-  // 全局行=清回默认（同 chip X）。仅初始界面显示（CSS：#empty-hint 内才 display:flex）。
-  const psel = { open: false }
+  // ---- 项目选择器（2026-09-02；2026-11-06 与 work 侧栏同构）----
+  // 实现 = feature/project-picker/project-picker.js（唯一真源），数据源 = state.projects（后端 findProjects），
+  // 与 work 下拉同源同 UI；本处只注入差异：含「全局（默认）」行、选中 = 当前会话归属 / state.newProject、
+  // 选定后写 state.newProject（与侧栏项目「+」同链路：首条消息发送时 /gateway/wsession 带 project →
+  // 会话落该项目根）。全局行=清回默认（同 chip X）。仅初始界面显示（CSS：#empty-hint 内才 display:flex）。
   const projPop = $('proj-pop')
   const projSeatEl = $('proj-seat')
   projSeatEl.querySelector('.projIco').innerHTML = I.folder
   projSeatEl.querySelector('.chevron').innerHTML = I.dshChevDown
-  function projList() {
-    const byProject = {}
-    for (const s of ALL) if (s.projectScope === 'project' && s.projectLabel) (byProject[s.projectLabel] = byProject[s.projectLabel] || []).push(s)
-    return Object.keys(byProject).sort((a, b) => {
-      const la = Math.max(0, ...byProject[a].map((s) => s.updatedAt))
-      const lb = Math.max(0, ...byProject[b].map((s) => s.updatedAt))
-      return lb - la
-    })
-  }
   // seat 只读的两个态：①会话态（工作文件夹 = 该会话所属项目）②work 模式且已选工作项目——在项目中
   // 工作就只能在该项目建会话，目标项目不可改（唯一判定点，seat 渲染与点击守卫共用）。
   function projSeatLocked() {
     return !!state.currentHash || (state.sbMode === 'work' && !!state.workProj)
   }
+  const projPicker = createProjectPicker({
+    pop: projPop,
+    seat: projSeatEl,
+    allowGlobal: true,
+    canOpen: () => !projSeatLocked(),
+    beforeOpen: () => {
+      // 打开前收起同一位置上的其它浮层（命令菜单 / 模型菜单 / @ 提及），与原 seat 点击链同口径。
+      if (cmd.open) closeCmdPop()
+      if (msel.open) closeModelPop()
+      closeMentionPop()
+    },
+    getSelected: () =>
+      state.currentHash ? sessionProjLabel(findSession(state.currentHash)) : newSessionProject() || '',
+    onPick: (label) => {
+      state.newProject = label || null
+      renderProjSeat()
+    },
+  })
+  // 对外只读的弹层状态（ctx-meter 的外点关闭用）；开/关语义统一收在组件里。
+  const psel = { get open() { return projPicker.isOpen() } }
   function renderProjSeat() {
     const locked = projSeatLocked()
     // 锁定态收口：已展开的选择层即刻收起——否则切到 work 模式（或进会话）时残留的浮层仍可点，
@@ -102,37 +114,9 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     projSeatEl.title = locked ? '工作文件夹：' + label : (newSessionProject() ? '目标项目：' + newSessionProject() : '目标项目：全局（默认）')
     projSeatEl.classList.toggle('locked', locked)
   }
-  function renderProjPop() {
-    if (!psel.open) return
-    const rows = ['<div class="row" data-p=""><span class="pIco">' + I.pen + '</span><span class="pLabel">全局（默认）</span>' + (state.newProject ? '' : '<span class="check">' + I.dshCheck + '</span>') + '</div>']
-    for (const l of projList()) {
-      rows.push('<div class="row" data-p="' + esc(l) + '" title="' + esc(l) + '"><span class="pIco">' + I.folder + '</span><span class="pLabel">' + esc(l) + '</span>' + (state.newProject === l ? '<span class="check">' + I.dshCheck + '</span>' : '') + '</div>')
-    }
-    projPop.innerHTML = rows.join('')
-    projPop.querySelectorAll('.row').forEach((r) =>
-      r.addEventListener('click', () => {
-        state.newProject = r.dataset.p || null
-        renderProjSeat()
-        closeProjPop()
-      }))
-    projPop.hidden = false
-  }
-  function openProjPop() {
-    if (cmd.open) closeCmdPop()
-    if (msel.open) closeModelPop()
-    closeMentionPop()
-    psel.open = true
-    renderProjPop()
-  }
-  function closeProjPop() {
-    if (!psel.open) return
-    psel.open = false
-    projPop.hidden = true
-  }
-  projSeatEl.addEventListener('click', () => {
-    if (projSeatLocked()) return // 锁定态：工作文件夹标识只读，不弹选择层
-    psel.open ? closeProjPop() : openProjPop()
-  })
+  function renderProjPop() { projPicker.render() }
+  function openProjPop() { projPicker.open() }
+  function closeProjPop() { projPicker.close() }
 
   // 逐命令字形（同 dsh ui-commands presentation.ts 的 HOST_FACES 语义：每个内置命令各有图标，
   // 不是整列共用一个「+」）。表外命令回落 dshPlus。字形来源与说明见 core/icons.js 同段注释。
@@ -477,7 +461,6 @@ export {
   modelSeatEl,
   msel,
   openProjPop,
-  projList,
   projSeatLocked,
   projPop,
   projSeatEl,

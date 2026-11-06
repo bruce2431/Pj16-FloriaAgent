@@ -171,24 +171,8 @@
     const fic = document.querySelector('.wk-foot-ico')
     if (fic) fic.innerHTML = I.logo
 
-    $('wk-proj-seat').addEventListener('click', async (e) => {
-      e.stopPropagation() // 同步：先掐断 document 的收起委托，后面的 await 才不会被它提前关掉
-      const pop = $('wk-proj-pop')
-      const willShow = pop.hidden
-      hideWkPops()
-      if (!willShow) return
-      // 列表还在途中（切到 work 后立刻点开）就先等它落地——绝不给用户弹一个空框，也避免弹完不再更新
-      await ensureProjectList()
-      renderWorkChrome()
-      pop.hidden = false
-    })
-    $('wk-proj-pop').addEventListener('click', (e) => {
-      e.stopPropagation()
-      const b = e.target.closest('[data-wkproj]')
-      if (!b) return
-      // 每行都是 findProjects 的一个真项目 label（长期/临时两组，不含工作区根 · 散装对话）——统一走 selectProject
-      selectProject(b.dataset.wkproj)
-    })
+    // 项目选择器的开合与行选择由共享组件 feature/project-picker/project-picker.js 绑定
+    // （实例 = work-files.js 的 wkPicker；与底栏 #proj-pop 同一实现，2026-11-06 同构）。
     // 侧栏收起钮：与 chat 的 #panel-collapse 同语义（只管把侧栏收起；再开走折叠态的汉堡）
     $('wk-view').addEventListener('click', (e) => {
       e.stopPropagation()
@@ -302,7 +286,10 @@
     $('wk-foot').addEventListener('click', () => toast(state.workspace ? `工作区：${state.workspace}` : '工作区路径未知'))
     // 点空白收起两个浮层（浮层与触发按钮之外的点击都算）
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('#wk-proj-pop') && !e.target.closest('#wk-proj-seat')) $('wk-proj-pop').hidden = true
+      // 行浮窗（长按 / 右键菜单）与项目下拉算一组：点菜单项只是对项目做归档/删除，不应连带收起下拉；
+      // 收起只认「点项目行选中」与「点这两处浮层之外的空白」。项目真被归档/删除后由 wkAfterProjectGone 统一收。
+      const inRowMenu = !!e.target.closest('.row-menu-pop')
+      if (!inRowMenu && !e.target.closest('#wk-proj-pop') && !e.target.closest('#wk-proj-seat')) $('wk-proj-pop').hidden = true
       if (!e.target.closest('#wk-new-pop') && !e.target.closest('#wk-new')) $('wk-new-pop').hidden = true
     })
     // 后台标签页不做对账（定时器仍在跑，tick 内自会跳过）；切回前台立刻补一次，不等下一个间隔

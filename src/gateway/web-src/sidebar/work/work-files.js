@@ -1,5 +1,6 @@
 // 右栏页态内容补挂 + 侧栏（项目选择/项目列表/文件树/自动对账/数据补齐）与其渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
 import { sessionInWork } from '../../core/util.js'
+import { createProjectPicker, projectPickerGroups } from '../../feature/project-picker/project-picker.js'
 import { bindRowPeek, isPinned, peekClear } from '../recent.js'
 import { cmtInvalidate, cmtLoad } from '../../feature/comment/comment-data.js'
 import { cmtRender } from '../../feature/comment/comment-panel.js'
@@ -48,16 +49,34 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
   }
 
   // ---------- 侧栏渲染 ----------
-  // 名字必须全局唯一：全部 web-src 模块体拼进同一个 IIFE 作用域，顶层同名声明会静默互相覆盖。
-  // 原取名 `projList` 与 inputbar/commands.js 的同名函数撞车（后者在后 ⇒ 覆盖本函数），
-  // 本函数返回 group 对象数组、后者返回 label 字符串数组 ⇒ 下拉渲染出 7 行空按钮。
-  // 由 `probes/probe-web-module-scope.ts` 看住这条不变量。
+  // 名字必须全局唯一：全部 web-src 模块体拼进同一个 IIFE 作用域，顶层同名声明会静默互相覆盖
+  // （由 `probes/probe-web-module-scope.ts` 看住）。
+  // 项目枚举已收口到 feature/project-picker 的 projectPickerGroups（底栏与 work 下拉同源）。
   // 项目列表 = findProjects 中 scope==='project' 的组（Pj 长期项目 + 根级时间戳任务区，一视同仁平铺）。
   // 工作区根「全局根 · 散装对话」不进这份列表（2026-10-30 用户定案：work 项目选择器只给项目，
   // 散装区不占一格；后端仍照旧产出该组，散装会话/笔新建/全局预览不受影响）。
   function wkProjGroups() {
-    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
+    // 项目枚举只认 state.projects（后端 findProjects）。实现与底栏项目选择器同源：
+    // feature/project-picker/project-picker.js 的 projectPickerGroups（唯一判据）。
+    return projectPickerGroups()
   }
+
+  // 项目选择器组件实例（与底栏 #proj-pop 同一实现，2026-11-06 同构）：差异只在本处注入——
+  // 无「全局（默认）」行、选中 = state.workProj、选中后走 selectProject、打开前补拉项目列表。
+  const wkPicker = createProjectPicker({
+    pop: $('wk-proj-pop'),
+    seat: $('wk-proj-seat'),
+    allowGlobal: false,
+    emptyText: '未发现项目，点 ⟳ 重试',
+    getSelected: () => state.workProj || '',
+    beforeOpen: async () => {
+      hideWkPops()
+      await ensureProjectList()
+      renderWorkChrome()
+    },
+    beforeClose: () => hideWkPops(), // 关下拉同拍收起侧栏里其它浮层（原 seat 点击链语义）
+    onPick: (label) => selectProject(label),
+  })
 
   // 项目名 + 底部卡 + 下拉内容 = 同一份 state.projects 的同一次渲染（2026-09-25 修）。
   // 此前下拉内容由 renderWorkProjects 单独在「点开那一刻」渲染一次，而项目列表是 ensureWork 里
@@ -76,21 +95,9 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
     renderWorkProjects()
   }
 
+  // 下拉内容 = 共享项目选择器组件（一张平铺列表：Pj 项目与根级时间戳项目不加分组标题，2026-10-30 定案）。
   function renderWorkProjects() {
-    const box = $('wk-proj-pop')
-    if (!box) return
-    const ps = wkProjGroups()
-    // 一张平铺列表：Pj 项目与根级时间戳项目不加分组标题、不分先后批次（2026-10-30 用户定案）。
-    // 每行统一 selectProject(真 label)，与项目/全局根同构的文件树、会话、预览链零特判。
-    box.innerHTML = ps.length
-      ? ps
-          .map(
-            (g) =>
-              `<button class="wkp-row${g.label === state.workProj ? ' on' : ''}" data-wkproj="${esc(g.label)}">` +
-              `<span class="wkp-name">${esc(g.label)}</span></button>`,
-          )
-          .join('')
-      : '<div class="wk-empty">未发现项目，点 ⟳ 重试</div>'
+    wkPicker.render()
   }
 
   // tab 行工具区：加号只在聊天 tab 出现（新建聊天）；文件 tab 的加号（新建文件/文件夹）待新建写接口

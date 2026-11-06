@@ -1,4 +1,5 @@
 // 文件 / 目录行操作（重命名 / 删除浮窗）与新建聊天 newWorkChat。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
+import { isTempProjLabel } from '../../core/util.js'
 /* @module sidebar/work/work-rows.js */
 
   // ---------- 文件 / 目录行操作（2026-09-27：与侧栏会话行同一套右键 / 长按浮窗，见 recent.js registerRowMenu）----------
@@ -106,12 +107,99 @@
       },
     }
   }
+  // ---------- 项目行操作（2026-11-06）：长按 / 右键项目下拉行 → 归档（全部项目）/ 删除（仅临时项目） ----------
+  // 归档 = 压缩进 <工作区根>/.achrives/<label>-<ts>.tar.gz（tar 顺序流，无 zip 中央索引）+ 原目录移入
+  // .trash/；删除 = 临时项目（根级时间戳任务区）目录直接移入 .trash/，不压缩。两口的语义与防护都在
+  // 网关（archiveProject / deleteTempProject），前端只做「确认手势 → 提交 → 列表对账」。
+  // 与文件删除同口径不设二次确认：.trash/ 是撤销位，归档包在 .achrives 另存一份。
+  // 当前工作项目被移走后必须整体退场（不能停在一个已不存在的项目上）：切空槽 + 清打开集 + 回空态首页。
+  async function wkAfterProjectGone(label) {
+    // 下拉只在「被移走的正是当前工作项目」时收：其余情况保持打开，让用户接着操作别的项目
+    // （下拉内容由下面的 renderWorkChrome → renderWorkProjects 就地刷新，被归档的行自然消失）。
+    if (state.workProj === label) {
+      hideWkPops()
+      switchWorkProject('')
+      state.workFile = ''
+      state.wkFiles = []
+      wkOpen.clear()
+      wkTree = null
+      wkErr = ''
+      navigate('#/')
+      saveWork()
+      renderEditor()
+      renderWorkPreview()
+      applyPanes()
+    }
+    await loadSessions()
+    renderWorkChrome()
+    renderWorkBody()
+    renderTopbar()
+  }
+  async function archiveWorkProject(label) {
+    if (!label) return
+    try {
+      if (state.workProj === label && wkEdDirty) await wkEdFlush() // 未保存编辑先落盘，否则归档包缺最新内容
+      toast('正在归档「' + label + '」…')
+      const res = await fetch(apiUrl('/gateway/project/archive'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '归档失败')
+      await wkAfterProjectGone(label)
+      toast('已归档到 ' + data.archive)
+    } catch (e) {
+      toast('归档失败：' + (e.message || e))
+    }
+  }
+  async function deleteWorkProject(label) {
+    if (!label || !isTempProjLabel(label)) return
+    try {
+      const res = await fetch(apiUrl('/gateway/project/delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '删除失败')
+      await wkAfterProjectGone(label)
+      toast('已移入 ' + data.trash)
+    } catch (e) {
+      toast('删除失败：' + (e.message || e))
+    }
+  }
+  // 项目行菜单项：归档恒有；删除只对临时项目（长期项目走归档，避免误删整棵项目）。
+  function projectRowMenuSpec() {
+    return {
+      items: (el) => {
+        const label = el.dataset.pk || ''
+        if (!label) return []
+        const out = [{ a: 'archive', icon: I.dshCompact, label: '归档' }]
+        if (isTempProjLabel(label)) out.push({ a: 'delete', icon: I.dshTrash, label: '删除', danger: true })
+        return out
+      },
+      pick: (a, el) => {
+        const label = el.dataset.pk || ''
+        if (a === 'archive') archiveWorkProject(label)
+        else if (a === 'delete') deleteWorkProject(label)
+      },
+    }
+  }
   // 文件树行源：文件与目录同一套菜单（目录删除 = 整棵子树进 .trash/）；操作对象 = 行的项目内相对路径。
+  // 项目下拉行同一个注册式浮窗（长按 / 右键），项目行的操作对象 = 项目 label。
   function registerWorkRows() {
     registerRowMenu({
       sel: '.wk-row',
       key: (el) => el.dataset.wkfile || el.dataset.wkdir || null,
       ...fileRowMenuSpec((el) => ({ path: el.dataset.wkfile || el.dataset.wkdir || '', dir: !!el.dataset.wkdir })),
+    })
+    // 项目行由 feature/project-picker 渲染（.pk-row + data-pk）；同一组件也用于底栏 #proj-pop，
+    // 但归档只对 work 侧栏项目下拉开放，故选择器限定容器。
+    registerRowMenu({
+      sel: '#wk-proj-pop .pk-row',
+      key: (el) => el.dataset.pk || null,
+      ...projectRowMenuSpec(),
     })
   }
 

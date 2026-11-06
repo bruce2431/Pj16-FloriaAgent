@@ -1016,7 +1016,7 @@ function setConnUp(v) { connUp = v }
 
   // 会话的项目归属（chat 侧栏唯一判据，2026-11-06 用户定案）：临时项目 label 下的会话按**全局根**对待（''）。
   // 根级时间戳任务区只是 work 的文件树入口，不是可归属的会话项目——chat 侧栏不识别它、也不显示项目标签；
-  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 work-files.js / commands.js projList）。
+  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 feature/project-picker/）。
   const sessionProjLabel = (s) =>
     s && s.projectScope === 'project' && s.projectLabel && !isTempProjLabel(s.projectLabel) ? s.projectLabel : ''
 
@@ -4115,6 +4115,9 @@ function setLastNavHash(v) { lastNavHash = v }
     pop.addEventListener('click', (e) => {
       const b = e.target.closest('.rm-item')
       if (!b) return
+      // 菜单内部点击必须止于此：closeRowMenu 会把 pop 从 DOM 摘掉，若事件继续冒泡，文档级
+      // 「点空白收起」拿到已脱离文档的 target（closest 一律 null）→ 会把项目的下拉一并误关。
+      e.stopPropagation()
       const src = hit.src
       closeRowMenu()
       src.pick(b.dataset.a, hit.el)
@@ -6209,6 +6212,67 @@ function setFirstSendHash(v) { firstSendHash = v }
     },
   })
 
+
+  function projectPickerGroups() {
+    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
+  }
+
+  function createProjectPicker(opts) {
+    const { pop, seat, getSelected, allowGlobal, onPick, emptyText, beforeOpen, beforeClose, canOpen } = opts
+    const isOpen = () => !!pop && !pop.hidden
+
+    function rowHtml(label, text, isGlobal) {
+      const on = (getSelected() || '') === label
+      return (
+        `<button class="pk-row${on ? ' on' : ''}" data-pk="${esc(label)}" title="${esc(text)}">` +
+        `<span class="pk-ico">${isGlobal ? I.pen : I.folder}</span>` +
+        `<span class="pk-name">${esc(text)}</span>` +
+        (on ? `<span class="pk-check">${I.dshCheck}</span>` : '') +
+        `</button>`
+      )
+    }
+
+    function render() {
+      if (!pop) return
+      const rows = []
+      if (allowGlobal) rows.push(rowHtml('', '全局（默认）', true))
+      for (const g of projectPickerGroups()) rows.push(rowHtml(g.label, g.label, false))
+      pop.innerHTML = rows.length ? rows.join('') : `<div class="wk-empty">${esc(emptyText || '未发现项目')}</div>`
+    }
+
+    async function open() {
+      if (canOpen && !canOpen()) return
+      // 列表还在途中（切到 work 后立刻点开）就先等它落地——绝不给用户弹空框，也避免弹完不再更新。
+      if (beforeOpen) await beforeOpen()
+      render()
+      pop.hidden = false
+    }
+
+    function close() {
+      if (beforeClose) beforeClose()
+      if (pop) pop.hidden = true
+    }
+    function toggle() {
+      isOpen() ? close() : open()
+    }
+
+    if (seat) {
+      seat.addEventListener('click', (e) => {
+        e.stopPropagation() // 同步：先掐断 document 的收起委托，后面的 await 才不会被它提前关掉
+        toggle()
+      })
+    }
+    if (pop) {
+      pop.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const b = e.target.closest('[data-pk]')
+        if (!b) return
+        close()
+        onPick(b.dataset.pk || '')
+      })
+    }
+    return { render, open, close, toggle, isOpen }
+  }
   // 项目槽缺省（新项目 / 无槽时用）。**键名 = 槽内键名 = state 上同名 live 字段**
   // （state.workSlots[<label>]，见 core/ui-state.js 与 core/storage.js 的 stashWorkSlot/loadWorkSlot）。
   // 一个键一件事，槽与 live 字段一一对应，不再有两套命名（旧 wkPanes 的 workspace/sidebar 已并入
@@ -7123,16 +7187,34 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // ---------- 侧栏渲染 ----------
-  // 名字必须全局唯一：全部 web-src 模块体拼进同一个 IIFE 作用域，顶层同名声明会静默互相覆盖。
-  // 原取名 `projList` 与 inputbar/commands.js 的同名函数撞车（后者在后 ⇒ 覆盖本函数），
-  // 本函数返回 group 对象数组、后者返回 label 字符串数组 ⇒ 下拉渲染出 7 行空按钮。
-  // 由 `probes/probe-web-module-scope.ts` 看住这条不变量。
+  // 名字必须全局唯一：全部 web-src 模块体拼进同一个 IIFE 作用域，顶层同名声明会静默互相覆盖
+  // （由 `probes/probe-web-module-scope.ts` 看住）。
+  // 项目枚举已收口到 feature/project-picker 的 projectPickerGroups（底栏与 work 下拉同源）。
   // 项目列表 = findProjects 中 scope==='project' 的组（Pj 长期项目 + 根级时间戳任务区，一视同仁平铺）。
   // 工作区根「全局根 · 散装对话」不进这份列表（2026-10-30 用户定案：work 项目选择器只给项目，
   // 散装区不占一格；后端仍照旧产出该组，散装会话/笔新建/全局预览不受影响）。
   function wkProjGroups() {
-    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
+    // 项目枚举只认 state.projects（后端 findProjects）。实现与底栏项目选择器同源：
+    // feature/project-picker/project-picker.js 的 projectPickerGroups（唯一判据）。
+    return projectPickerGroups()
   }
+
+  // 项目选择器组件实例（与底栏 #proj-pop 同一实现，2026-11-06 同构）：差异只在本处注入——
+  // 无「全局（默认）」行、选中 = state.workProj、选中后走 selectProject、打开前补拉项目列表。
+  const wkPicker = createProjectPicker({
+    pop: $('wk-proj-pop'),
+    seat: $('wk-proj-seat'),
+    allowGlobal: false,
+    emptyText: '未发现项目，点 ⟳ 重试',
+    getSelected: () => state.workProj || '',
+    beforeOpen: async () => {
+      hideWkPops()
+      await ensureProjectList()
+      renderWorkChrome()
+    },
+    beforeClose: () => hideWkPops(), // 关下拉同拍收起侧栏里其它浮层（原 seat 点击链语义）
+    onPick: (label) => selectProject(label),
+  })
 
   // 项目名 + 底部卡 + 下拉内容 = 同一份 state.projects 的同一次渲染（2026-09-25 修）。
   // 此前下拉内容由 renderWorkProjects 单独在「点开那一刻」渲染一次，而项目列表是 ensureWork 里
@@ -7151,21 +7233,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     renderWorkProjects()
   }
 
+  // 下拉内容 = 共享项目选择器组件（一张平铺列表：Pj 项目与根级时间戳项目不加分组标题，2026-10-30 定案）。
   function renderWorkProjects() {
-    const box = $('wk-proj-pop')
-    if (!box) return
-    const ps = wkProjGroups()
-    // 一张平铺列表：Pj 项目与根级时间戳项目不加分组标题、不分先后批次（2026-10-30 用户定案）。
-    // 每行统一 selectProject(真 label)，与项目/全局根同构的文件树、会话、预览链零特判。
-    box.innerHTML = ps.length
-      ? ps
-          .map(
-            (g) =>
-              `<button class="wkp-row${g.label === state.workProj ? ' on' : ''}" data-wkproj="${esc(g.label)}">` +
-              `<span class="wkp-name">${esc(g.label)}</span></button>`,
-          )
-          .join('')
-      : '<div class="wk-empty">未发现项目，点 ⟳ 重试</div>'
+    wkPicker.render()
   }
 
   // tab 行工具区：加号只在聊天 tab 出现（新建聊天）；文件 tab 的加号（新建文件/文件夹）待新建写接口
@@ -11175,12 +11245,99 @@ function setFirstSendHash(v) { firstSendHash = v }
       },
     }
   }
+  // ---------- 项目行操作（2026-11-06）：长按 / 右键项目下拉行 → 归档（全部项目）/ 删除（仅临时项目） ----------
+  // 归档 = 压缩进 <工作区根>/.achrives/<label>-<ts>.tar.gz（tar 顺序流，无 zip 中央索引）+ 原目录移入
+  // .trash/；删除 = 临时项目（根级时间戳任务区）目录直接移入 .trash/，不压缩。两口的语义与防护都在
+  // 网关（archiveProject / deleteTempProject），前端只做「确认手势 → 提交 → 列表对账」。
+  // 与文件删除同口径不设二次确认：.trash/ 是撤销位，归档包在 .achrives 另存一份。
+  // 当前工作项目被移走后必须整体退场（不能停在一个已不存在的项目上）：切空槽 + 清打开集 + 回空态首页。
+  async function wkAfterProjectGone(label) {
+    // 下拉只在「被移走的正是当前工作项目」时收：其余情况保持打开，让用户接着操作别的项目
+    // （下拉内容由下面的 renderWorkChrome → renderWorkProjects 就地刷新，被归档的行自然消失）。
+    if (state.workProj === label) {
+      hideWkPops()
+      switchWorkProject('')
+      state.workFile = ''
+      state.wkFiles = []
+      wkOpen.clear()
+      wkTree = null
+      wkErr = ''
+      navigate('#/')
+      saveWork()
+      renderEditor()
+      renderWorkPreview()
+      applyPanes()
+    }
+    await loadSessions()
+    renderWorkChrome()
+    renderWorkBody()
+    renderTopbar()
+  }
+  async function archiveWorkProject(label) {
+    if (!label) return
+    try {
+      if (state.workProj === label && wkEdDirty) await wkEdFlush() // 未保存编辑先落盘，否则归档包缺最新内容
+      toast('正在归档「' + label + '」…')
+      const res = await fetch(apiUrl('/gateway/project/archive'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '归档失败')
+      await wkAfterProjectGone(label)
+      toast('已归档到 ' + data.archive)
+    } catch (e) {
+      toast('归档失败：' + (e.message || e))
+    }
+  }
+  async function deleteWorkProject(label) {
+    if (!label || !isTempProjLabel(label)) return
+    try {
+      const res = await fetch(apiUrl('/gateway/project/delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '删除失败')
+      await wkAfterProjectGone(label)
+      toast('已移入 ' + data.trash)
+    } catch (e) {
+      toast('删除失败：' + (e.message || e))
+    }
+  }
+  // 项目行菜单项：归档恒有；删除只对临时项目（长期项目走归档，避免误删整棵项目）。
+  function projectRowMenuSpec() {
+    return {
+      items: (el) => {
+        const label = el.dataset.pk || ''
+        if (!label) return []
+        const out = [{ a: 'archive', icon: I.dshCompact, label: '归档' }]
+        if (isTempProjLabel(label)) out.push({ a: 'delete', icon: I.dshTrash, label: '删除', danger: true })
+        return out
+      },
+      pick: (a, el) => {
+        const label = el.dataset.pk || ''
+        if (a === 'archive') archiveWorkProject(label)
+        else if (a === 'delete') deleteWorkProject(label)
+      },
+    }
+  }
   // 文件树行源：文件与目录同一套菜单（目录删除 = 整棵子树进 .trash/）；操作对象 = 行的项目内相对路径。
+  // 项目下拉行同一个注册式浮窗（长按 / 右键），项目行的操作对象 = 项目 label。
   function registerWorkRows() {
     registerRowMenu({
       sel: '.wk-row',
       key: (el) => el.dataset.wkfile || el.dataset.wkdir || null,
       ...fileRowMenuSpec((el) => ({ path: el.dataset.wkfile || el.dataset.wkdir || '', dir: !!el.dataset.wkdir })),
+    })
+    // 项目行由 feature/project-picker 渲染（.pk-row + data-pk）；同一组件也用于底栏 #proj-pop，
+    // 但归档只对 work 侧栏项目下拉开放，故选择器限定容器。
+    registerRowMenu({
+      sel: '#wk-proj-pop .pk-row',
+      key: (el) => el.dataset.pk || null,
+      ...projectRowMenuSpec(),
     })
   }
 
@@ -11543,24 +11700,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     const fic = document.querySelector('.wk-foot-ico')
     if (fic) fic.innerHTML = I.logo
 
-    $('wk-proj-seat').addEventListener('click', async (e) => {
-      e.stopPropagation() // 同步：先掐断 document 的收起委托，后面的 await 才不会被它提前关掉
-      const pop = $('wk-proj-pop')
-      const willShow = pop.hidden
-      hideWkPops()
-      if (!willShow) return
-      // 列表还在途中（切到 work 后立刻点开）就先等它落地——绝不给用户弹一个空框，也避免弹完不再更新
-      await ensureProjectList()
-      renderWorkChrome()
-      pop.hidden = false
-    })
-    $('wk-proj-pop').addEventListener('click', (e) => {
-      e.stopPropagation()
-      const b = e.target.closest('[data-wkproj]')
-      if (!b) return
-      // 每行都是 findProjects 的一个真项目 label（长期/临时两组，不含工作区根 · 散装对话）——统一走 selectProject
-      selectProject(b.dataset.wkproj)
-    })
+    // 项目选择器的开合与行选择由共享组件 feature/project-picker/project-picker.js 绑定
+    // （实例 = work-files.js 的 wkPicker；与底栏 #proj-pop 同一实现，2026-11-06 同构）。
     // 侧栏收起钮：与 chat 的 #panel-collapse 同语义（只管把侧栏收起；再开走折叠态的汉堡）
     $('wk-view').addEventListener('click', (e) => {
       e.stopPropagation()
@@ -11674,7 +11815,10 @@ function setFirstSendHash(v) { firstSendHash = v }
     $('wk-foot').addEventListener('click', () => toast(state.workspace ? `工作区：${state.workspace}` : '工作区路径未知'))
     // 点空白收起两个浮层（浮层与触发按钮之外的点击都算）
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('#wk-proj-pop') && !e.target.closest('#wk-proj-seat')) $('wk-proj-pop').hidden = true
+      // 行浮窗（长按 / 右键菜单）与项目下拉算一组：点菜单项只是对项目做归档/删除，不应连带收起下拉；
+      // 收起只认「点项目行选中」与「点这两处浮层之外的空白」。项目真被归档/删除后由 wkAfterProjectGone 统一收。
+      const inRowMenu = !!e.target.closest('.row-menu-pop')
+      if (!inRowMenu && !e.target.closest('#wk-proj-pop') && !e.target.closest('#wk-proj-seat')) $('wk-proj-pop').hidden = true
       if (!e.target.closest('#wk-new-pop') && !e.target.closest('#wk-new')) $('wk-new-pop').hidden = true
     })
     // 后台标签页不做对账（定时器仍在跑，tick 内自会跳过）；切回前台立刻补一次，不等下一个间隔
@@ -12870,29 +13014,40 @@ function setFirstSendHash(v) { firstSendHash = v }
   const modelPop = $('model-pop')
   const modelSeatEl = $('model-seat')
 
-  // ---- 项目选择器（2026-09-02）：初始界面工具行 + 右侧切换目标项目 ----
-  // 数据源=侧栏项目同款（ALL 按 projectLabel 分组派生，最近活跃降序）；选中=state.newProject
-  // （与侧栏项目「+」同链路：首条消息发送时 /gateway/wsession 带 project → 会话落该项目根）。
-  // 全局行=清回默认（同 chip X）。仅初始界面显示（CSS：#empty-hint 内才 display:flex）。
-  const psel = { open: false }
+  // ---- 项目选择器（2026-09-02；2026-11-06 与 work 侧栏同构）----
+  // 实现 = feature/project-picker/project-picker.js（唯一真源），数据源 = state.projects（后端 findProjects），
+  // 与 work 下拉同源同 UI；本处只注入差异：含「全局（默认）」行、选中 = 当前会话归属 / state.newProject、
+  // 选定后写 state.newProject（与侧栏项目「+」同链路：首条消息发送时 /gateway/wsession 带 project →
+  // 会话落该项目根）。全局行=清回默认（同 chip X）。仅初始界面显示（CSS：#empty-hint 内才 display:flex）。
   const projPop = $('proj-pop')
   const projSeatEl = $('proj-seat')
   projSeatEl.querySelector('.projIco').innerHTML = I.folder
   projSeatEl.querySelector('.chevron').innerHTML = I.dshChevDown
-  function projList() {
-    const byProject = {}
-    for (const s of ALL) if (s.projectScope === 'project' && s.projectLabel) (byProject[s.projectLabel] = byProject[s.projectLabel] || []).push(s)
-    return Object.keys(byProject).sort((a, b) => {
-      const la = Math.max(0, ...byProject[a].map((s) => s.updatedAt))
-      const lb = Math.max(0, ...byProject[b].map((s) => s.updatedAt))
-      return lb - la
-    })
-  }
   // seat 只读的两个态：①会话态（工作文件夹 = 该会话所属项目）②work 模式且已选工作项目——在项目中
   // 工作就只能在该项目建会话，目标项目不可改（唯一判定点，seat 渲染与点击守卫共用）。
   function projSeatLocked() {
     return !!state.currentHash || (state.sbMode === 'work' && !!state.workProj)
   }
+  const projPicker = createProjectPicker({
+    pop: projPop,
+    seat: projSeatEl,
+    allowGlobal: true,
+    canOpen: () => !projSeatLocked(),
+    beforeOpen: () => {
+      // 打开前收起同一位置上的其它浮层（命令菜单 / 模型菜单 / @ 提及），与原 seat 点击链同口径。
+      if (cmd.open) closeCmdPop()
+      if (msel.open) closeModelPop()
+      closeMentionPop()
+    },
+    getSelected: () =>
+      state.currentHash ? sessionProjLabel(findSession(state.currentHash)) : newSessionProject() || '',
+    onPick: (label) => {
+      state.newProject = label || null
+      renderProjSeat()
+    },
+  })
+  // 对外只读的弹层状态（ctx-meter 的外点关闭用）；开/关语义统一收在组件里。
+  const psel = { get open() { return projPicker.isOpen() } }
   function renderProjSeat() {
     const locked = projSeatLocked()
     // 锁定态收口：已展开的选择层即刻收起——否则切到 work 模式（或进会话）时残留的浮层仍可点，
@@ -12906,37 +13061,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     projSeatEl.title = locked ? '工作文件夹：' + label : (newSessionProject() ? '目标项目：' + newSessionProject() : '目标项目：全局（默认）')
     projSeatEl.classList.toggle('locked', locked)
   }
-  function renderProjPop() {
-    if (!psel.open) return
-    const rows = ['<div class="row" data-p=""><span class="pIco">' + I.pen + '</span><span class="pLabel">全局（默认）</span>' + (state.newProject ? '' : '<span class="check">' + I.dshCheck + '</span>') + '</div>']
-    for (const l of projList()) {
-      rows.push('<div class="row" data-p="' + esc(l) + '" title="' + esc(l) + '"><span class="pIco">' + I.folder + '</span><span class="pLabel">' + esc(l) + '</span>' + (state.newProject === l ? '<span class="check">' + I.dshCheck + '</span>' : '') + '</div>')
-    }
-    projPop.innerHTML = rows.join('')
-    projPop.querySelectorAll('.row').forEach((r) =>
-      r.addEventListener('click', () => {
-        state.newProject = r.dataset.p || null
-        renderProjSeat()
-        closeProjPop()
-      }))
-    projPop.hidden = false
-  }
-  function openProjPop() {
-    if (cmd.open) closeCmdPop()
-    if (msel.open) closeModelPop()
-    closeMentionPop()
-    psel.open = true
-    renderProjPop()
-  }
-  function closeProjPop() {
-    if (!psel.open) return
-    psel.open = false
-    projPop.hidden = true
-  }
-  projSeatEl.addEventListener('click', () => {
-    if (projSeatLocked()) return // 锁定态：工作文件夹标识只读，不弹选择层
-    psel.open ? closeProjPop() : openProjPop()
-  })
+  function renderProjPop() { projPicker.render() }
+  function openProjPop() { projPicker.open() }
+  function closeProjPop() { projPicker.close() }
 
   // 逐命令字形（同 dsh ui-commands presentation.ts 的 HOST_FACES 语义：每个内置命令各有图标，
   // 不是整列共用一个「+」）。表外命令回落 dshPlus。字形来源与说明见 core/icons.js 同段注释。
