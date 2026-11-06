@@ -7,7 +7,7 @@ import { I } from '../core/icons.js'
 import { refreshList, refreshSession } from '../engine/live.js'
 import { hashOf } from '../engine/sessions.js'
 import { bodyEl, sidebar, bubblePop, recentLabel, modeTabsEl, state, ALL } from '../engine/state.js'
-import { esc, toast, isMobile } from '../core/util.js'
+import { esc, toast, isMobile, sessionProjLabel } from '../core/util.js'
 import { applyPanelOpen } from '../engine/panel.js'
 import { savePins, saveWork } from '../core/storage.js'
 import { gwSend } from '../inputbar/send.js'
@@ -89,8 +89,10 @@ import { renderList, renderProject } from './mgr.js'
     const dotCls = s.state === 'busy' ? ' st-busy' : s.state === 'waiting' ? ' st-ask' : s.state === 'idle' ? ' st-wait' : ''
     // 2026-08-25 项目会话编号气泡（仅「在一个列表中」堆叠视图，renderList 传 showProj=true）：
     // 平铺时项目会话混在根会话里，用短编号（Pj16）标识所属项目；项目文件夹视图已有文件夹名，不重复显示。
-    const projTag = showProj && s.projectScope === 'project' && s.projectLabel
-      ? `<span class="w-tag" title="${esc(s.projectLabel)}">${esc(projIdOf(s.projectLabel))}</span>` : ''
+    // 临时项目（根级时间戳任务区）的会话按全局根对待，不出项目标签（sessionProjLabel 归一）。
+    const pl = sessionProjLabel(s)
+    const projTag = showProj && pl
+      ? `<span class="w-tag" title="${esc(pl)}">${esc(projIdOf(pl))}</span>` : ''
     // 2026-09-26 行操作入口 = 右键（桌面）/ 长按（触屏）唤出浮窗，三点按钮已删除（见 openRowMenu）
     // 置顶标记只在调用方显式要求时渲染（work 侧栏传 true）——chat 侧栏即使同一会话已置顶也不出图钉
     const pinIco = showPin && isPinned(hashOf(s)) ? `<span class="pin-ico" title="已置顶">${I.dshPin}</span>` : ''

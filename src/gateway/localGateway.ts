@@ -354,6 +354,12 @@ const sessionActivity = new Map<string, { status: string; pid: number; cwd?: str
 // 纯引擎内存态镜像，CLI 断开随 detach 删除（重连由 open reportCurrentModel 补报对齐）。
 // 无时间 TTL（09-16：与 CLI「载荷不变不发」矛盾，见 sweepStaleMaps 注）。
 const sessionModels = new Map<string, { model: string; updatedAt: number }>()
+// 2026-11-06 思考等级按会话隔离（C）：每会话实际生效的 effortLevel 镜像（null = Off/未设置）。
+// 写入点两处：① POST /gateway/model 带 sessionId 精确路由成功；② /gateway/model-report 的
+// CLI 自报（GatewayControlBridge 收到 {type:'effort'} 后 reportSessionEffort）。读取点唯一：
+// /gateway/session 附带 effort → web 进入会话即以该会话上报值校准推理等级座，不再沿用上一会话。
+// 不写全局 settings.json（那是「新会话默认」，见 /gateway/model 无 sessionId 分支）。
+const sessionEfforts = new Map<string, { effort: string | null; updatedAt: number }>()
 
 // 会话启动模型表（2026-10-13，待办 12「重启会话模型不保持」根治）：
 //   sid → { model, provider?, updatedAt }，落盘 .claude/gateway/sessionmodels.json（变更即写，
@@ -1527,8 +1533,33 @@ function countUserAssistant(text: string): number {
   return n
 }
 
-type SessionCore = { title: string; messageCount: number; updatedAt: number }
+type SessionCore = { title: string; messageCount: number; updatedAt: number; startAt?: number }
 type SessionMeta = { sidechain: true } | (SessionCore & { createdAt: number })
+
+// 会话创建时刻的唯一可信源 = 转录首条记录的 timestamp（2026-11-06 根因定案）。
+// 文件 birthtime 会被复制/恢复整体重置（Pj5/Pj14/Pj13 于一次 restore 后整批 createdAt 变成恢复时刻，
+// 侧栏旧会话整批冒到最前），故不再作为状态源。head 已由 readSessionLite 读入，逐行 JSON.parse 取
+// 首个顶层 timestamp；被截断的尾行丢弃，坏行跳过。content 字符串里出现的 "timestamp" 不会被误取。
+function extractStartAt(head: string): number | undefined {
+  let pos = 0
+  while (pos < head.length) {
+    const nl = head.indexOf('\n', pos)
+    if (nl < 0) break // 尾行被截断：不完整，丢弃
+    const line = head.slice(pos, nl)
+    pos = nl + 1
+    if (!line.trim()) continue
+    try {
+      const o = JSON.parse(line) as { timestamp?: unknown }
+      if (typeof o.timestamp === 'string') {
+        const t = Date.parse(o.timestamp)
+        if (Number.isFinite(t)) return t
+      }
+    } catch {
+      // 坏行/非 JSON 行：继续找下一条
+    }
+  }
+  return undefined
+}
 
 // B2（2026-08-26）大文件兜底（反向扫描 findLastCustomTitle 及其 (size, mtime) 缓存）
 // 2026-08-31 迁入共享权威 sessionStoragePortable.ts（findLastCustomTitleCached），
@@ -1561,7 +1592,7 @@ async function parseMeta(file: string): Promise<SessionCore | { sidechain: true 
     const last = await findLastCustomTitleCached(file, { size: lite.size, mtime: lite.mtime })
     if (last) title = last
   }
-  return { title, messageCount, updatedAt: mtime }
+  return { title, messageCount, updatedAt: mtime, startAt: extractStartAt(head) }
 }
 
 // SessionMeta 全量缓存（2026-08-30）：listSessions 原先每次刷新都对所有会话文件重读 head/tail
@@ -1581,12 +1612,18 @@ async function parseMetaCached(file: string): Promise<SessionMeta | null> {
   if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs) return cached.meta
   const meta = await parseMeta(file)
   if (meta) {
-    // createdAt（2026-09-18 侧栏创建时间排序）：jsonl 文件创建时刻 = 会话创建时刻。birthtime
-    // 个别文件系统不支持（回 0）→ 落回 mtime（语义退化为「最后活跃」，排序仍稳定）。birthtime
-    // 不可变，随 (size, mtime) 缓存无假命中。
+    // createdAt（侧栏创建时间排序，2026-09-18 定案）：唯一权威 = 转录首条记录的 timestamp。
+    // 2026-11-06 根治：文件 birthtime 会被复制/恢复整体重置，曾让 Pj5/Pj14 整项目旧会话冒到最前，
+    // 已从状态源里剔除。空转录（尚无任何记录）没有 timestamp，此时 mtime 即创建时刻，取其值。
+    // startAt 不对外。
     const full: SessionMeta = 'sidechain' in meta
       ? meta
-      : { ...meta, createdAt: st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs }
+      : {
+          title: meta.title,
+          messageCount: meta.messageCount,
+          updatedAt: meta.updatedAt,
+          createdAt: meta.startAt ?? meta.updatedAt,
+        }
     sessionMetaCache.set(file, { size: st.size, mtimeMs: st.mtimeMs, meta: full })
     if (sessionMetaCache.size > 500) {
       // 防无限增长：清掉最旧一半（Map 保持插入序），同 lastCustomTitleCache
@@ -2300,7 +2337,7 @@ async function listProviderCatalog(name: string): Promise<Record<string, unknown
   }
 }
 
-/** 统一群发（P2 收敛）：逐个发送并吞掉单个客户端断开异常，broadcast/broadcastToClients/pollSse/内联群发共用。 */
+/** 统一群发（P2 收敛）：逐个发送并吞掉单个客户端断开异常，broadcast/pollSse/内联群发共用。 */
 function sendAll<T>(targets: Iterable<T>, send: (t: T) => void): void {
   for (const t of targets) {
     try {
@@ -2309,12 +2346,6 @@ function sendAll<T>(targets: Iterable<T>, send: (t: T) => void): void {
       /* 断开忽略 */
     }
   }
-}
-
-/** 广播控制消息给所有在线 CLI 进程（/clients 注册的 WS）。 */
-function broadcastToClients(msg: unknown): void {
-  const s = JSON.stringify(msg)
-  sendAll(cliClients.values(), (c) => c.send(s))
 }
 
 /** 精确路由控制消息到指定会话（/clients 注册的 WS）；无 sessionId/未命中 → 返回 false（不广播兜底，2026-08-23 用户定案）。 */
@@ -2574,8 +2605,10 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   //     供应商的 baseUrl/key + STATE 模型覆盖），只影响本会话；未在线拒绝、无 sessionId 拒绝。
   //     2026-09-10 根治：本分支不再写全局凭据池（原先 ensureProviderForModel 全局切
   //     activeProvider，导致切一个会话的模型毒害其它在跑会话——模型名/endpoint 错配 400）。
-  //   - effortLevel → 写 settings.json effortLevel（全局持久化，过 toPersistableEffort 守卫：
-  //     'max' 非 ant 为 session-scoped 不落盘=删键跟随默认，运行时经广播实时生效）。
+  //   - effortLevel → 两态（2026-11-06 会话隔离）：带 sessionId = 该会话自己的档位，精确路由
+  //     到该 CLI 并落 sessionEfforts 镜像，不写盘/不广播；无 sessionId = 全局默认，写 settings.json
+  //     供新会话继承（过 toPersistableEffort 守卫：'max' 非 ant 为 session-scoped 不落盘=删键跟随
+  //     默认），同样不广播——已在跑的会话各自保持自己的档位。
   //   （2026-10-11 删除 defaultModel 分支：全局默认模型不再有运行期写入口，改全局默认 =
   //     直接编辑凭据池 credentials.json，见文件头注释。）
   if (req.method === 'POST' && url.pathname === '/gateway/model') {
@@ -2586,7 +2619,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         typeof parsed.sessionId === 'string' && parsed.sessionId.trim() ? parsed.sessionId.trim() : undefined
       const rawEffort =
         typeof parsed.effortLevel === 'string' && parsed.effortLevel.trim() ? parsed.effortLevel.trim() : undefined
-      // 'off'/'auto'/'default' = 清除思考等级（delete settings.effortLevel + 广播 null → CLI effortValue=undefined）
+      // 'off'/'auto'/'default' = 清除思考等级（null → CLI effortValue=undefined；全局态下删 settings 键）
       const effortLevel =
         rawEffort === 'off' || rawEffort === 'auto' || rawEffort === 'default' ? null : rawEffort
       if (model === undefined && effortLevel === undefined) {
@@ -2602,7 +2635,11 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
           return
         }
       }
-      if (effortLevel !== undefined) {
+      // 2026-11-06 会话隔离（C）：带 sessionId 的 effortLevel = **该会话自己**的思考等级，只精确
+      // 路由到目标 CLI，不写全局 settings.json、不广播给其它会话（旧实现两者都做 → 改一个会话的
+      // 等级，全部会话跟着变）。无 sessionId（首页/新会话选择）= 全局默认，写盘供新会话继承，
+      // 同样不广播——已在跑的会话保持各自的值。
+      if (effortLevel !== undefined && !sessionId) {
         // E（2026-08-26）：统一设置服务——不再手写 settings.json，改接官方 updateSettingsForSource
         // （校验/合并/删除/缓存失效/失败暴露全在服务内）。'userSettings' 写便携根
         // getClaudeConfigHomeDir()/settings.json（便携模式 = 便携根/.claude，与旧 writeSettingsModel 同路径）。
@@ -2632,7 +2669,15 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         // 表值先行，进程死在该窗口时表值 = 用户意图，resume 仍按意图恢复）。
         if (sessionId) recordSessionModelLaunch(sessionId, model, modelProvider ?? undefined)
       }
-      if (effortLevel !== undefined) broadcastToClients({ type: 'effort', value: effortLevel })
+      if (effortLevel !== undefined && sessionId) {
+        // 会话级思考等级：与 model 同链精确路由（未在线拒绝，不广播兜底）；落镜像供
+        // /gateway/session 回读——进程内存态只在目标会话生效。
+        if (!routeToClient(sessionId, { type: 'effort', value: effortLevel })) {
+          sendJson(res, 400, { error: '目标会话未在线，无法切换思考等级' })
+          return
+        }
+        sessionEfforts.set(sessionId, { effort: effortLevel, updatedAt: Date.now() })
+      }
       sendJson(res, 200, { ok: true, model: model ?? null, effortLevel: effortLevel ?? null })
     } catch (error) {
       sendReportBodyError(res, error)
@@ -3494,8 +3539,16 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       // 2026-08-24 模型 web/CLI 同步：附每会话实际模型（CLI 上报，override 不落盘只此有源）+
       // 上报时间戳（web 端据此判断是否覆盖本地选择）；无上报时回落 null（web 回落凭据池 activeModel）。
       const sm = sessionModels.get(uuid)
-      data.model = sm?.model ?? null
+      // 2026-11-06 会话模型隔离（B）：在线上报缺失时按「该会话的启动模型表」回落——会话未在线/
+      // 从未在本网关生命周期内上报过时，旧实现回 null，web 便保留**上一个会话**的模型座（用户
+      // 实测「切会话后模型停在上一会话」）。再兜底全局 activeModel（该会话从未改过模型时的实际值）。
+      // modelTs 只在真上报时给：null 让 web 的在途快照守卫直接放行（启动表/全局值是权威落值）。
+      data.model = sm?.model ?? sessionModelLaunch.get(uuid)?.model ?? getGlobalActiveModel() ?? null
       data.modelTs = sm?.updatedAt ?? null
+      // 2026-11-06 每会话思考等级（C）：该会话自己的档位（null = Off/未设置，web 回落全局默认）。
+      // 无上报时不给键——web 据此区分「该会话没改过档」与「明确 Off」。
+      const se = sessionEfforts.get(uuid)
+      if (se) data.effort = se.effort
       // 2026-08-28 遥测端图片门控：该会话模型是否识图（有上报按上报模型，无上报回落全局 activeModel，
       // 与 model 字段回落同源）→ 前端 renderSession/applySessionModel 据此显隐图片上传入口
       const visionModel = sm?.model ?? getGlobalActiveModel()
@@ -3582,23 +3635,34 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       const parsed = await readReportBody(req)
       const sid = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
       const model = typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : ''
-      if (!sid || !model) {
+      // 2026-11-06 思考等级按会话隔离（C）：同一端点接收 CLI 自报的 effort（'off'/'auto' = 清除）。
+      // 只有带 effort 键的上报才写镜像——模型上报不带该键时不能把已记录的档位抹掉。
+      const hasEffort = Object.prototype.hasOwnProperty.call(parsed, 'effort')
+      const rawEffort = typeof parsed.effort === 'string' ? parsed.effort.trim() : parsed.effort === null ? '' : undefined
+      // null / 空串 / 'off' / 'auto' / 'default' 一律记 null（= 明确 Off/退出档位）
+      const reportedEffort = !rawEffort || rawEffort === 'off' || rawEffort === 'auto' || rawEffort === 'default' ? null : rawEffort
+      if (!sid || (!model && !hasEffort)) {
         sendJson(res, 400, { error: 'invalid body' })
         return
       }
       const modelTs = Date.now()
-      sessionModels.set(sid, { model, updatedAt: modelTs })
-      // 同值记入启动模型表（2026-10-13）：CLI 自报的是本会话实际生效模型——含 spawn --model
-      // 启动后的 open 补报（闭环：新建带模型启动 → 表记录 → 下次 resume 带同值）与运行期
-      // 切换生效后的上报（校正 /gateway/model 先记的意图值）。
-      recordSessionModelLaunch(sid, model)
+      if (model) {
+        sessionModels.set(sid, { model, updatedAt: modelTs })
+        // 同值记入启动模型表（2026-10-13）：CLI 自报的是本会话实际生效模型——含 spawn --model
+        // 启动后的 open 补报（闭环：新建带模型启动 → 表记录 → 下次 resume 带同值）与运行期
+        // 切换生效后的上报（校正 /gateway/model 先记的意图值）。
+        recordSessionModelLaunch(sid, model)
+      }
+      if (hasEffort) sessionEfforts.set(sid, { effort: reportedEffort ?? null, updatedAt: modelTs })
       sweepStaleMaps()
       // 2026-09-19 实时化：落值后 SSE 群发 {type:'model', session, model, modelTs}（与 queue-state/
       // task-state 同款「镜像存储 + 转发」）——此前 web 只能等下一次 /gateway/session 拉取才校准，
       // 会话空闲时可能长时间不来，「CLI 切了模型、web 底栏不动」正是这条延迟造成的。
       // modelTs = 本次上报时刻，web 端与「用户刚在 web 切过的时刻」比对，用于丢弃切换前的在途快照。
-      const s = `data: ${JSON.stringify({ type: 'model', session: sid, model, modelTs })}\n\n`
-      sendAll(sseClients, (c) => { c.res.write(s) })
+      if (model) {
+        const s = `data: ${JSON.stringify({ type: 'model', session: sid, model, modelTs })}\n\n`
+        sendAll(sseClients, (c) => { c.res.write(s) })
+      }
       sendJson(res, 200, { ok: true })
     } catch (error) {
       sendReportBodyError(res, error)

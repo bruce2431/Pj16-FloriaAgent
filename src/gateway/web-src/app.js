@@ -12,8 +12,8 @@ import { hideGate, setAuthPorts } from './engine/auth.js'
 import { setChar } from './core/char.js'
 import { GATEWAY, HOT_RELOAD, initGateway, detectGateway, setGatewayPorts } from './engine/gateway.js'
 import { I } from './core/icons.js'
-import { initLive, setLiveModelHook, setLivePorts } from './engine/live.js'
-import { applySessionModel } from './inputbar/model-select.js'
+import { initLive, setLiveEffortHook, setLiveModelHook, setLivePorts } from './engine/live.js'
+import { applySessionEffort, applySessionModel } from './inputbar/model-select.js'
 import { bootRegistry, isCardAllowedInContext } from './engine/registry.js'
 import { loadSessions } from './engine/sessions.js'
 import { inputEl, overlay, sInput, sidebar, state } from './engine/state.js'
@@ -163,6 +163,7 @@ import { renderCtxMeter } from './inputbar/ctx-meter.js'
     })
     setViewportAdapter({ syncStage: stageSync }) // 键盘适配：可视区变矮后重算两层消息流占位/跟随
     setLiveModelHook(applySessionModel) // 实时同步：CLI 上报模型 → 校准输入栏模型 seat
+    setLiveEffortHook(applySessionEffort) // 2026-11-06 思考等级同链：实时刷新回程校准本会话档位
     initViewport() // 键盘弹出适配（visualViewport）：只压缩消息流底界与底栏
     setPanel(false)
     setChar(1) // 启动默认形象

@@ -1,5 +1,5 @@
 // 右栏页态内容补挂 + 侧栏（项目选择/项目列表/文件树/自动对账/数据补齐）与其渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
-import { isTempProjLabel } from '../../core/util.js'
+import { sessionInWork } from '../../core/util.js'
 import { bindRowPeek, isPinned, peekClear } from '../recent.js'
 import { cmtInvalidate, cmtLoad } from '../../feature/comment/comment-data.js'
 import { cmtRender } from '../../feature/comment/comment-panel.js'
@@ -135,11 +135,10 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
       // 状态在线优先 + 创建时间新→旧）。只作用于 work 侧栏列表，chat 侧栏 renderList/renderProject 不变。
       const pinRank = (s) => (isPinned(hashOf(s)) ? 0 : 1)
       // 临时项目（根级时间戳任务区）没有自有会话：列表改展示**全局根散装会话**（2026-10-30 用户定案）。
-      // 判据走同一枚 isTempProjLabel；新建会话也落全局根（core/util.js newSessionProject），故入列的
+      // 判据统一走 core/util.js sessionInWork（临时项目 → 全局会话）；新建会话也落全局根（newSessionProject），故入列的
       // 新会话就在这份列表里，不会「发完就消失」。
-      const temp = isTempProjLabel(state.workProj)
       const list = state.workProj
-        ? ALL.filter((s) => (temp ? s.projectScope === 'global' : s.projectLabel === state.workProj)).sort(
+        ? ALL.filter((s) => sessionInWork(s, state.workProj)).sort(
             (a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b),
           )
         : []

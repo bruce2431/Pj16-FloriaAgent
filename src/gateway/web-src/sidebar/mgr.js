@@ -9,7 +9,7 @@ import { I } from '../core/icons.js'
 import { stopLiveFoldTimer } from '../engine/live.js'
 import { sessCmp, sorted } from '../engine/sessions.js'
 import { ALL, bodyEl, state } from '../engine/state.js'
-import { esc, isMobile } from '../core/util.js'
+import { esc, isMobile, sessionProjLabel } from '../core/util.js'
 import { closeMentionPop } from '../inputbar/mention.js'
 import { openCard } from '../engine/registry.js'
 import { bindSessionRows, itemHtml, setPanel } from './recent.js'
@@ -42,7 +42,11 @@ import { bindSessionRows, itemHtml, setPanel } from './recent.js'
     bodyEl.innerHTML = ''
     if (state.pt === 'projects') {
       const byProject = {}
-      for (const s of ALL) if (s.projectScope === 'project') (byProject[s.projectLabel] = byProject[s.projectLabel] || []).push(s)
+      // 临时项目（根级时间戳任务区）的会话按全局根对待：不进项目文件夹视图（2026-11-06 用户定案）。
+      for (const s of ALL) {
+        const label = sessionProjLabel(s)
+        if (label) (byProject[label] = byProject[label] || []).push(s)
+      }
       const labels = Object.keys(byProject).sort((a, b) => {
         const la = Math.max(0, ...byProject[a].map((s) => s.updatedAt))
         const lb = Math.max(0, ...byProject[b].map((s) => s.updatedAt))

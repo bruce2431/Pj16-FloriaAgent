@@ -11,6 +11,7 @@ import { messagesEl, inputWrap, inputBarEl, inputEl, sendBtn, state, live, connU
 import { esc, toast } from '../core/util.js'
 import { renderUserText, quoteBodiesAsMarkdown } from './mention.js'
 import { syncGwSend } from './send.js'
+import { closeCmdPop } from './commands.js'
 import { firstSendHash } from '../sidebar/recent.js'
 /* @module inputbar/approval.js */
   function renderTransient() {
@@ -685,8 +686,17 @@ import { firstSendHash } from '../sidebar/recent.js'
     if (!isNaN(na) && !isNaN(nb)) return na - nb
     return String(a.id).localeCompare(String(b.id))
   }
+  // 「+」工具栏（#cmd-pop）是否在场（2026-11-06 D）：以 DOM 可见性为准——cmd.open 在风险确认
+  // 模态期间仍为真但弹窗已隐藏，那时任务浮窗不必让位（全屏模态本就盖住一切）。
+  function cmdPopVisible() {
+    const el = $('cmd-pop')
+    return !!el && !el.hidden
+  }
   function toggleTaskDock() {
     if (takeover) return // 接管卡在场：禁点（卡即输入栏本体，任务浮窗让位）
+    // 2026-11-06 D：任务浮窗要展开/收起时先收「+」工具栏（互斥的另一半入口；
+    // 打开工具栏时工具栏侧同样会收起本浮窗）。closeCmdPop 回程会重渲本浮窗。
+    if (cmdPopVisible()) closeCmdPop()
     live.taskOpen = !live.taskOpen
     renderTaskDock()
   }
@@ -698,6 +708,14 @@ import { firstSendHash } from '../sidebar/recent.js'
     const list = Array.isArray(live.tasks) ? live.tasks : []
     // 无清单（CLI 侧清空/隐藏，或未打开会话）→ 整窗不出现（与 CLI「tasks.length===0 → null」同判）
     if (!list.length || !state.currentHash) {
+      dock.hidden = true
+      dock.classList.remove('open', 'blocked')
+      live.taskOpen = false
+      return
+    }
+    // 2026-11-06 D 弹层互斥：两窗同挂 #input-bar 上沿，展开态会直接叠在一起。工具栏在场时
+    // 任务浮窗整窗让位（含收敛把手）；工具栏关闭时 closeCmdPop 重渲本函数恢复。
+    if (cmdPopVisible()) {
       dock.hidden = true
       dock.classList.remove('open', 'blocked')
       live.taskOpen = false

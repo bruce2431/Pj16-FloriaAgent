@@ -4,7 +4,7 @@ import { navigate } from '../chat/route.js'
 import { I } from '../core/icons.js'
 import { hashOf, sorted } from '../engine/sessions.js'
 import { bubblePop, overlay, sInput, state } from '../engine/state.js'
-import { esc, isMobile, isTempProjLabel } from '../core/util.js'
+import { esc, isMobile, sessionInWork, sessionProjLabel } from '../core/util.js'
 import { setPanel, itemHtml } from './recent.js'
 /* @module sidebar/bubble-search.js */
   // ---------- 气泡弹层 ----------
@@ -48,8 +48,7 @@ import { setPanel, itemHtml } from './recent.js'
     const inWork = searchInWork()
     // work 下范围 = 当前工作项目的会话；临时项目（根级时间戳任务区）的范围 = 全局根散装会话
     // （与侧栏聊天列表 / workScopeOk 同一判据，2026-10-30）。
-    const temp = isTempProjLabel(state.workProj)
-    const inScope = (s) => (temp ? s.projectScope === 'global' : s.projectScope === 'project' && s.projectLabel === state.workProj)
+    const inScope = (s) => sessionInWork(s, state.workProj)
     const rows = sorted().filter(
       (s) =>
         (!inWork || inScope(s)) &&
@@ -57,8 +56,9 @@ import { setPanel, itemHtml } from './recent.js'
     )
     const sessHtml = rows
       .map((s) => {
-        // work 下结果已限在同一项目，项目标签无信息量；chat 下保留以区分来源
-        const prj = !inWork && s.projectScope === 'project' ? `<span class="s-prj">${esc(s.projectLabel)}</span>` : ''
+        // work 下结果已限在同一项目，项目标签无信息量；chat 下保留以区分来源（临时项目归一为全局，无标签）
+        const pl = sessionProjLabel(s)
+        const prj = !inWork && pl ? `<span class="s-prj">${esc(pl)}</span>` : ''
         return `<div class="s-row" data-hash="${esc(hashOf(s))}"><span class="s-ico">${I.msg}</span><span class="st">${esc(s.title)}</span>${prj}</div>`
       })
       .join('')

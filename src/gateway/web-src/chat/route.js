@@ -14,7 +14,7 @@ import { renderTransient, claimStartTs, syncTurnLive, takeover, clearTakeover, s
 import { renderProjSeat, closeProjPop } from '../inputbar/commands.js'
 import { renderCtxMeter } from '../inputbar/ctx-meter.js'
 import { closeMentionPop } from '../inputbar/mention.js'
-import { applySessionModel, syncSeatToGlobalDefault } from '../inputbar/model-select.js'
+import { applySessionEffort, applySessionModel, syncSeatToGlobalDefault } from '../inputbar/model-select.js'
 import { gwSend, syncGwSend } from '../inputbar/send.js'
 import { renderMgr } from '../sidebar/mgr.js'
 import { firstSendHash, newWebSession, renderRecent } from '../sidebar/recent.js'
@@ -276,6 +276,9 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     renderTaskDock()
     live.streamText = '' // 2026-09-08 流式字符通道：切会话清流式暂态（串会话防写穿，同 queueRemote/curUuid 槽清单）
     setModelUserPicked(false) // 切换会话：允许 /gateway/session 上报的会话模型校准 seat
+    // 2026-11-06 思考等级会话隔离（C）：切换瞬间清掉上一会话的档位归属（回全局默认），
+    // 等本次 fetchMessages 回程按本会话上报值校准——否则加载窗口内座显仍是上一会话的档位。
+    applySessionEffort(undefined)
     stageRelease()
     clearTakeover() // 切换会话：清掉残留的提问/审批 takeover（输入栏恢复）
     closeProjPop() // 切换会话：项目选择器弹层一并收起（初始界面专属件）
@@ -317,7 +320,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     inputWrap.classList.add('docked')
     chatArea.classList.add('in-session')
     fetchMessages(s.id)
-      .then(({ messages, context, model, modelTs, cwd, file, queued, tasks, deltaSeq }) => {
+      .then(({ messages, context, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
         if (state.currentHash !== hash) return
         setSessionCwd(cwd)
         // 2026-09-08 事件流统一 P1：首载回程同样重置 delta 本地基线（与 refreshSession 对称，
@@ -344,6 +347,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
         if (file) live.curUuid = file.replace(/\.jsonl$/, '')
         live.lastDataTs = (messages.length && messages[messages.length - 1].timestamp) || 0 // 切会话：基线硬重置为本会话末条 ts
         applySessionModel(model, modelTs) // 2026-08-24：打开会话即用 CLI 上报的实际模型校准 seat
+        applySessionEffort(effort) // 2026-11-06：思考等级同链——本会话上报档位校准座显（缺键=未改过 → 全局默认）
         renderCtxMeter(context)
         // 首条消息事务期（2026-09-06）：fetch 空（CLI 尚未落盘首条 user）→ 跳过整页重建保留
         // 乐观 DOM（开启气泡+主张折叠是权威，不被「加载中…」/空态行洗掉），真实数据经 SSE

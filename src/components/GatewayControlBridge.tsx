@@ -18,7 +18,7 @@ import {
   setPendingSessionModelOverride,
 } from '../bootstrap/state.js'
 import { setControlOverrideHandle } from '../bridge/controlOverrideHandle.js'
-import { reportCurrentModel } from '../utils/gatewayClient.js'
+import { reportCurrentModel, reportSessionEffort } from '../utils/gatewayClient.js'
 import { setPendingSessionProvider } from '../utils/credentials/pool.js'
 import { useSetAppState } from '../state/AppState.js'
 import { applyExternalRename } from '../utils/sessionStorage.js'
@@ -50,6 +50,9 @@ export function GatewayControlBridge(): null {
         // 折叠成 undefined 会让 Off 失效）；'auto' 沿用清除语义 = undefined 跟随模型默认。
         const v = value == null ? null : value === 'auto' ? undefined : String(value)
         setAppState(prev => (prev.effortValue === v ? prev : { ...prev, effortValue: v }))
+        // 2026-11-06 每会话思考等级（C）：回报本会话实际档位（null=Off / 'auto'=清除）→ 网关
+        // sessionEfforts 镜像 → web 进会话时 /gateway/session.effort 校准，不再跨会话串档。
+        reportSessionEffort(v === undefined ? 'auto' : v)
       } else if (kind === 'rename') {
         // 2026-08-25 web 重命名 → CLI 实时同步：网关已把 custom-title/agent-name 写入转录，
         // 这里只更新本进程内存缓存 + AppState，让输入栏徽标（useSwarmBanner）与 terminal

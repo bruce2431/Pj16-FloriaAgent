@@ -53,6 +53,10 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
   // 用户本次会话内主动切换过模型 → 不再被 /gateway/session 旧上报覆盖（切换会话时重置）。避免
   // POST /gateway/model 尚未落地前的一次刷新把刚切的选择回滚成旧值。
   let modelUserPicked = false
+  // 2026-11-06 会话隔离（B）：主动切模型的判定只对「当时那个会话」成立。旧守卫用全局
+  // modelUserPicked + MODEL_CUR.ts（localStorage 跨会话持久化）→ 切到另一个会话时，该会话后端
+  // 上报的模型（modelTs 早于上次切换时刻）被当成「在途旧快照」丢弃，座停在上一会话的模型。
+  let modelPickedHash = ''
   // 首页（新会话）模型选择（2026-10-11 定案）：全局默认模型不再由 web 调整——唯一入口 = 直接改
   // 凭据池 credentials.json（agent 侧）。首页选的模型只作用于**这一次新建的会话**：记入本槽，
   // 发送首条消息时随会话级切换（POST /gateway/model 带 sessionId，见 send.js 空态分支）落到新会话，
@@ -73,6 +77,7 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
     if (MODEL_CUR.model === model) { setModelUserPicked(false); return }
     if (
       modelUserPicked &&
+      modelPickedHash === (state.currentHash || '') &&
       typeof modelTs === 'number' &&
       typeof MODEL_CUR.ts === 'number' &&
       modelTs < MODEL_CUR.ts
@@ -128,8 +133,33 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
       loadModelsData(false).then(() => renderModelSeat()).catch(() => {})
     }
   }
+  // ---- 每会话思考等级（2026-11-06，C）----
+  // 档位归属 = 会话，不归属 web 全局：显示源只有两个——① 该会话后端上报值（/gateway/session.effort，
+  // CLI 落地后经 /gateway/model-report 回报）；② 无上报时回落 /gateway/models 的全局默认 effortLevel。
+  // 切会话绝不再沿用上一会话的档位（旧实现只有一个 MODEL_CUR.effortLevel 槽 + localStorage，
+  // 切会话座显示停在上一会话，且改档广播给全部会话）。
+  let reportedEffort // 该会话最近一次上报档位：undefined=未上报，null=明确 Off，其它=档位名
+  function globalEffortLevel() {
+    return MODELS && MODELS.effortLevel != null ? String(MODELS.effortLevel) : undefined
+  }
+  // 按 reportedEffort + 全局默认重算 seat 档位（MODELS 晚到 / 切会话后各调一次）
+  function syncEffortSeat() {
+    const v = reportedEffort === undefined ? globalEffortLevel() : reportedEffort == null ? undefined : String(reportedEffort)
+    if (MODEL_CUR.effortLevel === v) return
+    setModelCur({ ...MODEL_CUR, effortLevel: v })
+    renderModelSeat()
+  }
+  // 会话载入点（renderSession 首载 / 刷新回程 / 首页复位）传入后端上报值；undefined = 该会话无上报。
+  // 无参调用 = 数据源（MODELS 全局默认）晚到，按最近上报值重算一次，不改变归属。
+  function applySessionEffort(effort) {
+    if (arguments.length) reportedEffort = effort === undefined ? undefined : effort == null ? null : String(effort)
+    syncEffortSeat()
+  }
   // 回首页（无会话）且无待定新会话选择 → seat 显示源回落凭据池全局默认（web 不再改全局默认）
   function syncSeatToGlobalDefault() {
+    // 回首页 = 离开会话：档位回到全局默认（会话档位不跨会话残留在座上）
+    reportedEffort = undefined
+    syncEffortSeat()
     if (state.currentHash || newSessionModel) return
     const g = MODELS && (MODELS.activeModel || (MODELS.model ? String(MODELS.model) : ''))
     if (!g) return
@@ -263,9 +293,13 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
       const lv = modelEffortLevels()
       if (lv && prevEff != null && !lv.includes(prevEff)) {
         MODEL_CUR.effortLevel = undefined
-        void apiSetModel({ effortLevel: 'off' }) // 与 effort 面板同链同形：'off' = 网关清档
+        reportedEffort = undefined
+        // 与 effort 面板同链同形：'off' = 网关清档；会话内必须带 sessionId（C：只清本会话，
+        // 不得写全局 settings.json / 影响其它会话）
+        void apiSetModel({ effortLevel: 'off', ...(state.currentHash ? { sessionId: state.currentHash } : {}) })
       }
       modelUserPicked = true // 2026-08-24：本次会话内主动切换，防止 /gateway/session 旧上报回滚
+      modelPickedHash = state.currentHash || '' // 2026-11-06：防回滚只对「切换发生时所在会话」生效
       saveModelCur() // 2026-08-24：持久化，刷新后恢复
       renderModelSeat()
       closeModelPop()
@@ -286,12 +320,19 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
       const eff = row.effort === undefined ? undefined : row.effort
       if (MODEL_CUR.effortLevel === eff) { closeModelPop(); return }
       MODEL_CUR = { ...MODEL_CUR, effortLevel: eff }
-      saveModelCur() // 2026-08-24：持久化推理等级
+      saveModelCur() // 2026-08-24：持久化推理等级（仅作首页/刷新前的暂存；会话内真源 = 网关上报）
       renderModelSeat()
       closeModelPop()
-      // Off（清除等级）发 'off'，网关据此 delete settings.effortLevel + 广播 null → CLI effortValue=undefined
-      const payload = eff === undefined ? { effortLevel: 'off' } : { effortLevel: eff }
-      void apiSetModel(payload).then(ok => toast(ok ? `推理等级已切换为 ${row.label}` : '切换失败 · 网关未连接'))
+      // 2026-11-06 每会话思考等级（C）：会话内带 sessionId → 网关只精确路由到本会话（不广播、
+      // 不写全局 settings.json）；首页（无会话）= 全局默认，写盘供新会话继承，不影响已开会话。
+      // Off（清除等级）发 'off'，网关据此让 CLI effortValue=undefined。
+      const hash = state.currentHash
+      // 会话内不再把「后端未上报」当成覆盖值：本地的主动选择即本会话当前档位，回载前以此为准
+      reportedEffort = eff === undefined ? null : eff
+      const payload = eff === undefined
+        ? { effortLevel: 'off', ...(hash ? { sessionId: hash } : {}) }
+        : { effortLevel: eff, ...(hash ? { sessionId: hash } : {}) }
+      void apiSetModel(payload).then(ok => toast(ok ? `推理等级已切换为 ${row.label}` : (hash ? '切换失败 · 目标会话未在线' : '切换失败 · 网关未连接')))
     }
   }
   renderModelSeat() // 初始渲染模型 seat（trigger 显示当前模型名 · 推理等级）
@@ -303,6 +344,7 @@ export function setModelUserPicked(v) { modelUserPicked = v }
 export {
   MODEL_CUR,
   MODEL_KEY,
+  applySessionEffort,
   applySessionModel,
   closeModelPop,
   currentChoice,

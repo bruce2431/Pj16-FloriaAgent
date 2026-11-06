@@ -4,7 +4,7 @@ import { navigate } from '../chat/route.js'
 import { needToken, apiUrl } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
 import { ALL, chatArea, sessionCard, state } from '../engine/state.js'
-import { esc, isMobile, isTempProjLabel, toast } from '../core/util.js'
+import { esc, isMobile, sessionInWork, toast } from '../core/util.js'
 import { saveWork } from '../core/storage.js'
 import { loadSessions, sessCmp, findSession } from '../engine/sessions.js'
 import { currentCardId } from '../engine/registry.js'
@@ -67,8 +67,7 @@ import { clearWkFrameTools, registerWkFrameTools, registerWkTool, wkToolDef, wkT
     if (state.sbMode !== 'work' || !state.workProj || !hash) return true
     const s = findSession(hash)
     if (!s) return true
-    if (isTempProjLabel(state.workProj)) return s.projectScope === 'global'
-    return s.projectLabel === state.workProj
+    return sessionInWork(s, state.workProj)
   }
   function enforceWorkScope() {
     if (!workScopeOk(state.currentHash)) navigate('#/')

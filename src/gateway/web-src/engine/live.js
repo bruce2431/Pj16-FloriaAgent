@@ -13,6 +13,9 @@ import { toast } from '../core/util.js'
   // 未注入时为空操作（initLive 之前必已注入，见 app.js 依赖接线段）。两处调用＝SSE model 事件与
   // 会话全量刷新（refreshSession）。
   let onSessionModel = () => {}
+  // 2026-11-06 每会话思考等级（C）：与模型同一条注入钩子——实时刷新回程把该会话上报的档位
+  // 交给 feature 层（model-select.js 的 applySessionEffort），座显只看本会话，不串档。
+  let onSessionEffort = () => {}
 
   // 依赖反转（分层治理 4C，2026-10-10）：engine/live.js 不再静态 import chat/inputbar/sidebar——
   // 渲染出口、暂态/stage、可变状态一律经 app 启动序列注入的端口对象访问。端口内的 getter
@@ -401,7 +404,7 @@ import { toast } from '../core/util.js'
       const s = findSession(hash)
       if (!s) return
       try {
-        const { messages, context, model, modelTs, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
+        const { messages, context, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
         // 2026-08-30 串会话根治：会话校验只在 await 前做过一次 → fetch 回程期间用户切到其它
         // 会话时，本响应（A 的整份消息/cwd/模型/上下文/队列快照）会写穿全部全局槽并把 A 的
         // 历史 innerHTML 整页渲染进新会话 DOM（CLI 单进程单会话无此异步边界，web 必须在每个
@@ -419,6 +422,7 @@ import { toast } from '../core/util.js'
         live.tasks = tasks
         liveUiPort.renderTaskDock()
         onSessionModel(model, modelTs) // 2026-08-24：实时刷新同样按 CLI 上报模型校准 seat（注入的钩子）
+        onSessionEffort(effort) // 2026-11-06 思考等级同链：缺键 = 该会话没改过档，null = 明确 Off
         liveUiPort.renderCtxMeter(context)
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：全量回程 = 权威快照，重置本地 delta
         // 基线（localMessages 副本 + 网关 seq 记账）。此后 session-delta SSE 按「尾部替换」增量
@@ -853,6 +857,7 @@ import { toast } from '../core/util.js'
 
 // —— 跨模块写入口（切割脚本生成）——
 export function setLiveModelHook(fn) { onSessionModel = fn }
+export function setLiveEffortHook(fn) { onSessionEffort = fn }
 // 分层治理 4C（2026-10-10）：feature 端口注入（app 启动序列调用一次，须先于 initLive）。
 export function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort = p.stage; liveStatePort = p.state }
 

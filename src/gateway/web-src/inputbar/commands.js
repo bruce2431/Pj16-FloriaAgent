@@ -5,11 +5,12 @@ import { relTime } from '../core/markdown.js'
 import { mentionPathToken } from '../core/mention-syntax.js'
 import { findSession, hashOf } from '../engine/sessions.js'
 import { inputEl, state, ALL } from '../engine/state.js'
-import { esc, toast, isTouch, newSessionProject } from '../core/util.js'
+import { esc, toast, isTouch, newSessionProject, sessionProjLabel } from '../core/util.js'
 import { pendingImages, uploadedMentionItems } from './images.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickHome, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, inHomeProject, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickHome, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
+import { renderTaskDock } from './approval.js'
 import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../sidebar/mgr-data.js'
 /* @module inputbar/commands.js */
   // ---------- 命令菜单 + 模型选择（2026-08-21 dsh 输入栏逻辑移植）----------
@@ -95,7 +96,7 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     if (locked) closeProjPop()
     const s = state.currentHash ? findSession(state.currentHash) : null
     const label = state.currentHash
-      ? (s && s.projectScope === 'project' && s.projectLabel ? s.projectLabel : '全局')
+      ? (s && sessionProjLabel(s) || '全局')
       : (newSessionProject() || '全局')
     projSeatEl.querySelector('.projLabel').textContent = label
     projSeatEl.title = locked ? '工作文件夹：' + label : (newSessionProject() ? '目标项目：' + newSessionProject() : '目标项目：全局（默认）')
@@ -155,6 +156,9 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
   function cmdSessionRows(match, grp) {
     const out = []
     for (const s of [...ALL].sort((a, b) => b.updatedAt - a.updatedAt)) {
+      // 2026-11-06 A：只列当前上下文项目的会话（此前遍历 ALL 混入所有项目）；
+      // 判据与 @ 提及共用 inHomeProject（空串 = 全局，同 pickHome 口径）。
+      if (!inHomeProject(s)) continue
       if (match && !match(s.title || '')) continue
       out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp })
     }
@@ -170,13 +174,16 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
   function cmdSkillRows(match, grp) {
     const out = []
     const proj = pickHome()
-    const ps = projSkillsOf(proj)
-    if (ps.list.length) {
-      for (const s of ps.list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    // 2026-11-06 A：技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
+    // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    if (proj) {
+      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    } else if (MGR) {
+      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     }
+    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
-    for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     return out
   }
   // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
@@ -254,6 +261,9 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     cmd.acknowledged = false
     cmd.error = null
     renderCmdPop()
+    // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
+    // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
+    renderTaskDock()
     // 过滤在底栏打字（待办 20 返修）：焦点回底栏，用户继续输入列表即变；触屏不抢焦点（iOS 弹键盘，
     // 与旧搜索框同一处置——用户自己点输入框唤起）。@ 唤起时光标本就在底栏，不重复聚焦。
     if (!mentionMode && !isTouch()) composerFocus()
@@ -277,6 +287,8 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     cmd.confirming = null
     cmd.acknowledged = false
     cmdPop.hidden = true
+    // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
+    renderTaskDock()
     // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
     resetMention()
     const rm = $('risk-modal')
@@ -312,8 +324,10 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
       html += `<div role="listbox" class="viewport">${cmd.items.map((it, i) => {
         const g = it.grp || groupOf(it)
         const grp = g === '文件' ? '文件 · ' + pickLabel() : g
-        const gh = flat || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
-        lastGrp = grp
+        // 「返回」行不单立分组标题（2026-11-06 D）：视图内此前先印「导航」再印该类标题，
+        // 两条上箭头/分组叠在顶部像重复了一栏；返回行随该视图的标题下呈现即可。
+        const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
+        if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
         const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name

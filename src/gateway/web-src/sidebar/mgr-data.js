@@ -4,7 +4,7 @@
 
 import { hideGate } from '../engine/auth.js'
 import { needToken, apiUrl } from '../engine/gateway.js'
-import { loadModelCur, saveModelCur, MODEL_CUR, renderModelSeat } from '../inputbar/model-select.js'
+import { loadModelCur, saveModelCur, applySessionEffort, MODEL_CUR, renderModelSeat } from '../inputbar/model-select.js'
 import { state } from '../engine/state.js'
 import { refreshCard } from '../engine/registry.js'
 /* @module sidebar/mgr-data.js */
@@ -91,9 +91,15 @@ import { refreshCard } from '../engine/registry.js'
         // effortLevel 只认网关真值（settings.json 落盘态）：网关返回 null/缺省 = 未设置 →
         // undefined（CLI 同源显示默认）。**不回落 localStorage**——陈旧 saved 会让座显报低档
         // 而 CLI 实际跑默认档（2026-10-24 用户实报「web 显示 low、CLI 是 high」的根因）。
-        effortLevel: data.effortLevel != null ? String(data.effortLevel) : undefined,
+        // 2026-11-06 会话隔离（C）：settings.json 的 effortLevel 是**全局默认**，会话内档位归属
+        // 该会话（/gateway/session.effort 上报）——会话态下不得用全局默认覆盖座显。
+        effortLevel: inSession
+          ? MODEL_CUR.effortLevel
+          : (data.effortLevel != null ? String(data.effortLevel) : undefined),
       })
       saveModelCur()
+      // 全局默认到达后，会话档位按最近上报重算一次（无参 = 只重算、不改归属）
+      if (inSession) applySessionEffort()
     } catch (e) {
       // 2026-08-25 竞态防护：若期间已有一次成功加载（如 hideGate 用新 token 补拉已先落地），
       // 此陈旧失败（典型：gate 前空 token 的 401）不覆盖已就绪数据，避免把成功态又标成错误。

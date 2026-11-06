@@ -25,6 +25,17 @@ import { state } from './ui-state.js'
   const TEMP_PROJ_RE = /^\d{8,14}-/
   const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')
 
+  // 会话的项目归属（chat 侧栏唯一判据，2026-11-06 用户定案）：临时项目 label 下的会话按**全局根**对待（''）。
+  // 根级时间戳任务区只是 work 的文件树入口，不是可归属的会话项目——chat 侧栏不识别它、也不显示项目标签；
+  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 work-files.js / commands.js projList）。
+  const sessionProjLabel = (s) =>
+    s && s.projectScope === 'project' && s.projectLabel && !isTempProjLabel(s.projectLabel) ? s.projectLabel : ''
+
+  // 会话是否属于某工作项目的辖内（work 侧唯一判据）：临时项目（根级时间戳任务区）的在辖会话 =
+  // 全局根散装会话（它不承载自有会话）；普通项目 = projectLabel 命中。
+  const sessionInWork = (s, workProj) =>
+    isTempProjLabel(workProj) ? !!s && s.projectScope === 'global' : !!s && s.projectLabel === workProj
+
   // 新会话的落项目（唯一真源）：work 模式 = 「在项目中工作」，目标项目恒 = 工作项目（state.workProj）；
   // 其余情况 = chat 侧栏/初始界面选的 state.newProject（null = 全局）。所有建会话/上传的落项目判定
   // 都读本函数——写死 state.newProject 的消费点会在 work 模式下漏掉工作项目（会话落到全局）。
@@ -46,5 +57,7 @@ export {
   isTempProjLabel,
   isTouch,
   newSessionProject,
+  sessionInWork,
+  sessionProjLabel,
   toast,
 }

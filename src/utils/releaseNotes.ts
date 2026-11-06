@@ -13,15 +13,15 @@ import { gt } from './semver.js'
 const MAX_RELEASE_NOTES_SHOWN = 5
 
 /**
- * What's New 数据源 = 本仓库（bruce2431/Floria）的 GitHub Release 正文。
+ * What's New 数据源 = 本仓库（bruce2431/Pj16-FloriaAgent）的 GitHub Release 正文。
  *
  * 取不到网络时不清缓存：上次成功写入的 changelog.md 继续供下次启动展示。
  * 流程：版本变化 → 后台拉 releases → 转成 `## <version>` + `- ` 行 → 写缓存；
  * 下次启动同步读内存/缓存即可，UI 不需要为网络等待。
  */
-export const CHANGELOG_URL = 'https://github.com/bruce2431/Floria/releases'
+export const CHANGELOG_URL = 'https://github.com/bruce2431/Pj16-FloriaAgent/releases'
 const RELEASES_API_URL =
-  'https://api.github.com/repos/bruce2431/Floria/releases?per_page=30'
+  'https://api.github.com/repos/bruce2431/Pj16-FloriaAgent/releases?per_page=30'
 
 interface GitHubRelease {
   tag_name?: string

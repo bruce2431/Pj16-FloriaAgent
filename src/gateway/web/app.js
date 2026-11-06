@@ -107,9 +107,15 @@
         // effortLevel 只认网关真值（settings.json 落盘态）：网关返回 null/缺省 = 未设置 →
         // undefined（CLI 同源显示默认）。**不回落 localStorage**——陈旧 saved 会让座显报低档
         // 而 CLI 实际跑默认档（2026-10-24 用户实报「web 显示 low、CLI 是 high」的根因）。
-        effortLevel: data.effortLevel != null ? String(data.effortLevel) : undefined,
+        // 2026-11-06 会话隔离（C）：settings.json 的 effortLevel 是**全局默认**，会话内档位归属
+        // 该会话（/gateway/session.effort 上报）——会话态下不得用全局默认覆盖座显。
+        effortLevel: inSession
+          ? MODEL_CUR.effortLevel
+          : (data.effortLevel != null ? String(data.effortLevel) : undefined),
       })
       saveModelCur()
+      // 全局默认到达后，会话档位按最近上报重算一次（无参 = 只重算、不改归属）
+      if (inSession) applySessionEffort()
     } catch (e) {
       // 2026-08-25 竞态防护：若期间已有一次成功加载（如 hideGate 用新 token 补拉已先落地），
       // 此陈旧失败（典型：gate 前空 token 的 401）不覆盖已就绪数据，避免把成功态又标成错误。
@@ -1008,6 +1014,17 @@ function setConnUp(v) { connUp = v }
   const TEMP_PROJ_RE = /^\d{8,14}-/
   const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')
 
+  // 会话的项目归属（chat 侧栏唯一判据，2026-11-06 用户定案）：临时项目 label 下的会话按**全局根**对待（''）。
+  // 根级时间戳任务区只是 work 的文件树入口，不是可归属的会话项目——chat 侧栏不识别它、也不显示项目标签；
+  // work 侧栏与底栏项目选择器不走本函数（那里临时项目仍需可选，见 work-files.js / commands.js projList）。
+  const sessionProjLabel = (s) =>
+    s && s.projectScope === 'project' && s.projectLabel && !isTempProjLabel(s.projectLabel) ? s.projectLabel : ''
+
+  // 会话是否属于某工作项目的辖内（work 侧唯一判据）：临时项目（根级时间戳任务区）的在辖会话 =
+  // 全局根散装会话（它不承载自有会话）；普通项目 = projectLabel 命中。
+  const sessionInWork = (s, workProj) =>
+    isTempProjLabel(workProj) ? !!s && s.projectScope === 'global' : !!s && s.projectLabel === workProj
+
   // 新会话的落项目（唯一真源）：work 模式 = 「在项目中工作」，目标项目恒 = 工作项目（state.workProj）；
   // 其余情况 = chat 侧栏/初始界面选的 state.newProject（null = 全局）。所有建会话/上传的落项目判定
   // 都读本函数——写死 state.newProject 的消费点会在 work 模式下漏掉工作项目（会话落到全局）。
@@ -1449,7 +1466,7 @@ const cardBus = (function () {
 
   let sessionCwd = null // 当前会话启动根（网关 /gateway/session 附带，取自 jsonl 记录 cwd）；变更卡相对路径显示用
   async function fetchMessages(sessionId) {
-    if (needToken()) return { messages: [], context: null, model: null, modelTs: null } // token 门锁定态
+    if (needToken()) return { messages: [], context: null, model: null, modelTs: null, effort: undefined } // token 门锁定态
     const res = await fetch(apiUrl('/gateway/session?id=' + encodeURIComponent(sessionId)))
     const data = await res.json()
     if (!Array.isArray(data.messages)) throw new Error(data.error || 'bad response')
@@ -1462,7 +1479,9 @@ const cardBus = (function () {
     // queued = 当前排队项快照（2026-08-30 队列快照链，CLI queue-state 上报，置底排队区首载数据源）；
     // tasks = 当前任务清单快照（2026-09-10 任务浮窗链，CLI task-state 上报，底栏任务浮窗首载数据源）；
     // file = jsonl 文件名（uuid），供 SSE queue-state / task-state 事件按会话精确匹配。
-    return { messages: data.display || data.messages, context: data.context || null, model: data.model || null, modelTs: data.modelTs || null, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
+    // effort（2026-11-06 每会话思考等级）：网关有该会话档位镜像才给键——缺键 = 该会话没改过档
+    // （web 回落全局默认），null = 明确 Off。
+    return { messages: data.display || data.messages, context: data.context || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
   }
   // 模型 seat 校准（applySessionModel）已于 2026-10-10 分层治理 4B 迁入 inputbar/model-select.js——
   // 它操作的是输入栏状态（MODEL_CUR/modelUserPicked），归 feature 层；engine 不得 import feature。
@@ -1473,6 +1492,9 @@ function setSessionCwd(v) { sessionCwd = v }
   // 未注入时为空操作（initLive 之前必已注入，见 app.js 依赖接线段）。两处调用＝SSE model 事件与
   // 会话全量刷新（refreshSession）。
   let onSessionModel = () => {}
+  // 2026-11-06 每会话思考等级（C）：与模型同一条注入钩子——实时刷新回程把该会话上报的档位
+  // 交给 feature 层（model-select.js 的 applySessionEffort），座显只看本会话，不串档。
+  let onSessionEffort = () => {}
 
   // 依赖反转（分层治理 4C，2026-10-10）：engine/live.js 不再静态 import chat/inputbar/sidebar——
   // 渲染出口、暂态/stage、可变状态一律经 app 启动序列注入的端口对象访问。端口内的 getter
@@ -1861,7 +1883,7 @@ function setSessionCwd(v) { sessionCwd = v }
       const s = findSession(hash)
       if (!s) return
       try {
-        const { messages, context, model, modelTs, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
+        const { messages, context, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
         // 2026-08-30 串会话根治：会话校验只在 await 前做过一次 → fetch 回程期间用户切到其它
         // 会话时，本响应（A 的整份消息/cwd/模型/上下文/队列快照）会写穿全部全局槽并把 A 的
         // 历史 innerHTML 整页渲染进新会话 DOM（CLI 单进程单会话无此异步边界，web 必须在每个
@@ -1879,6 +1901,7 @@ function setSessionCwd(v) { sessionCwd = v }
         live.tasks = tasks
         liveUiPort.renderTaskDock()
         onSessionModel(model, modelTs) // 2026-08-24：实时刷新同样按 CLI 上报模型校准 seat（注入的钩子）
+        onSessionEffort(effort) // 2026-11-06 思考等级同链：缺键 = 该会话没改过档，null = 明确 Off
         liveUiPort.renderCtxMeter(context)
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：全量回程 = 权威快照，重置本地 delta
         // 基线（localMessages 副本 + 网关 seq 记账）。此后 session-delta SSE 按「尾部替换」增量
@@ -2312,6 +2335,7 @@ function setSessionCwd(v) { sessionCwd = v }
   }
 
 function setLiveModelHook(fn) { onSessionModel = fn }
+function setLiveEffortHook(fn) { onSessionEffort = fn }
 function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort = p.stage; liveStatePort = p.state }
   // ---------- 路由 ----------
   // 2026-08-28 pushState 路径路由：/session/<全长会话hash>、/manage/<kind>、/project/<label>（project 避开网关
@@ -2566,6 +2590,9 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     renderTaskDock()
     live.streamText = '' // 2026-09-08 流式字符通道：切会话清流式暂态（串会话防写穿，同 queueRemote/curUuid 槽清单）
     setModelUserPicked(false) // 切换会话：允许 /gateway/session 上报的会话模型校准 seat
+    // 2026-11-06 思考等级会话隔离（C）：切换瞬间清掉上一会话的档位归属（回全局默认），
+    // 等本次 fetchMessages 回程按本会话上报值校准——否则加载窗口内座显仍是上一会话的档位。
+    applySessionEffort(undefined)
     stageRelease()
     clearTakeover() // 切换会话：清掉残留的提问/审批 takeover（输入栏恢复）
     closeProjPop() // 切换会话：项目选择器弹层一并收起（初始界面专属件）
@@ -2607,7 +2634,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     inputWrap.classList.add('docked')
     chatArea.classList.add('in-session')
     fetchMessages(s.id)
-      .then(({ messages, context, model, modelTs, cwd, file, queued, tasks, deltaSeq }) => {
+      .then(({ messages, context, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
         if (state.currentHash !== hash) return
         setSessionCwd(cwd)
         // 2026-09-08 事件流统一 P1：首载回程同样重置 delta 本地基线（与 refreshSession 对称，
@@ -2634,6 +2661,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
         if (file) live.curUuid = file.replace(/\.jsonl$/, '')
         live.lastDataTs = (messages.length && messages[messages.length - 1].timestamp) || 0 // 切会话：基线硬重置为本会话末条 ts
         applySessionModel(model, modelTs) // 2026-08-24：打开会话即用 CLI 上报的实际模型校准 seat
+        applySessionEffort(effort) // 2026-11-06：思考等级同链——本会话上报档位校准座显（缺键=未改过 → 全局默认）
         renderCtxMeter(context)
         // 首条消息事务期（2026-09-06）：fetch 空（CLI 尚未落盘首条 user）→ 跳过整页重建保留
         // 乐观 DOM（开启气泡+主张折叠是权威，不被「加载中…」/空态行洗掉），真实数据经 SSE
@@ -3856,8 +3884,10 @@ function setLastNavHash(v) { lastNavHash = v }
     const dotCls = s.state === 'busy' ? ' st-busy' : s.state === 'waiting' ? ' st-ask' : s.state === 'idle' ? ' st-wait' : ''
     // 2026-08-25 项目会话编号气泡（仅「在一个列表中」堆叠视图，renderList 传 showProj=true）：
     // 平铺时项目会话混在根会话里，用短编号（Pj16）标识所属项目；项目文件夹视图已有文件夹名，不重复显示。
-    const projTag = showProj && s.projectScope === 'project' && s.projectLabel
-      ? `<span class="w-tag" title="${esc(s.projectLabel)}">${esc(projIdOf(s.projectLabel))}</span>` : ''
+    // 临时项目（根级时间戳任务区）的会话按全局根对待，不出项目标签（sessionProjLabel 归一）。
+    const pl = sessionProjLabel(s)
+    const projTag = showProj && pl
+      ? `<span class="w-tag" title="${esc(pl)}">${esc(projIdOf(pl))}</span>` : ''
     // 2026-09-26 行操作入口 = 右键（桌面）/ 长按（触屏）唤出浮窗，三点按钮已删除（见 openRowMenu）
     // 置顶标记只在调用方显式要求时渲染（work 侧栏传 true）——chat 侧栏即使同一会话已置顶也不出图钉
     const pinIco = showPin && isPinned(hashOf(s)) ? `<span class="pin-ico" title="已置顶">${I.dshPin}</span>` : ''
@@ -4546,7 +4576,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     bodyEl.innerHTML = ''
     if (state.pt === 'projects') {
       const byProject = {}
-      for (const s of ALL) if (s.projectScope === 'project') (byProject[s.projectLabel] = byProject[s.projectLabel] || []).push(s)
+      // 临时项目（根级时间戳任务区）的会话按全局根对待：不进项目文件夹视图（2026-11-06 用户定案）。
+      for (const s of ALL) {
+        const label = sessionProjLabel(s)
+        if (label) (byProject[label] = byProject[label] || []).push(s)
+      }
       const labels = Object.keys(byProject).sort((a, b) => {
         const la = Math.max(0, ...byProject[a].map((s) => s.updatedAt))
         const lb = Math.max(0, ...byProject[b].map((s) => s.updatedAt))
@@ -4635,8 +4669,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const inWork = searchInWork()
     // work 下范围 = 当前工作项目的会话；临时项目（根级时间戳任务区）的范围 = 全局根散装会话
     // （与侧栏聊天列表 / workScopeOk 同一判据，2026-10-30）。
-    const temp = isTempProjLabel(state.workProj)
-    const inScope = (s) => (temp ? s.projectScope === 'global' : s.projectScope === 'project' && s.projectLabel === state.workProj)
+    const inScope = (s) => sessionInWork(s, state.workProj)
     const rows = sorted().filter(
       (s) =>
         (!inWork || inScope(s)) &&
@@ -4644,8 +4677,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     )
     const sessHtml = rows
       .map((s) => {
-        // work 下结果已限在同一项目，项目标签无信息量；chat 下保留以区分来源
-        const prj = !inWork && s.projectScope === 'project' ? `<span class="s-prj">${esc(s.projectLabel)}</span>` : ''
+        // work 下结果已限在同一项目，项目标签无信息量；chat 下保留以区分来源（临时项目归一为全局，无标签）
+        const pl = sessionProjLabel(s)
+        const prj = !inWork && pl ? `<span class="s-prj">${esc(pl)}</span>` : ''
         return `<div class="s-row" data-hash="${esc(hashOf(s))}"><span class="s-ico">${I.msg}</span><span class="st">${esc(s.title)}</span>${prj}</div>`
       })
       .join('')
@@ -6355,8 +6389,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (state.sbMode !== 'work' || !state.workProj || !hash) return true
     const s = findSession(hash)
     if (!s) return true
-    if (isTempProjLabel(state.workProj)) return s.projectScope === 'global'
-    return s.projectLabel === state.workProj
+    return sessionInWork(s, state.workProj)
   }
   function enforceWorkScope() {
     if (!workScopeOk(state.currentHash)) navigate('#/')
@@ -7177,11 +7210,10 @@ function setFirstSendHash(v) { firstSendHash = v }
       // 状态在线优先 + 创建时间新→旧）。只作用于 work 侧栏列表，chat 侧栏 renderList/renderProject 不变。
       const pinRank = (s) => (isPinned(hashOf(s)) ? 0 : 1)
       // 临时项目（根级时间戳任务区）没有自有会话：列表改展示**全局根散装会话**（2026-10-30 用户定案）。
-      // 判据走同一枚 isTempProjLabel；新建会话也落全局根（core/util.js newSessionProject），故入列的
+      // 判据统一走 core/util.js sessionInWork（临时项目 → 全局会话）；新建会话也落全局根（newSessionProject），故入列的
       // 新会话就在这份列表里，不会「发完就消失」。
-      const temp = isTempProjLabel(state.workProj)
       const list = state.workProj
-        ? ALL.filter((s) => (temp ? s.projectScope === 'global' : s.projectLabel === state.workProj)).sort(
+        ? ALL.filter((s) => sessionInWork(s, state.workProj)).sort(
             (a, b) => pinRank(a) - pinRank(b) || sessCmp(a, b),
           )
         : []
@@ -12252,8 +12284,13 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 非会话态取目标项目（`newSessionProject()`——work 模式即工作项目）。空串 = 无项目上下文 → 从工作区根起。
   function pickHome() {
     const s = state.currentHash ? findSession(state.currentHash) : null
-    if (s) return s.projectScope === 'project' && s.projectLabel ? s.projectLabel : ''
+    if (s) return sessionProjLabel(s)
     return newSessionProject() || ''
+  }
+  // 会话是否属于当前上下文项目（@ 提及与 + 工具栏会话页的共用判据）。
+  // 会话的项目归属只有一处 = core/util.js sessionProjLabel（临时项目归一为全局 ''）。
+  function inHomeProject(s) {
+    return sessionProjLabel(s) === pickHome()
   }
   function pickParent() {
     const p = pick.path
@@ -12542,6 +12579,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 输入 @2026101312 却只剩文件命中）。
     const cutoff = now - 48 * 3600 * 1000
     for (const s of ALL) {
+      // 2026-11-06 A：会话只给当前上下文项目的（此前混入全部项目的会话）
+      if (!inHomeProject(s)) continue
       if (!globalSearch && s.updatedAt < cutoff) continue
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
       if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
@@ -12550,8 +12589,10 @@ function setFirstSendHash(v) { firstSendHash = v }
     const proj = pickHome()
     for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
+      // 2026-11-06 A：技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
+      // 插件是便携根安装件、无项目归属，两种上下文都列。
       for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
     }
     items.push(...pickItems(q))
     if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
@@ -12769,6 +12810,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 用户本次会话内主动切换过模型 → 不再被 /gateway/session 旧上报覆盖（切换会话时重置）。避免
   // POST /gateway/model 尚未落地前的一次刷新把刚切的选择回滚成旧值。
   let modelUserPicked = false
+  // 2026-11-06 会话隔离（B）：主动切模型的判定只对「当时那个会话」成立。旧守卫用全局
+  // modelUserPicked + MODEL_CUR.ts（localStorage 跨会话持久化）→ 切到另一个会话时，该会话后端
+  // 上报的模型（modelTs 早于上次切换时刻）被当成「在途旧快照」丢弃，座停在上一会话的模型。
+  let modelPickedHash = ''
   // 首页（新会话）模型选择（2026-10-11 定案）：全局默认模型不再由 web 调整——唯一入口 = 直接改
   // 凭据池 credentials.json（agent 侧）。首页选的模型只作用于**这一次新建的会话**：记入本槽，
   // 发送首条消息时随会话级切换（POST /gateway/model 带 sessionId，见 send.js 空态分支）落到新会话，
@@ -12789,6 +12834,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (MODEL_CUR.model === model) { setModelUserPicked(false); return }
     if (
       modelUserPicked &&
+      modelPickedHash === (state.currentHash || '') &&
       typeof modelTs === 'number' &&
       typeof MODEL_CUR.ts === 'number' &&
       modelTs < MODEL_CUR.ts
@@ -12854,7 +12900,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (locked) closeProjPop()
     const s = state.currentHash ? findSession(state.currentHash) : null
     const label = state.currentHash
-      ? (s && s.projectScope === 'project' && s.projectLabel ? s.projectLabel : '全局')
+      ? (s && sessionProjLabel(s) || '全局')
       : (newSessionProject() || '全局')
     projSeatEl.querySelector('.projLabel').textContent = label
     projSeatEl.title = locked ? '工作文件夹：' + label : (newSessionProject() ? '目标项目：' + newSessionProject() : '目标项目：全局（默认）')
@@ -12914,6 +12960,9 @@ function setFirstSendHash(v) { firstSendHash = v }
   function cmdSessionRows(match, grp) {
     const out = []
     for (const s of [...ALL].sort((a, b) => b.updatedAt - a.updatedAt)) {
+      // 2026-11-06 A：只列当前上下文项目的会话（此前遍历 ALL 混入所有项目）；
+      // 判据与 @ 提及共用 inHomeProject（空串 = 全局，同 pickHome 口径）。
+      if (!inHomeProject(s)) continue
       if (match && !match(s.title || '')) continue
       out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp })
     }
@@ -12929,13 +12978,16 @@ function setFirstSendHash(v) { firstSendHash = v }
   function cmdSkillRows(match, grp) {
     const out = []
     const proj = pickHome()
-    const ps = projSkillsOf(proj)
-    if (ps.list.length) {
-      for (const s of ps.list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    // 2026-11-06 A：技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
+    // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    if (proj) {
+      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+    } else if (MGR) {
+      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     }
+    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
-    for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     return out
   }
   // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
@@ -13013,6 +13065,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     cmd.acknowledged = false
     cmd.error = null
     renderCmdPop()
+    // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
+    // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
+    renderTaskDock()
     // 过滤在底栏打字（待办 20 返修）：焦点回底栏，用户继续输入列表即变；触屏不抢焦点（iOS 弹键盘，
     // 与旧搜索框同一处置——用户自己点输入框唤起）。@ 唤起时光标本就在底栏，不重复聚焦。
     if (!mentionMode && !isTouch()) composerFocus()
@@ -13036,6 +13091,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     cmd.confirming = null
     cmd.acknowledged = false
     cmdPop.hidden = true
+    // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
+    renderTaskDock()
     // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
     resetMention()
     const rm = $('risk-modal')
@@ -13071,8 +13128,10 @@ function setFirstSendHash(v) { firstSendHash = v }
       html += `<div role="listbox" class="viewport">${cmd.items.map((it, i) => {
         const g = it.grp || groupOf(it)
         const grp = g === '文件' ? '文件 · ' + pickLabel() : g
-        const gh = flat || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
-        lastGrp = grp
+        // 「返回」行不单立分组标题（2026-11-06 D）：视图内此前先印「导航」再印该类标题，
+        // 两条上箭头/分组叠在顶部像重复了一栏；返回行随该视图的标题下呈现即可。
+        const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
+        if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
         const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
@@ -13244,8 +13303,33 @@ function setFirstSendHash(v) { firstSendHash = v }
       loadModelsData(false).then(() => renderModelSeat()).catch(() => {})
     }
   }
+  // ---- 每会话思考等级（2026-11-06，C）----
+  // 档位归属 = 会话，不归属 web 全局：显示源只有两个——① 该会话后端上报值（/gateway/session.effort，
+  // CLI 落地后经 /gateway/model-report 回报）；② 无上报时回落 /gateway/models 的全局默认 effortLevel。
+  // 切会话绝不再沿用上一会话的档位（旧实现只有一个 MODEL_CUR.effortLevel 槽 + localStorage，
+  // 切会话座显示停在上一会话，且改档广播给全部会话）。
+  let reportedEffort // 该会话最近一次上报档位：undefined=未上报，null=明确 Off，其它=档位名
+  function globalEffortLevel() {
+    return MODELS && MODELS.effortLevel != null ? String(MODELS.effortLevel) : undefined
+  }
+  // 按 reportedEffort + 全局默认重算 seat 档位（MODELS 晚到 / 切会话后各调一次）
+  function syncEffortSeat() {
+    const v = reportedEffort === undefined ? globalEffortLevel() : reportedEffort == null ? undefined : String(reportedEffort)
+    if (MODEL_CUR.effortLevel === v) return
+    setModelCur({ ...MODEL_CUR, effortLevel: v })
+    renderModelSeat()
+  }
+  // 会话载入点（renderSession 首载 / 刷新回程 / 首页复位）传入后端上报值；undefined = 该会话无上报。
+  // 无参调用 = 数据源（MODELS 全局默认）晚到，按最近上报值重算一次，不改变归属。
+  function applySessionEffort(effort) {
+    if (arguments.length) reportedEffort = effort === undefined ? undefined : effort == null ? null : String(effort)
+    syncEffortSeat()
+  }
   // 回首页（无会话）且无待定新会话选择 → seat 显示源回落凭据池全局默认（web 不再改全局默认）
   function syncSeatToGlobalDefault() {
+    // 回首页 = 离开会话：档位回到全局默认（会话档位不跨会话残留在座上）
+    reportedEffort = undefined
+    syncEffortSeat()
     if (state.currentHash || newSessionModel) return
     const g = MODELS && (MODELS.activeModel || (MODELS.model ? String(MODELS.model) : ''))
     if (!g) return
@@ -13379,9 +13463,13 @@ function setFirstSendHash(v) { firstSendHash = v }
       const lv = modelEffortLevels()
       if (lv && prevEff != null && !lv.includes(prevEff)) {
         MODEL_CUR.effortLevel = undefined
-        void apiSetModel({ effortLevel: 'off' }) // 与 effort 面板同链同形：'off' = 网关清档
+        reportedEffort = undefined
+        // 与 effort 面板同链同形：'off' = 网关清档；会话内必须带 sessionId（C：只清本会话，
+        // 不得写全局 settings.json / 影响其它会话）
+        void apiSetModel({ effortLevel: 'off', ...(state.currentHash ? { sessionId: state.currentHash } : {}) })
       }
       modelUserPicked = true // 2026-08-24：本次会话内主动切换，防止 /gateway/session 旧上报回滚
+      modelPickedHash = state.currentHash || '' // 2026-11-06：防回滚只对「切换发生时所在会话」生效
       saveModelCur() // 2026-08-24：持久化，刷新后恢复
       renderModelSeat()
       closeModelPop()
@@ -13402,12 +13490,19 @@ function setFirstSendHash(v) { firstSendHash = v }
       const eff = row.effort === undefined ? undefined : row.effort
       if (MODEL_CUR.effortLevel === eff) { closeModelPop(); return }
       MODEL_CUR = { ...MODEL_CUR, effortLevel: eff }
-      saveModelCur() // 2026-08-24：持久化推理等级
+      saveModelCur() // 2026-08-24：持久化推理等级（仅作首页/刷新前的暂存；会话内真源 = 网关上报）
       renderModelSeat()
       closeModelPop()
-      // Off（清除等级）发 'off'，网关据此 delete settings.effortLevel + 广播 null → CLI effortValue=undefined
-      const payload = eff === undefined ? { effortLevel: 'off' } : { effortLevel: eff }
-      void apiSetModel(payload).then(ok => toast(ok ? `推理等级已切换为 ${row.label}` : '切换失败 · 网关未连接'))
+      // 2026-11-06 每会话思考等级（C）：会话内带 sessionId → 网关只精确路由到本会话（不广播、
+      // 不写全局 settings.json）；首页（无会话）= 全局默认，写盘供新会话继承，不影响已开会话。
+      // Off（清除等级）发 'off'，网关据此让 CLI effortValue=undefined。
+      const hash = state.currentHash
+      // 会话内不再把「后端未上报」当成覆盖值：本地的主动选择即本会话当前档位，回载前以此为准
+      reportedEffort = eff === undefined ? null : eff
+      const payload = eff === undefined
+        ? { effortLevel: 'off', ...(hash ? { sessionId: hash } : {}) }
+        : { effortLevel: eff, ...(hash ? { sessionId: hash } : {}) }
+      void apiSetModel(payload).then(ok => toast(ok ? `推理等级已切换为 ${row.label}` : (hash ? '切换失败 · 目标会话未在线' : '切换失败 · 网关未连接')))
     }
   }
   renderModelSeat() // 初始渲染模型 seat（trigger 显示当前模型名 · 推理等级）
@@ -14397,8 +14492,17 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
     if (!isNaN(na) && !isNaN(nb)) return na - nb
     return String(a.id).localeCompare(String(b.id))
   }
+  // 「+」工具栏（#cmd-pop）是否在场（2026-11-06 D）：以 DOM 可见性为准——cmd.open 在风险确认
+  // 模态期间仍为真但弹窗已隐藏，那时任务浮窗不必让位（全屏模态本就盖住一切）。
+  function cmdPopVisible() {
+    const el = $('cmd-pop')
+    return !!el && !el.hidden
+  }
   function toggleTaskDock() {
     if (takeover) return // 接管卡在场：禁点（卡即输入栏本体，任务浮窗让位）
+    // 2026-11-06 D：任务浮窗要展开/收起时先收「+」工具栏（互斥的另一半入口；
+    // 打开工具栏时工具栏侧同样会收起本浮窗）。closeCmdPop 回程会重渲本浮窗。
+    if (cmdPopVisible()) closeCmdPop()
     live.taskOpen = !live.taskOpen
     renderTaskDock()
   }
@@ -14410,6 +14514,14 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
     const list = Array.isArray(live.tasks) ? live.tasks : []
     // 无清单（CLI 侧清空/隐藏，或未打开会话）→ 整窗不出现（与 CLI「tasks.length===0 → null」同判）
     if (!list.length || !state.currentHash) {
+      dock.hidden = true
+      dock.classList.remove('open', 'blocked')
+      live.taskOpen = false
+      return
+    }
+    // 2026-11-06 D 弹层互斥：两窗同挂 #input-bar 上沿，展开态会直接叠在一起。工具栏在场时
+    // 任务浮窗整窗让位（含收敛把手）；工具栏关闭时 closeCmdPop 重渲本函数恢复。
+    if (cmdPopVisible()) {
       dock.hidden = true
       dock.classList.remove('open', 'blocked')
       live.taskOpen = false
@@ -15857,6 +15969,7 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
     })
     setViewportAdapter({ syncStage: stageSync }) // 键盘适配：可视区变矮后重算两层消息流占位/跟随
     setLiveModelHook(applySessionModel) // 实时同步：CLI 上报模型 → 校准输入栏模型 seat
+    setLiveEffortHook(applySessionEffort) // 2026-11-06 思考等级同链：实时刷新回程校准本会话档位
     initViewport() // 键盘弹出适配（visualViewport）：只压缩消息流底界与底栏
     setPanel(false)
     setChar(1) // 启动默认形象

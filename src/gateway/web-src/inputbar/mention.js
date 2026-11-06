@@ -7,7 +7,7 @@ import { mdInline, relTime } from '../core/markdown.js'
 import { MENTION_FILE_ICON, MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
 import { findSession, sessionCwd } from '../engine/sessions.js'
 import { inputEl, state } from '../engine/state.js'
-import { esc, newSessionProject } from '../core/util.js'
+import { esc, newSessionProject, sessionProjLabel } from '../core/util.js'
 import { syncGwSend } from './send.js'
 import { uploadedMentionItems } from './images.js'
 import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
@@ -55,8 +55,13 @@ import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
   // 非会话态取目标项目（`newSessionProject()`——work 模式即工作项目）。空串 = 无项目上下文 → 从工作区根起。
   function pickHome() {
     const s = state.currentHash ? findSession(state.currentHash) : null
-    if (s) return s.projectScope === 'project' && s.projectLabel ? s.projectLabel : ''
+    if (s) return sessionProjLabel(s)
     return newSessionProject() || ''
+  }
+  // 会话是否属于当前上下文项目（@ 提及与 + 工具栏会话页的共用判据）。
+  // 会话的项目归属只有一处 = core/util.js sessionProjLabel（临时项目归一为全局 ''）。
+  function inHomeProject(s) {
+    return sessionProjLabel(s) === pickHome()
   }
   function pickParent() {
     const p = pick.path
@@ -345,6 +350,8 @@ import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
     // 输入 @2026101312 却只剩文件命中）。
     const cutoff = now - 48 * 3600 * 1000
     for (const s of ALL) {
+      // 2026-11-06 A：会话只给当前上下文项目的（此前混入全部项目的会话）
+      if (!inHomeProject(s)) continue
       if (!globalSearch && s.updatedAt < cutoff) continue
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
       if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
@@ -353,8 +360,10 @@ import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
     const proj = pickHome()
     for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
+      // 2026-11-06 A：技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
+      // 插件是便携根安装件、无项目归属，两种上下文都列。
       for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
     }
     items.push(...pickItems(q))
     if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
@@ -449,6 +458,7 @@ export {
   QUOTE_REPLY_RE,
   buildMentionChip,
   groupOf,
+  inHomeProject,
   closeMentionPop,
   insertMention,
   loadPickPath,

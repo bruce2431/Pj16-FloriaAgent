@@ -960,6 +960,31 @@ export function refreshGatewayRegistration(): void {
 }
 
 /**
+ * 2026-11-06 每会话思考等级上报（C）：网关 POST /gateway/model 精确路由 {type:'effort'} 到本进程后，
+ * 把实际落地值回报网关（/gateway/model-report 的 effort 键），web 进入该会话即以它校准推理等级座。
+ * null = Off；'auto' = 清除（跟随模型默认）。与 reportCurrentModel 同一端点，不依赖模型名。
+ */
+export function reportSessionEffort(effort: string | null): void {
+  try {
+    const token = getGatewayToken()
+    if (!token) return
+    const sessionId = getSessionId()
+    if (!sessionId) return
+    void fetch(
+      `${gatewayBaseUrl()}/gateway/model-report?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, effort }),
+        signal: AbortSignal.timeout(3000),
+      },
+    ).catch(() => { /* 网关未起等静默 */ })
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/**
  * 上报当前会话实际模型给网关（2026-08-24 模型 web/CLI 同步）。
  *
  * 每会话模型 override（mainLoopModelOverride）只存在于本进程内存，网关 /gateway/models 只返回凭据池
