@@ -193,8 +193,10 @@ html[data-theme="dark"] {
 .mgr-retry { display: inline-flex; align-items: center; gap: 4px; margin-top: 12px; padding: 7px 16px; border-radius: 999px; font-size: 13px; background: var(--btn-bg, #4d6bfe); color: #fff; border: none; cursor: pointer; }
 .mgr-retry:hover { opacity: 0.9; }
 .mgr-foot { margin-top: 26px; text-align: center; font-size: 12px; color: var(--text-3); }
-/* 卡内详情页：面包屑 + 大图标头 + 介绍 + 信息表 */
-.mgr-detail { max-width: 820px; }
+/* 卡内详情页：面包屑 + 大图标头 + 介绍 + 信息表。
+   水平居中：宿主管理卡有 920 居中帽兜底，但 iframe 型应用（如模型页）整页全宽，
+   只给 max-width 会贴左、右侧留大片空白。 */
+.mgr-detail { max-width: 820px; margin-left: auto; margin-right: auto; }
 .mgr-crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 26px; font-size: 13px; color: var(--text-2); }
 .mgr-back { display: inline-flex; align-items: center; gap: 3px; padding: 5px 10px 5px 4px; border-radius: 8px; color: var(--text-2); transition: background 0.15s, color 0.15s; }
 .mgr-back:hover { background: var(--hover); color: var(--text); }
