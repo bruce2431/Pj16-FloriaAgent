@@ -109,6 +109,9 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'sidebar/work/work-preview.js', part: 1 },
   { file: 'sidebar/work/work-assist.js', part: 1 },
   { file: 'sidebar/work/work-files.js', part: 1 },
+  // work 插件 tab（2026-11-07）：项目插件/技能/应用管理，数据走 mgr-data.loadProjectPlugins + 预览卡表；
+  // 启停后要刷新工具栏 tab 条与页态（applyPvTab / renderWkToolTabs），故排在 work-preview 之后。
+  { file: 'sidebar/work/work-plugins.js', part: 1 },
   { file: 'sidebar/work/work-cm.js', part: 1 },
   // 行级三方合并纯函数（2026-10-25 编辑卡实时同步）：被 work-live.js 调用，无宿主依赖。
   { file: 'sidebar/work/work-merge.js', part: 1 },

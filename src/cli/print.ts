@@ -320,6 +320,7 @@ import {
 import { asSessionId } from 'src/types/ids.js'
 import { jsonStringify } from '../utils/slowOperations.js'
 import { skillChangeDetector } from '../utils/skills/skillChangeDetector.js'
+import { clearAllCaches } from '../utils/plugins/cacheUtils.js'
 import { getCommands, clearCommandsCache } from '../commands.js'
 import {
   isBareMode,
@@ -1819,8 +1820,11 @@ function runHeadlessStreaming(
   }
 
   // Subscribe to skill changes for hot reloading
-  const unsubscribeSkillChanges = skillChangeDetector.subscribe(() => {
-    clearCommandsCache()
+  const unsubscribeSkillChanges = skillChangeDetector.subscribe(event => {
+    // 插件启停标记 = 插件集合身份变化，须连插件命令/技能/agents/hooks 缓存一起清；
+    // headless 无 AppState 通道，清到缓存层即可（下一条命令按新集合重建）。
+    if (event?.pluginChanged) clearAllCaches()
+    else clearCommandsCache()
     void getCommands(cwd()).then(newCommands => {
       currentCommands = newCommands
     })

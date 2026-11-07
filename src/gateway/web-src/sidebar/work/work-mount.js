@@ -1,4 +1,7 @@
 // 事件绑定（mountWork）与启动一次（initWork）。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
+import { enabledPreviewCardsFor } from '../../feature/preview-frame.js'
+import { gatewayBootAt } from '../../engine/gateway.js'
+import { resetWorkPreviewOnBoot } from '../../core/storage.js'
 /* @module sidebar/work/work-mount.js */
   // ---------- 侧栏开关（2026-10-14 待办 5，取代 2026-10-10 的视图浮层）----------
   // 触发器两处、互斥在场：侧栏展开 = 头部 #wk-view（收起钮）；侧栏折叠 = 标签栏左端的汉堡 #menu-btn
@@ -105,7 +108,7 @@
         const f = wkFrame()
         if (!f || f.contentWindow !== e.source) return
         const want = String(d.card || '')
-        if (!previewCardsFor(f.dataset.label || '').some((c) => c.id === want)) return
+        if (!enabledPreviewCardsFor(f.dataset.label || '').some((c) => c.id === want)) return
         setPvCard(want, d.payload)
         return
       }
@@ -199,8 +202,21 @@
     })
     document.querySelectorAll('.wk-tab').forEach((b) =>
       b.addEventListener('click', () => {
+        // 插件入口（与 chat 侧栏「插件」tab 同位置）：内容仍渲在下沉区第三态
+        if (b.hasAttribute('data-wkplugins')) {
+          state.wkMainTab = 'plugins'
+          state.wkAssist = true
+          state.wkAssistMode = 'side'
+          renderWorkBody() // 高亮同步（updateWkTools 唯一口）
+          applyPanes()
+          saveWork()
+          return
+        }
         state.wkTab = b.dataset.wktab
+        // 点文件/聊天 = 离开插件页，下沉区回对应页态（侧栏体切换照旧）
+        if (state.wkMainTab === 'plugins') state.wkMainTab = state.wkTab === 'chat' ? 'chat' : 'file'
         renderWorkBody() // 高亮同步在 updateWkTools（唯一口，覆盖点击外的恢复路径）
+        applyPanes()
       }),
     )
     // 文件树整块由 innerHTML 重渲 → 事件必须委托在容器上（逐行绑定会被下次重渲抹掉）
@@ -304,6 +320,9 @@
   // 否则 work 面板首个渲染出来的行（文件树/新聊天）没有容器级委托）
   function initWork() {
     loadWork(WORK_SLOT_DEF) // 读盘：恢复模式/当前项目/预览列宽 + 全部项目槽 → 当前槽落到 live
+    // 工具栏开合只在本网关进程运行期内保持：网关换了（boot 不同）⇒ 全部项目槽的工具栏复位折叠。
+    // 须在 mountWork/applySbMode 之前（它要基于复位后的 live 态落地）。
+    resetWorkPreviewOnBoot(gatewayBootAt())
     reconcileWorkSurface() // 语境归一：守护 workSlotKey === workProj（启动/路由恢复共用，幂等）
     // 外部卡申报按缓存即时回填（同步、无网络）：刷新后在门解锁前 tab 就在位，/manage/ext:… 直进也有卡
     // 可解析；权威清单由 ensureWork → syncWorkExtCards 拉新覆盖。必须在 loadWork 之后（要知道工作项目）。

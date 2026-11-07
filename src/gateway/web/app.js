@@ -58,6 +58,17 @@
     if (!data || !Array.isArray(data.skills)) throw new Error((data && data.error) || 'bad response')
     return data.skills
   }
+  // 项目插件清单（work 插件 tab）：与技能同一个端点，一次返回 {plugins, skills}（均只含已安装个人项）。
+  // 不做模块内缓存——work tab 每次项目切换由 work-plugins 自行持有并刷新（启停后要拿服务端真值）。
+  async function loadProjectPlugins(label) {
+    if (!label) return { plugins: [], skills: [] }
+    const res = await fetch(apiUrl('/gateway/plugins?label=' + encodeURIComponent(label)))
+    const data = await res.json()
+    if (!data || !Array.isArray(data.plugins) || !Array.isArray(data.skills)) {
+      throw new Error((data && data.error) || 'bad response')
+    }
+    return { plugins: data.plugins, skills: data.skills }
+  }
   // 项目技能按 label 的进程内缓存（+ 工具栏与 @ 搜索共用一份）：{list, loaded, loading, err}。
   // ensureProjectSkills 同一 label 只发一次请求（在途期间复用同一 Promise），失败记 err 并在下次调用时重试。
   const PROJ_SKILLS = new Map()
@@ -170,7 +181,7 @@
     // work 模式（2026-09-25）：sbMode = 侧栏模式（chat=现状 / work=Prism 式工作区）；
     // projects = /gateway/sessions 的 groups（全部项目，含无会话者，chat 侧栏不用）；
     // workProj = 当前项目 label（= 槽键，见下 workSlots）；workFile = 打开的文件（项目内相对路径）。
-    // wkPreview = 预览列（最右，常驻）；wkMainTab = 下沉区当前 tab（'chat' 助手 / 'file' 编辑区），同时只显一个；
+    // wkPreview = 预览列（最右，常驻）；wkMainTab = 下沉区当前 tab（'chat' 助手 / 'file' 编辑区 / 'plugins' 项目插件页），同时只显一个；
     // wkAssist = 聊天 tab 是否在场；wkPrevW = 预览列宽 px（拖分界条调，见 work.js applyWorkCols）——**全局，不按项目分槽**
     // （是窗口几何，不是项目内容）。
     // wkAssistMode = 助手形态（'side'=靠栏 = 聊天 tab 内容 / 'float'=悬浮卡 / 'slim'=收敛输入栏）；
@@ -310,7 +321,7 @@
     const bool = (k) => (s && typeof s[k] === 'boolean' ? s[k] : def[k])
     const arr = (k) => (s && Array.isArray(s[k]) ? s[k].filter((x) => typeof x === 'string' && x) : def[k].slice())
     state.wkTab = str('wkTab', ['files', 'chat'])
-    state.wkMainTab = str('wkMainTab', ['chat', 'file'])
+    state.wkMainTab = str('wkMainTab', ['chat', 'file', 'plugins'])
     state.wkAssist = bool('wkAssist')
     state.wkAssistMode = str('wkAssistMode', ['side', 'float', 'slim'])
     state.wkAssistH = num('wkAssistH')
@@ -333,6 +344,28 @@
     stashWorkSlot() // 当前 live 视图先归入自己项目的槽（唯一写口），与下面同一次 patch
     patchUI({ sbMode: state.sbMode, workProj: state.workProj, wkPrevW: state.wkPrevW, workSlots: state.workSlots })
   }
+  // 工具栏开合的生命周期 = **同一网关进程运行期内**（用户定案）：存档里的 gwBoot 是上次写盘时网关的
+  // 启动时刻（/gateway/health 的 boot）。本次 boot 与存档不同 ⇒ 全部项目槽的工具栏复位折叠
+  // （wkPreview=false / wkPvTab=''）；相同 ⇒ 原样保持（刷新不清打开状态）。boot 未知（旧网关 / 非网关
+  // 环境）= 不动现状。调用点 = initWork（loadWork 之后、落地之前）。
+  function resetWorkPreviewOnBoot(bootAt) {
+    if (!bootAt) return
+    let prev = 0
+    try {
+      const raw = localStorage.getItem(UI_KEY)
+      const d = raw ? JSON.parse(raw) : null
+      if (d && typeof d.gwBoot === 'number') prev = d.gwBoot
+    } catch { /* 存储不可用：按首次处理 */ }
+    patchUI({ gwBoot: bootAt })
+    if (prev === bootAt) return
+    for (const s of Object.values(state.workSlots)) {
+      if (!s || typeof s !== 'object') continue
+      s.wkPreview = false
+      s.wkPvTab = ''
+    }
+    state.wkPreview = false
+    state.wkPvTab = ''
+  }
   // 置顶集唯一写口（togglePin 调用；read-modify-write 由 patchUI 保证不碰其它段）。
   function savePins() {
     patchUI({ wkPins: state.wkPins })
@@ -347,7 +380,7 @@
     if (Array.isArray(d.wkChats)) slot.wkChats = d.wkChats.filter((x) => typeof x === 'string' && x)
     if (Array.isArray(d.wkFiles)) slot.wkFiles = d.wkFiles.filter((x) => typeof x === 'string' && x)
     if (typeof d.workFile === 'string') slot.workFile = d.workFile
-    if (d.wkMainTab === 'chat' || d.wkMainTab === 'file') slot.wkMainTab = d.wkMainTab
+    if (d.wkMainTab === 'chat' || d.wkMainTab === 'file' || d.wkMainTab === 'plugins') slot.wkMainTab = d.wkMainTab
     if (typeof d.wkAssist === 'boolean') slot.wkAssist = d.wkAssist
     if (d.wkAssistMode === 'side' || d.wkAssistMode === 'float' || d.wkAssistMode === 'slim') slot.wkAssistMode = d.wkAssistMode
     if (typeof d.wkAssistH === 'number' && d.wkAssistH > 0) slot.wkAssistH = d.wkAssistH
@@ -4735,6 +4768,8 @@ function setFirstSendHash(v) { firstSendHash = v }
         host: typeof c.host === 'string' ? c.host : '',
         tab: c.tab !== false,
         repo: typeof c.repo === 'string' ? c.repo.trim() : '',
+        // 启用态由网关按目录标记下发（缺省 = 启用）；postMessage 来源无此字段 ⇒ 恒启用
+        enabled: c.enabled !== false,
       }))
       .filter((c) => /^[a-zA-Z0-9_-]{1,32}$/.test(c.id) && c.title && c.host === 'view' && isExtPath(c.path))
   }
@@ -4901,39 +4936,39 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 应用详情的写回链（preview.json 的 repo 字段）要按 label 调 /gateway/file*——取 label 走本出口，
   // 不新增第二处字面量。
   const globalLabel = () => GLOBAL_LABEL
-  const APPS_KEY = 'appsEnabled' // floria-ui-v1 段名：已启用应用 id 数组
   let APP_CATALOG = [] // 全部可用应用（normExtCards 产物；插件卡「应用」列表数据源）
   let APP_TABS = [] // 已启用的应用 tab（侧栏；openCard 可解析）
-  let APPS_ENABLED = new Set()
   let appSeq = 0
 
-  function loadEnabledApps() {
-    const d = readUI()
-    const list = d && Array.isArray(d[APPS_KEY]) ? d[APPS_KEY] : []
-    APPS_ENABLED = new Set(list.filter((x) => typeof x === 'string'))
-  }
-  function saveEnabledApps() {
-    patchUI({ [APPS_KEY]: [...APPS_ENABLED] })
-  }
   function appCatalog() {
     return APP_CATALOG
   }
+  // 启用态真源 = 卡目录 / 应用目录内的 .disabled 标记（网关随清单下发 enabled），跨浏览器一致。
+  // 目录未就绪（无该应用）= 未启用。
   function isAppEnabled(id) {
-    return APPS_ENABLED.has(id)
+    const c = APP_CATALOG.find((x) => x.id === id)
+    return !!c && c.enabled !== false
   }
-  // 启用/停用唯一写口：改集合 → 落盘 → 重建侧栏 tab。返回落定后的启用态（调用方据此重渲按钮）。
-  function setAppEnabled(id, on) {
+  // 启用/停用唯一写口：落盘归网关（POST preview-cards/enable → 卡目录 .disabled），回来后整份刷新
+  // 目录并按新表重建 tab。失败抛错交给调用方回滚（不本地先改状态，避免与盘上真值漂移）。
+  async function setAppEnabled(id, on) {
     if (typeof id !== 'string' || !id) return false
-    if (on) APPS_ENABLED.add(id)
-    else APPS_ENABLED.delete(id)
-    saveEnabledApps()
-    applyAppTabs()
-    tabRefresh()
-    return APPS_ENABLED.has(id)
+    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
+    const res = await fetch('/gateway/preview-cards/enable' + q, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: GLOBAL_LABEL, card: id, enabled: !!on }),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'HTTP ' + res.status)
+    }
+    await loadAppCatalog()
+    return isAppEnabled(id)
   }
   // 目录 → 侧栏 tab（只取已启用者）。id 加 `app:` 前缀，与第一方裸词 id、EXT 的 `ext:` 零撞车。
   function applyAppTabs() {
-    APP_TABS = APP_CATALOG.filter((c) => APPS_ENABLED.has(c.id)).map((c) => ({
+    APP_TABS = APP_CATALOG.filter((c) => c.enabled !== false).map((c) => ({
       id: `app:${c.id}`,
       title: c.title,
       tip: `${c.title} · 应用（工作区根）`,
@@ -4952,7 +4987,6 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 拉取点（唯一）：hideGate 补拉链调一次；断连重连自愈走同点。seq 守卫 = 只有最后一次响应可落目录。
   // 取不到 = 工作区根未申报应用（不猜不兜底，目录照旧为空）。
   function syncGlobalPlugins() {
-    loadEnabledApps() // 启用集合恒从盘上读（唯一真源；本函数也是「刷新/重连」的复位点）
     const cached = readUI()
     const e = cached && cached.extDecls ? cached.extDecls[GLOBAL_LABEL] : null
     if (e && Array.isArray(e.cards)) setAppCatalog(e.cards) // 缓存快照先落（列表即刻可用）
@@ -4960,8 +4994,12 @@ function setFirstSendHash(v) { firstSendHash = v }
       applyAppTabs()
       tabRefresh()
     }
+    loadAppCatalog()
+  }
+  // 拉一次工作区根应用清单（seq 守卫 = 只有最后一次响应可落目录；失败保持现有目录）。
+  function loadAppCatalog() {
     const seq = ++appSeq
-    fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== appSeq) return
@@ -5177,7 +5215,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
       onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
       onItem(key) { openDetail(key) },
-      onAction(key) { toggleApp(key) },
+      onAction(key) { onRowAction(key) },
       onRetry() { loadMgrData(true) },
     })
     renderMgrGrid()
@@ -5214,6 +5252,9 @@ function setFirstSendHash(v) { firstSendHash = v }
       items: rows.map(pluginItem),
       empty: `没有匹配的${label}`,
       onItem: openDetail,
+      // 个人行动作位是启停开关（无 action.key 的公开市场行不会调到 onAction）；
+      // 网格重渲走本函数，onAction 必须在这里给，否则点了只会 stopPropagation、什么也不发生。
+      onAction: onRowAction,
     }
   }
 
@@ -5235,22 +5276,89 @@ function setFirstSendHash(v) { firstSendHash = v }
     }
   }
 
-  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}；动作位是纯状态指示（点击落到卡身、进详情）。
+  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装, k 目录名, en 启用态}。
+  // 个人（本地已安装）行 = 真开关（key 存在 → MgrUI 走 onAction）；公开市场行无 k，仍是纯状态指示。
   function pluginItem(x) {
+    const toggleable = !!x.k
+    const on = toggleable ? x.en !== 0 : !!x.inst
     return {
       key: x.n,
       name: x.n,
       desc: x.d || '暂无描述',
-      action: { on: !!x.inst, title: x.inst ? '已安装' : '未安装' },
+      action: toggleable
+        ? { on, key: x.n, title: on ? '已启用（点击停用）' : '已停用（点击启用）' }
+        : { on, title: x.inst ? '已安装' : '未安装' },
     }
   }
 
-  // 应用启停：启用态只影响本网格（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）；详情页内切换则整页重渲。
+  // 行内动作分发：应用 → 应用启停；插件/技能个人行 → 目录标记启停；其余（公开市场）无动作。
+  function onRowAction(key) {
+    const v = state.mgrView
+    if (v.kind === 'apps') { toggleApp(key); return }
+    toggleCustomization(v.kind, key)
+  }
+
+  // 按名称找可启停的个人行：先查当前 cat，再兜底遍历该 kind 的全部 cat。
+  // 搜索/切 cat 与网格重渲之间可能短暂错位，找不到就明说（不静默 return——静默会让点击看起来毫无反应）。
+  function findTogglableRow(kind, key) {
+    const groups = (MGR && MGR[kind]) || {}
+    const v = state.mgrView
+    const order = [v.cat, ...Object.keys(groups).filter((c) => c !== v.cat)]
+    for (const cat of order) {
+      const arr = groups[cat]
+      if (!Array.isArray(arr)) continue
+      const hit = arr.find((r) => r.n === key && r.k)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  // 插件/技能启停：状态 = 目录内 .disabled 标记（后端 POST /gateway/plugins/enable 落/删）。
+  // 先乐观改本地 en 即时反馈，失败回滚并 toast。开关只影响「暴露给 agent」——
+  // 停用后不再进命令/技能/agents/hooks/MCP 集，下一条消息即生效（CLI 侧监听标记热刷）。
+  async function toggleCustomization(kind, key) {
+    const x = findTogglableRow(kind, key)
+    if (!x) { toast('未找到该条目（请刷新页面后重试）'); return }
+    const next = x.en === 0
+    // 同一个安装目录同时出现在「公开」（已安装）与「个人」两份清单里，两份都要同步，
+    // 否则切完回个人页看到的还是旧状态。
+    const setEn = (val) => {
+      const groups = (MGR && MGR[kind]) || {}
+      for (const cat of Object.keys(groups)) {
+        const arr = groups[cat]
+        if (!Array.isArray(arr)) continue
+        for (const r of arr) if (r.k === x.k) r.en = val
+      }
+    }
+    setEn(next ? 1 : 0)
+    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender() } else renderMgrGrid()
+    try {
+      const res = await fetch(apiUrl('/gateway/plugins/enable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, name: x.k, enabled: next }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'HTTP ' + res.status)
+      }
+    } catch (err) {
+      setEn(next ? 0 : 1)
+      if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender() } else renderMgrGrid()
+      toast('切换失败：' + (err && err.message ? err.message : String(err)))
+    }
+  }
+
+  // 应用启停：落盘归网关（卡目录 .disabled），回来后按服务端真值重渲；失败 toast、按钮保持原态。
+  // 侧栏 tab 由 setAppEnabled 内的目录刷新重建；详情页内切换则整页重渲。
   function toggleApp(key) {
     if (!key) return
     setAppEnabled(key, !isAppEnabled(key))
-    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
-    renderMgrGrid()
+      .then(() => {
+        if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
+        renderMgrGrid()
+      })
+      .catch((e) => toast('切换失败：' + ((e && e.message) || String(e))))
   }
 
   // ---------- 详情页（卡内子页；返回 = 清 MGR_DETAIL 重渲） ----------
@@ -5274,13 +5382,16 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!x) return null
     const isSkill = kind === 'skills'
     const personal = v.cat === 'personal'
+    // 个人行带 k（目录名）= 可启停；状态语义从「已安装」换成「已启用/已停用」。
+    const toggleable = !!x.k
+    const enabled = toggleable ? x.en !== 0 : !!x.inst
     return {
       kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
-      name: x.n, desc: x.d || '', ver: x.v || '', inst: !!x.inst,
+      name: x.n, desc: x.d || '', ver: x.v || '', inst: enabled, toggleable,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: personal ? '本地已安装' : '公开市场',
-      path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.n}` : '',
-      installedLabel: x.inst ? '已安装' : '未安装',
+      path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}` : '',
+      installedLabel: toggleable ? (enabled ? '已启用' : '已停用') : (x.inst ? '已安装' : '未安装'),
     }
   }
 
@@ -5294,10 +5405,13 @@ function setFirstSendHash(v) { firstSendHash = v }
       ['状态', it.installedLabel],
     ]
     if (it.path) info.push(['位置', it.path])
-    // 详情头动作位：应用 = 真开关（key = appId）；插件/技能 = 状态指示（无 key，不可点）。
+    // 详情头动作位：应用 = 真开关（key = appId）；个人插件/技能 = 真开关（key = 名称）；
+    // 公开市场条目 = 纯状态指示（无 key，不可点）。
     const action = it.appId
       ? { on: it.inst, key: it.appId, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
-      : { on: it.inst, title: it.installedLabel }
+      : it.toggleable
+        ? { on: it.inst, key: it.name, title: it.inst ? '已启用（点击停用）' : '已停用（点击启用）' }
+        : { on: it.inst, title: it.installedLabel }
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
@@ -5310,7 +5424,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       info,
       extraHtml: repoRowHtml(it),
       onBack() { MGR_DETAIL = null; ctx.rerender() },
-      onAction(key) { toggleApp(key) },
+      onAction(key) { if (it.appId) toggleApp(key); else toggleCustomization(it.kind, key) },
       onMounted(host) { bindRepoEdit(host, it, ctx) },
     })
   }
@@ -5426,6 +5540,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   let pvCards = []
   let pvCardsLabel = ''
   let pvCardsReady = false
+  let pvHasIndex = false
+  let pvIndexEnabled = false
+  // 传统单页预览的管理页保留 id：与网关 POST /gateway/preview-cards/enable 的保留键一致
+  const PREVIEW_INDEX_CARD_ID = '__index__'
   let pvCardsInflight = null
   let pvCardsInflightLabel = ''
   let pvCardPayloads = [] // [{ label, card, payload }]：卡→卡跳转的交接数据，目标帧 load 时消费一次
@@ -5441,6 +5559,11 @@ function setFirstSendHash(v) { firstSendHash = v }
         entry: typeof c.entry === 'string' && c.entry ? c.entry.trim() : 'index.html',
         order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
         default: c.default === true,
+        // 启用态 = 卡目录内无 .disabled（网关判定）；停用卡不进 tab / 不挂载，但留在卡表里供管理页启用。
+        enabled: c.enabled !== false,
+        // 卡级后端声明（网关下发布尔 + 显示名，不下发 cmd/cwd）：有后端卡 /gateway/backend 带 card 拉起。
+        hasBackend: c.backend === true,
+        backendName: typeof c.backendName === 'string' ? c.backendName : '',
       }))
       .filter((c) => {
         if (!/^[a-zA-Z0-9_-]{1,32}$/.test(c.id) || !c.title || seen.has(c.id)) return false
@@ -5448,15 +5571,40 @@ function setFirstSendHash(v) { firstSendHash = v }
         return true
       })
   }
-  function registerPreviewCards(label, cards) {
+  function registerPreviewCards(label, cards, hasIndex, indexEnabled) {
     if (!label) return
     pvCards = normPreviewCards(cards)
     pvCardsLabel = label
+    pvHasIndex = hasIndex === true
+    pvIndexEnabled = pvHasIndex && indexEnabled !== false
     pvCardsReady = true
   }
   // 当前项目的卡表（异 label = 空表，防串项目）。调用方按需 clone，不写回本表。
   function previewCardsFor(label) {
     return label && pvCardsLabel === label ? pvCards : []
+  }
+  // 已启用的卡（tab 条 / 卡选择 / 切换的唯一数据源）：停用卡只在管理页出现。
+  function enabledPreviewCardsFor(label) {
+    return previewCardsFor(label).filter((c) => c.enabled)
+  }
+  // 传统单页预览 .claude/preview/index.html 是否可视（存在且未被停用；与「有已启用卡」并列判可预览）
+  function previewHasIndexPage(label) {
+    return !!label && pvCardsLabel === label && pvHasIndex && pvIndexEnabled
+  }
+  // 传统单页预览的管理页条目（保留 id，启停走同一端点）。无该页 → null。
+  function previewLegacyIndexCard(label) {
+    if (!label || pvCardsLabel !== label || !pvHasIndex) return null
+    return {
+      id: PREVIEW_INDEX_CARD_ID,
+      title: '预览页',
+      icon: 'dshFile',
+      entry: 'index.html',
+      order: -1,
+      default: false,
+      enabled: pvIndexEnabled,
+      hasBackend: false,
+      backendName: '',
+    }
   }
   function previewCardsReadyFor(label) {
     return !!label && pvCardsLabel === label && pvCardsReady
@@ -5466,7 +5614,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
   // 归一化激活卡：命中现有表则原样；否则回落 default（无 default 取排序首张）；无卡表 = ''。
   function previewCardNormId(label, id) {
-    const list = previewCardsFor(label)
+    const list = enabledPreviewCardsFor(label)
     if (!list.length) return ''
     if (id && list.some((c) => c.id === id)) return id
     const d = list.find((c) => c.default) || list[0]
@@ -5560,11 +5708,11 @@ function setFirstSendHash(v) { firstSendHash = v }
         if (seq !== extCardsSeq) return
         registerExtCards(label, d && d.cards, true)
         registerQuoteActions(label, d && d.quoteActions)
-        registerPreviewCards(label, d && d.previewCards)
+        registerPreviewCards(label, d && d.previewCards, d && d.hasIndex, d && d.indexEnabled)
       })
       .catch(() => {
         // 清单拿不到 = 该项目无外部卡/无浮窗动作/无预览卡（空表是正常态，不猜不兜底）
-        if (seq === extCardsSeq) registerPreviewCards(label, [])
+        if (seq === extCardsSeq) registerPreviewCards(label, [], false, false)
       })
   }
 
@@ -5576,9 +5724,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 项目后端预热：右栏「工具栏」一打开就拉起该项目 backend，免去「点了第一个卡 tab 才开始 spawn」的等待。
   // 与 mountPreview 的 ① 分支同一请求（/gateway/backend 是唯一 spawn 口，未声明 backend 的项目 404 静默）；
   // ensureBackend 自带存活复用与 in-flight 去重，重复调用不会产生第二个进程。
-  function warmProjectBackend(label) {
+  function warmProjectBackend(label, cardId) {
     if (!label) return
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    const q = cardId ? `&card=${encodeURIComponent(cardId)}` : ''
+    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${q}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .catch(() => {})
   }
 
@@ -5622,8 +5771,9 @@ function setFirstSendHash(v) { firstSendHash = v }
       return
     }
     container.__pvWaitLabel = ''
-    const list = previewCardsFor(label)
-    const card = list.length ? (previewPaneCardDef(label, cardId) || list.find((c) => c.default) || list[0]) : null
+    // 卡选择只在**已启用**卡里做：停用卡不挂载（点它的 tab 也已在渲染层消失）。
+    const list = enabledPreviewCardsFor(label)
+    const card = list.length ? (list.find((c) => c.id === cardId) || list.find((c) => c.default) || list[0]) : null
     const cardActual = card ? card.id : ''
     if (hard && prevLabel) {
       // 换项目 = 上一项目的整池帧彻底拆除：逐帧当场注销（不等 isConnected 失格）
@@ -5730,8 +5880,11 @@ function setFirstSendHash(v) { firstSendHash = v }
       // 点击关闭（可提前进入）：focus iframe + 移除覆盖层；首次点击把键盘焦点交给 iframe 内部
       if (overlay) overlay.addEventListener('click', () => { frame.focus(); dismiss() })
     }
-    // ① Web 容器：backend 优先（/gateway/* 受网关 token 校验）
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    // ① Web 容器：backend 优先（/gateway/* 受网关 token 校验）。
+    // 卡自己声明了 backend ⇒ 带 card 拉起该卡专属后端；无卡级声明 ⇒ 走项目级 backend（旧链），
+    // 项目也没声明则 404 → 静态 preview。
+    const cardQ = card && card.hasBackend ? `&card=${encodeURIComponent(card.id)}` : ''
+    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (!(d && d.url)) throw new Error('no-backend')
@@ -5744,12 +5897,12 @@ function setFirstSendHash(v) { firstSendHash = v }
         mount(remotePage ? `/backend/${encodeURIComponent(label)}/${rel}` : d.url + rel, d.name, !!d.alreadyRunning)
         if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
         window.__backendHeartbeat = setInterval(() => {
-          fetch(`/gateway/backend?label=${encodeURIComponent(label)}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
+          fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
         }, 60000)
       })
       .catch(() => {
-        // ② 静态 preview；项目未申报 preview 目录 → 空态
-        if (!hasPreview) { mountEmpty(); return }
+        // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
+        if (!hasPreview || (!card && !previewHasIndexPage(label))) { mountEmpty(); return }
         const previewSrc = card
           ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(card.id)}/${cardEntryPath(card)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
           : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
@@ -5823,11 +5976,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     return WK_TOOL_DEFS.length ? WK_TOOL_DEFS[0].id : ''
   }
 
-  // 当前项目有没有可视预览：预览卡（.claude/preview/<id>/card.json 申报）或传统单页
-  // .claude/preview/index.html（groups 的 hasPreview）。两者皆无 = 没有预览页。
+  // 当前项目有没有可视预览：**已启用**的预览卡（.claude/preview/<id>/card.json）或传统单页
+  // .claude/preview/index.html。停用卡不产生预览页签（工具栏胶囊里也不出现、服务器不拉起）。
   // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
   function wkPreviewAvailable(label) {
-    return !!label && (previewCardsFor(label).length > 0 || hasPreviewOf(label))
+    return !!label && (enabledPreviewCardsFor(label).length > 0 || previewHasIndexPage(label))
   }
   function wkPreviewKnown(label) {
     return !!label && wkProjGroups().length > 0 && previewCardsReadyFor(label)
@@ -5841,10 +5994,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   function renderWkToolTabs() {
     const box = $('wk-pv-tabs')
     if (!box) return
-    const cards = previewCardsFor(state.workProj)
+    const cards = enabledPreviewCardsFor(state.workProj)
     const head = cards.length
       ? cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
-      : hasPreviewOf(state.workProj)
+      : previewHasIndexPage(state.workProj)
         ? '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>'
         : ''
     const html = head + wkToolDefs().map(
@@ -6279,7 +6432,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // wkPreview/panelPinned，由 loadWork 的迁移一次性折叠）。
   const WORK_SLOT_DEF = {
     wkTab: 'files',        // 侧栏体：'files' 文件树 / 'chat' 会话列表
-    wkMainTab: 'chat',     // 下沉区：'chat' 助手 / 'file' 编辑区
+    wkMainTab: 'chat',     // 下沉区：'chat' 助手 / 'file' 编辑区 / 'plugins' 项目插件页
     wkAssist: true,        // 聊天 tab 是否在场
     wkAssistMode: 'side',  // 助手形态：'side' 靠栏 / 'float' 悬浮卡 / 'slim' 收敛输入栏
     wkAssistH: 430,        // 悬浮卡高度 px
@@ -6554,9 +6707,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     setPanel(false)
   }
 
-  // 下沉区当前显示的内容（唯一判定）：助手靠栏时按 wkMainTab（要看文件且确有文件才给 file，
-  // 否则回 chat）；助手脱流（float/slim）时它不在下沉格里 ⇒ 有文件顶上来、没有就空。'' = 下沉格空。
+  // 下沉区当前显示的内容（唯一判定）：插件页是独立第三态，与助手形态无关（有项目即在）；
+  // 其余：助手靠栏时按 wkMainTab（要看文件且确有文件才给 file，否则回 chat）；助手脱流
+  // （float/slim）时它不在下沉格里 ⇒ 有文件顶上来、没有就空。'' = 下沉格空。
   function wkShownTab() {
+    if (state.wkMainTab === 'plugins' && state.workProj) return 'plugins'
     if (wkAssistInFlow()) return state.wkMainTab === 'file' && state.workFile ? 'file' : 'chat'
     return state.workFile ? 'file' : ''
   }
@@ -6644,7 +6799,7 @@ function setFirstSendHash(v) { firstSendHash = v }
         state.wkPreview = false
         state.wkPvTab = ''
       }
-      if (!state.wkAssist && !state.workFile && !state.wkPreview) {
+      if (!state.wkAssist && !state.workFile && !state.wkPreview && state.wkMainTab !== 'plugins') {
         state.wkAssist = true
         state.wkMainTab = 'chat'
         toast('至少保留一栏')
@@ -6657,9 +6812,11 @@ function setFirstSendHash(v) { firstSendHash = v }
       const shown = wkShownTab()
       chatArea.classList.toggle('wk-show-chat', shown === 'chat')
       chatArea.classList.toggle('wk-show-file', shown === 'file')
+      chatArea.classList.toggle('wk-show-plugins', shown === 'plugins')
       chatArea.classList.toggle('wk-preview', !!state.wkPreview)
+      if (shown === 'plugins') mountWorkPlugins() // 内容由 work-plugins 自管（元素不变零写 DOM）
     } else {
-      chatArea.classList.remove('wk-show-chat', 'wk-show-file', 'wk-preview')
+      chatArea.classList.remove('wk-show-chat', 'wk-show-file', 'wk-show-plugins', 'wk-preview')
     }
     // 文件栏从无到有 → 编辑器重新参与布局，把切走前的滚动位置写回去（同文件才恢复）。
     if (!wasFile && chatArea.classList.contains('wk-show-file')) wkEdRestoreScroll()
@@ -6706,7 +6863,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const bar = $('wk-pv-tabs')
     if (bar) bar.hidden = !state.wkPreview
     const cardId = wkCardNormId()
-    if (previewCardsFor(state.workProj).length) state.wkPvCard = cardId
+    if (enabledPreviewCardsFor(state.workProj).length) state.wkPvCard = cardId
     // 卡 tab 与工具 tab 互斥高亮：工具态（id 非空）时不亮任何卡；预览态亮当前卡。
     document.querySelectorAll('#work-preview .wk-pv-tab[data-wkcard]').forEach((b) => b.classList.toggle('on', !id && b.dataset.wkcard === cardId))
     document.querySelectorAll('#work-preview .wk-pv-tab[data-wkpv]').forEach((b) => b.classList.toggle('on', b.dataset.wkpv === id))
@@ -6738,13 +6895,16 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 「工具栏」胶囊，work-files.js）——顶栏不另立链路，故两条入口行为必然同源。
   // 注：page !== '' 时才走 wkToolNormId（未注册 id 会回落到首枚工具，不能拿它表达「回预览态」）。
   // 工具栏一打开就预热该项目后端：卡 tab 首次点击才 spawn 会空等，PDF 卡 / 日志卡切换尤其明显。
-  // 只对声明了 backend 的项目发；走同一 /gateway/backend 口（ensureBackend 存活复用 + in-flight 去重）。
+  // 预热范围 = 项目级 backend（旧链）+ 每个**已启用且有 backend**的卡（卡级 chain）；
+  // 停用卡不预热（工具栏里也没有它的 tab）。走同一 /gateway/backend 口（ensureBackend 存活复用 + in-flight 去重）。
   function warmWorkBackend() {
     const label = state.workProj
     if (!label) return
     const g = wkProjGroups().find((p) => p.label === label)
-    if (!g || !g.hasBackend) return
-    warmProjectBackend(label)
+    if (g && g.hasBackend) warmProjectBackend(label)
+    for (const c of enabledPreviewCardsFor(label)) {
+      if (c.hasBackend) warmProjectBackend(label, c.id)
+    }
   }
 
   function setPvPane(on, page) {
@@ -6753,7 +6913,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     else if (page !== undefined) state.wkPvTab = page === '' ? '' : wkToolNormId(page)
     // 卡表已在时归一激活卡（表未就绪不能归一：会把持久化的卡 id 冲成 ''）；
     // 未就绪由 renderWorkPreview 拉完申报后再归一。
-    if (on && previewCardsFor(state.workProj).length) state.wkPvCard = wkCardNormId()
+    if (on && enabledPreviewCardsFor(state.workProj).length) state.wkPvCard = wkCardNormId()
     if (on) warmWorkBackend()
     applyPanes()
     if (state.wkPreview) syncPvContent()
@@ -6771,7 +6931,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // payload = 源卡交接给目标卡的上下文（如编译失败→日志卡要知道哪一篇/哪一次编译），
   // 目标帧 load 后经 floria-wk-card-init 下发；同卡重入不发 load，此处直接投递。
   function setPvCard(id, payload) {
-    if (!previewCardsFor(state.workProj).length) return
+    if (!enabledPreviewCardsFor(state.workProj).length) return
     const next = previewCardNormId(state.workProj, id)
     if (!next) return
     const same = next === state.wkPvCard && !state.wkPvTab && state.wkPreview
@@ -7243,7 +7403,12 @@ function setFirstSendHash(v) { firstSendHash = v }
   function updateWkTools() {
     // tab 高亮唯一同步点（2026-10-21 待办）：state.wkTab 还会被切项目/启动恢复经 loadWorkSlot 改写，
     // 只在点击处理器里同步 class，恢复出来的「文件亮、内容却是聊天」就会错位。renderWorkBody 每次必经此处。
-    document.querySelectorAll('.wk-tab').forEach((b) => b.classList.toggle('on', b.dataset.wktab === state.wkTab))
+    // 插件页占下沉格时只亮「插件」，文件/聊天 tab 不亮（与 chat 侧栏 mgr-tabs 单态一致）
+    const pluginsView = state.wkMainTab === 'plugins' && !!state.workProj // 判据同 wkShownTab
+    document.querySelectorAll('.wk-tab').forEach((b) => {
+      if (b.hasAttribute('data-wkplugins')) { b.classList.toggle('on', pluginsView); return }
+      b.classList.toggle('on', !pluginsView && b.dataset.wktab === state.wkTab)
+    })
     const nb = $('wk-new')
     const isChat = state.wkTab === 'chat'
     if (nb) nb.title = isChat ? '新建聊天' : '新建文件'
@@ -7258,7 +7423,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!body) return
     updateWkTools()
     const html = wkBodyHtml()
-    if (body.innerHTML !== html) {
+    const rebuilt = body.innerHTML !== html
+    if (rebuilt) {
       // 重建前先收起展开态：旧行节点随 innerHTML 消亡，引用必须清掉（与 renderRecent 同口径）
       expandClear()
       peekClear()
@@ -7483,6 +7649,329 @@ function setFirstSendHash(v) { firstSendHash = v }
     // （启动 + token 门解锁后各一次），门/首帧里 DOM 还没量到时这里给第二次落地机会。
     applyPanes()
     cmtRender() // 评论面板空态/加载态跟着工作项目落地（needToken 未解锁时上面 cmtLoad 早退）
+  }
+
+
+  const WPL_KINDS = [
+    { id: 'plugins', label: '插件' },
+    { id: 'skills', label: '技能' },
+    { id: 'apps', label: '应用' },
+  ]
+  const WPL_VIEW = { kind: 'plugins', q: '' } // 项目侧无公开市场，cat 恒 personal（不进视图态）
+  let WPL_DETAIL = null // { kind, key }
+  let WPL_BODY = null // 当前 #wk-plugins-pane 元素（重渲落点）
+  let WPL_LABEL = '' // WPL_DATA 所属项目
+  let WPL_DATA = { plugins: [], skills: [], loaded: false, loading: false, err: '' }
+  let WPL_LOADING = false
+  let WPL_APPS_WAIT = '' // 已发起卡表申报请求的 label（只防重复挂 then 链）
+
+  // 进入/回到插件页（applyPanes 在下沉区显示插件态时调用）：换项目重置详情与清单；DOM 元素换了才
+  // 整页重渲，否则保持现状（搜索焦点 / 滚动位置不因周期对账被重建）。
+  function mountWorkPlugins() {
+    const body = $('wk-plugins-pane')
+    if (!body) { WPL_BODY = null; return }
+    const label = state.workProj
+    if (!label) {
+      body.innerHTML = '<div class="wk-empty">先在上方选择一个项目</div>'
+      WPL_BODY = null
+      return
+    }
+    if (WPL_LABEL !== label) {
+      WPL_LABEL = label
+      WPL_DETAIL = null
+      WPL_BODY = null
+      WPL_APPS_WAIT = ''
+      WPL_DATA = { plugins: [], skills: [], loaded: false, loading: false, err: '' }
+    }
+    const fresh = WPL_BODY !== body
+    WPL_BODY = body
+    if (fresh) renderWpl()
+    ensureWplData(label)
+    ensureWplApps(label)
+  }
+
+  // 插件/技能清单（项目维度）
+  function ensureWplData(label, force) {
+    if (WPL_LOADING) return
+    if (!force && WPL_DATA.loaded) return
+    WPL_LOADING = true
+    WPL_DATA.loading = true
+    WPL_DATA.err = ''
+    renderWplGrid()
+    loadProjectPlugins(label)
+      .then((d) => {
+        if (WPL_LABEL !== label) return
+        WPL_DATA = { plugins: d.plugins, skills: d.skills, loaded: true, loading: false, err: '' }
+      })
+      .catch((e) => {
+        if (WPL_LABEL !== label) return
+        WPL_DATA.loading = false
+        WPL_DATA.err = (e && e.message) || String(e)
+      })
+      .finally(() => {
+        WPL_LOADING = false
+        if (WPL_LABEL === label) renderWpl()
+      })
+  }
+
+  // 应用清单 = 预览卡申报（与右栏工具栏同一份卡表，含停用卡）；未就绪先取一次申报
+  function ensureWplApps(label) {
+    if (previewCardsReadyFor(label) || WPL_APPS_WAIT === label) return
+    WPL_APPS_WAIT = label
+    ensurePreviewDecls(label).then(() => {
+      if (WPL_APPS_WAIT === label) WPL_APPS_WAIT = ''
+      if (WPL_LABEL === label) renderWplGrid()
+    })
+  }
+
+  function renderWpl() {
+    const body = WPL_BODY
+    if (!body) return
+    if (WPL_DETAIL) return renderWplDetail()
+    const isApps = WPL_VIEW.kind === 'apps'
+    MgrUI.browse(body, {
+      kinds: WPL_KINDS,
+      kind: WPL_VIEW.kind,
+      title: isApps ? '应用' : WPL_VIEW.kind === 'skills' ? '技能' : '插件',
+      search: {
+        placeholder: isApps ? '搜索应用…' : WPL_VIEW.kind === 'skills' ? '搜索技能…' : '搜索插件…',
+        value: WPL_VIEW.q,
+      },
+      cats: isApps ? [] : [{ id: 'personal', label: '个人' }],
+      cat: 'personal',
+      onKind(id) {
+        if (WPL_VIEW.kind === id) return
+        WPL_VIEW.kind = id
+        WPL_VIEW.q = ''
+        WPL_DETAIL = null
+        renderWpl()
+      },
+      onCat() { /* 项目侧只有个人项，无公开/个人切换 */ },
+      onSearch(q) { WPL_VIEW.q = q; renderWplGrid() }, // 只重渲网格，不重建壳（输入焦点不丢）
+      onItem(key) { WPL_DETAIL = { kind: WPL_VIEW.kind, key }; renderWpl() },
+      onAction(key) { if (WPL_VIEW.kind === 'apps') toggleWplApp(key); else toggleWplCustom(WPL_VIEW.kind, key) },
+      onRetry() { ensureWplData(WPL_LABEL, true) },
+    })
+    renderWplGrid()
+  }
+
+  function wplRows(kind) {
+    return kind === 'skills' ? WPL_DATA.skills : WPL_DATA.plugins
+  }
+
+  // 应用清单 = 预览卡（card.json，含停用）+ 传统单页预览（有 .claude/preview/index.html 时一枚）。
+  // 后者是既有「预览」页签的来源，同样决定工具栏显隐，故必须在管理页可启停（保留 id '__index__'）。
+  function wplApps(label) {
+    const list = previewCardsFor(label).slice()
+    const legacy = previewLegacyIndexCard(label)
+    if (legacy) list.push(legacy)
+    return list
+  }
+
+  function renderWplGrid() {
+    if (!WPL_BODY || WPL_DETAIL) return
+    MgrUI.grid(WPL_BODY, wplGridOpts())
+  }
+
+  function wplGridOpts() {
+    const kind = WPL_VIEW.kind
+    const q = WPL_VIEW.q.trim().toLowerCase()
+    if (kind === 'apps') {
+      const label = WPL_LABEL
+      if (!previewCardsReadyFor(label)) return { loading: '加载项目卡片中…' }
+      const rows = wplApps(label).filter(
+        (c) => !q || c.title.toLowerCase().includes(q) || c.id.toLowerCase().includes(q),
+      )
+      return {
+        items: rows.map(wplAppItem),
+        empty: '该项目没有预览卡片或预览页（.claude/preview/<id>/card.json · index.html）',
+        onItem: (key) => { WPL_DETAIL = { kind, key }; renderWpl() },
+        onAction: (key) => toggleWplApp(key),
+      }
+    }
+    if (WPL_DATA.loading) return { loading: '加载项目清单中…' }
+    if (WPL_DATA.err) return { error: { message: WPL_DATA.err }, onRetry: () => ensureWplData(WPL_LABEL, true) }
+    const label = kind === 'skills' ? '技能' : '插件'
+    const rows = wplRows(kind).filter(
+      (x) => !q || String(x.n).toLowerCase().includes(q) || String(x.d || '').toLowerCase().includes(q),
+    )
+    return {
+      items: rows.map(wplItem),
+      empty: `该项目还没有已安装的${label}`,
+      onItem: (key) => { WPL_DETAIL = { kind, key }; renderWpl() },
+      onAction: (key) => toggleWplCustom(kind, key),
+    }
+  }
+
+  // 插件/技能行：{n 名称, d 描述, v 版本, k 目录名, en 启用态}（后端读取，恒可启停）
+  function wplItem(x) {
+    const on = x.en !== 0
+    return {
+      key: x.n,
+      name: x.n,
+      desc: x.d || '暂无描述',
+      action: { on, key: x.n, title: on ? '已启用（点击停用）' : '已停用（点击启用）' },
+    }
+  }
+
+  // 应用行：卡自身申报的 icon；有卡级后端时副标题标出服务器名（用户据此判断工具栏会拉起谁）
+  function wplAppItem(c) {
+    return {
+      key: c.id,
+      name: c.title,
+      desc: c.hasBackend ? `服务器 · ${c.backendName || c.id}` : '静态页面',
+      icon: I[c.icon] || '',
+      action: {
+        on: c.enabled,
+        key: c.id,
+        title: c.enabled ? '已启用（点击停用，工具栏移除并停止拉起）' : '未启用（点击启用并加入工具栏）',
+      },
+    }
+  }
+
+  // 插件/技能启停：先乐观改本地 en 即时反馈，失败回滚 + toast。
+  // 必须带 label —— 端点按项目根定位目录（无 label 会落到工作区根的同名插件）。
+  async function toggleWplCustom(kind, key) {
+    const x = wplRows(kind).find((r) => r.n === key)
+    if (!x) { toast('未找到该条目（请刷新页面后重试）'); return }
+    const next = x.en === 0
+    const prev = x.en
+    x.en = next ? 1 : 0
+    rerenderWpl()
+    try {
+      const res = await fetch(apiUrl('/gateway/plugins/enable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, name: x.k, enabled: next, label: WPL_LABEL }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'HTTP ' + res.status)
+      }
+    } catch (e) {
+      x.en = prev
+      rerenderWpl()
+      toast('切换失败：' + ((e && e.message) || String(e)))
+    }
+  }
+
+  // 应用启停：状态 = 卡目录 .disabled（后端落盘）。启停立即对账右栏 tab 条与页态——
+  // 停用当前激活卡时 applyPvTab 会归一（没有可视预览则回落工具页）。
+  async function toggleWplApp(id) {
+    const label = WPL_LABEL
+    const c = wplApps(label).find((x) => x.id === id)
+    if (!c) { toast('未找到该卡片（请刷新页面后重试）'); return }
+    const next = !c.enabled
+    // 传统单页预览的条目是派生态（每次渲染重建），不做乐观改写；卡片对象可原地改。
+    const derived = id === '__index__'
+    if (!derived) {
+      c.enabled = next
+      rerenderWpl()
+      renderWkToolTabs()
+      applyPvTab()
+    }
+    try {
+      const res = await fetch(apiUrl('/gateway/preview-cards/enable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label, card: id, enabled: next }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'HTTP ' + res.status)
+      }
+    } catch (e) {
+      if (!derived) {
+        c.enabled = !next
+        rerenderWpl()
+        renderWkToolTabs()
+        applyPvTab()
+      }
+      toast('切换失败：' + ((e && e.message) || String(e)))
+      return
+    }
+    if (WPL_LABEL !== label) return
+    // 服务端真值重拉：卡表整份替换后，tab 条 / 激活卡按新表归一
+    ensurePreviewDecls(label, true).then(() => {
+      if (WPL_LABEL !== label) return
+      renderWkToolTabs()
+      applyPvTab()
+      rerenderWpl()
+    })
+  }
+
+  function rerenderWpl() {
+    if (WPL_DETAIL) renderWplDetail()
+    else renderWplGrid()
+  }
+
+  // ---------- 详情页（列表 → 卡内子页，返回 = 清详情重渲） ----------
+  function wplDetailItem() {
+    if (!WPL_DETAIL) return null
+    const { kind, key } = WPL_DETAIL
+    if (kind === 'apps') {
+      const c = wplApps(WPL_LABEL).find((x) => x.id === key)
+      if (!c) return null
+      const legacy = c.id === '__index__'
+      return {
+        kind, key,
+        ico: I[c.icon] || '',
+        color: MgrUI.color(c.id),
+        initial: (c.title[0] || '?').toUpperCase(),
+        name: c.title,
+        desc: legacy
+          ? '传统单页预览（.claude/preview/index.html）'
+          : c.hasBackend ? `卡级服务器：${c.backendName || c.id}` : '静态预览页（未声明服务器）',
+        ver: '',
+        enabled: c.enabled,
+        typeLabel: '应用',
+        sourceLabel: legacy ? '项目传统预览页' : '项目 .claude/preview 卡片',
+        path: legacy ? '.claude/preview/index.html' : `.claude/preview/${c.id}`,
+      }
+    }
+    const x = wplRows(kind).find((r) => r.n === key)
+    if (!x) return null
+    const isSkill = kind === 'skills'
+    return {
+      kind, key,
+      ico: '',
+      color: MgrUI.color(x.n),
+      initial: (x.n[0] || '?').toUpperCase(),
+      name: x.n,
+      desc: x.d || '',
+      ver: x.v || '',
+      enabled: x.en !== 0,
+      typeLabel: isSkill ? '技能' : '插件',
+      sourceLabel: '项目本地已安装',
+      path: `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}`,
+    }
+  }
+
+  function renderWplDetail() {
+    const body = WPL_BODY
+    if (!body) return
+    const it = wplDetailItem()
+    if (!it) { WPL_DETAIL = null; renderWpl(); return }
+    const info = [
+      ['类型', it.typeLabel],
+      ['来源', it.sourceLabel],
+      ['版本', it.ver || '—'],
+      ['状态', it.enabled ? '已启用' : '已停用'],
+      ['位置', it.path],
+    ]
+    MgrUI.detail(body, {
+      typeLabel: it.typeLabel,
+      name: it.name,
+      sub: `${it.typeLabel} · ${it.sourceLabel}`,
+      icon: it.ico,
+      color: it.color,
+      initial: it.initial,
+      action: { on: it.enabled, key: it.key, title: it.enabled ? '已启用（点击停用）' : '未启用（点击启用）' },
+      desc: it.desc,
+      info,
+      onBack() { WPL_DETAIL = null; renderWpl() },
+      onAction() { if (it.kind === 'apps') toggleWplApp(it.key); else toggleWplCustom(it.kind, it.key) },
+    })
   }
 
   // ---------- 编辑区宿主状态（主区左栏） ----------
@@ -11705,7 +12194,7 @@ function setFirstSendHash(v) { firstSendHash = v }
         const f = wkFrame()
         if (!f || f.contentWindow !== e.source) return
         const want = String(d.card || '')
-        if (!previewCardsFor(f.dataset.label || '').some((c) => c.id === want)) return
+        if (!enabledPreviewCardsFor(f.dataset.label || '').some((c) => c.id === want)) return
         setPvCard(want, d.payload)
         return
       }
@@ -11799,8 +12288,21 @@ function setFirstSendHash(v) { firstSendHash = v }
     })
     document.querySelectorAll('.wk-tab').forEach((b) =>
       b.addEventListener('click', () => {
+        // 插件入口（与 chat 侧栏「插件」tab 同位置）：内容仍渲在下沉区第三态
+        if (b.hasAttribute('data-wkplugins')) {
+          state.wkMainTab = 'plugins'
+          state.wkAssist = true
+          state.wkAssistMode = 'side'
+          renderWorkBody() // 高亮同步（updateWkTools 唯一口）
+          applyPanes()
+          saveWork()
+          return
+        }
         state.wkTab = b.dataset.wktab
+        // 点文件/聊天 = 离开插件页，下沉区回对应页态（侧栏体切换照旧）
+        if (state.wkMainTab === 'plugins') state.wkMainTab = state.wkTab === 'chat' ? 'chat' : 'file'
         renderWorkBody() // 高亮同步在 updateWkTools（唯一口，覆盖点击外的恢复路径）
+        applyPanes()
       }),
     )
     // 文件树整块由 innerHTML 重渲 → 事件必须委托在容器上（逐行绑定会被下次重渲抹掉）
@@ -11904,6 +12406,9 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 否则 work 面板首个渲染出来的行（文件树/新聊天）没有容器级委托）
   function initWork() {
     loadWork(WORK_SLOT_DEF) // 读盘：恢复模式/当前项目/预览列宽 + 全部项目槽 → 当前槽落到 live
+    // 工具栏开合只在本网关进程运行期内保持：网关换了（boot 不同）⇒ 全部项目槽的工具栏复位折叠。
+    // 须在 mountWork/applySbMode 之前（它要基于复位后的 live 态落地）。
+    resetWorkPreviewOnBoot(gatewayBootAt())
     reconcileWorkSurface() // 语境归一：守护 workSlotKey === workProj（启动/路由恢复共用，幂等）
     // 外部卡申报按缓存即时回填（同步、无网络）：刷新后在门解锁前 tab 就在位，/manage/ext:… 直进也有卡
     // 可解析；权威清单由 ensureWork → syncWorkExtCards 拉新覆盖。必须在 loadWork 之后（要知道工作项目）。
@@ -12274,6 +12779,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   let GATEWAY = false
   let GATEWAY_REVIEW = false // 审阅模式（server.mjs REVIEW_GATEWAY）：health 带 review 标志，token 门不建真 WS 直接走视觉流程
   let HOT_RELOAD = false // 开发审阅热重载（server.mjs HOT_RELOAD）：health 带 hotReload 标志，建 SSE 监听 public 变化自动刷新
+  // 本网关进程启动时刻（health.boot）：界面判「同一网关刷新」与「换了网关」的唯一凭据
+  // （work 工具栏开合只在同进程内保持，见 work-mount.initWork）。
+  let gwBoot = 0
+  const gatewayBootAt = () => gwBoot
   let gateAwait = false // token 门态：网关 token 验证通过前锁定为全空白 + 中间输入框
   let gateVerified = false // 网关 token/cookie 已验证（WS onopen 或 REVIEW 直置；声明提前供 needToken 用）
   // 2026-08-28 token 出 URL：gToken 仅作首链/门输入的附加凭据；已授权设备刷新后 gToken 为空，
@@ -13153,12 +13662,13 @@ function setFirstSendHash(v) { firstSendHash = v }
     }
     // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
     const proj = home
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    // 已停用（en === 0）的自定义件不进 @ 提及：停用后 agent 侧也不暴露，入口需一致。
+    for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (match(s.n) || match(s.d))) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
       // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
       // 插件是便携根安装件、无项目归属，两种上下文都列。
-      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
     }
     items.push(...pickItems(q))
     if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
@@ -13189,14 +13699,15 @@ function setFirstSendHash(v) { firstSendHash = v }
     const proj = pickHome()
     // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
     // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    // 已停用（en === 0）的自定义件不列：停用即不暴露给 agent，入口同步收口。
     if (proj) {
-      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+      for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
     } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+      for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     }
     // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
-    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
+    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && (!match || match(p.n) || match(p.d))) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
@@ -15598,6 +16109,7 @@ function setViewportAdapter(a) { stageSyncFn = a.syncStage }
       if (d.mode === 'gateway') GATEWAY = true
       if (d.review) GATEWAY_REVIEW = true
       if (d.hotReload) HOT_RELOAD = true
+      if (typeof d.boot === 'number') gwBoot = d.boot
     } catch { /* 非网关环境（静态托管）忽略 */ }
   }
 

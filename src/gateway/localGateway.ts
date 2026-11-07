@@ -32,6 +32,10 @@ import { createServer as netCreateServer, createConnection as netCreateConnectio
 import { spawn, spawnSync } from 'node:child_process'
 import { WebSocketServer, WebSocket } from 'ws'
 import { getPortableRoot, getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import {
+  CUSTOMIZATION_DISABLED_MARKER,
+  isCustomizationDirEnabled,
+} from '../utils/customizationToggle.js'
 import { FILE_CACHE_DIR, PENDING_FILE_DIR, getFileCacheDir } from '../utils/fileCache.js'
 import { getProjectRoot } from '../bootstrap/state.js'
 import {
@@ -113,6 +117,10 @@ let sseDebounce: NodeJS.Timeout | null = null
 // 分钟后自动关闭网关，避免「所有 CLI/遥测端都退出、网关空转占端口」的孤儿状态。仅 --gateway
 // 独立进程模式启用（进程内模式网关随 CLI 同生共死，无孤儿问题）。阈值可用 GATEWAY_IDLE_MINUTES 调。
 const GATEWAY_IDLE_MINUTES = Number(process.env.GATEWAY_IDLE_MINUTES || 10)
+// 本网关进程启动时刻（/gateway/health 的 boot）：前端据此区分「同网关刷新」与「换了网关」。
+const GATEWAY_BOOT_AT = Date.now()
+// 工作区根（全局根）在项目清单里的 label（findProjects 产出、前端 pickHome 同口径）
+const GLOBAL_PROJECT_LABEL = '全局根 · 散装对话'
 const ENABLE_IDLE_RECLAIM = process.argv.includes('--gateway')
 let idleTimer: NodeJS.Timeout | null = null
 
@@ -149,6 +157,10 @@ interface PreviewCard {
   host: 'view' // 渲染位置，由 preview 声明；本版只定义 view（主区独立视图卡）
   tab: boolean // host=view 时是否上侧栏 tab，缺省 true
   repo: string // 上游仓库（GitHub 等，用户填写；插件卡「应用」详情页展示与写入），缺省 ''
+  // 启用态 = <previewDir>/<path 首段>/.disabled 不存在（与项目/卡同一判据，2026-11-07）
+  enabled: boolean
+  backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
+  backendCfg?: BackendCfg // 卡级后端声明（preview.json 应用卡可选 backend）
 }
 // 预览工作区的独立卡片（2026-10-18）：<previewDir>/<id>/card.json，id = 目录名。
 // 每张卡是一份独立静态页（entry 默认 index.html），宿主把它注册成右栏工具栏 tab；
@@ -160,6 +172,10 @@ interface PreviewPaneCard {
   entry: string // 卡目录内相对路径，默认 index.html
   order: number // tab 排序（小在前），缺省 100
   default: boolean // 默认激活卡（至多一张；无声明时取排序首张）
+  // 启用态 = 卡目录内 .disabled 不存在（2026-11-07 定案：状态载体是目录标记，网关可读、跨浏览器一致）
+  enabled: boolean
+  backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
+  backendCfg?: BackendCfg // 卡级后端声明（card.json 的 backend；cwd 相对卡目录解析）
 }
 // preview.json 的 quoteActions 声明（2026-09-28）：与 backend / cards 并列的第三种「项目向宿主申报
 // 界面能力」清单——宿主选中引用浮窗（.quote-pop）里追加的动作行。动作是**纯数据**（无 path、不指向
@@ -1579,7 +1595,7 @@ function findProjects(root: string): ProjectInfo[] {
   // 其 `..` 即 <root>/.claude ⇒ join(dir,'..','preview') = <root>/.claude/preview，与项目同一公式。
   if (isDir(global)) {
     groups.push({
-      label: '全局根 · 散装对话',
+      label: GLOBAL_PROJECT_LABEL,
       dir: global,
       scope: 'global',
       hasPreview: isDir(join(root, '.claude', 'preview')),
@@ -1658,6 +1674,9 @@ function readPreviewCards(previewDir: string): PreviewCard[] {
     if (c.host !== 'view') continue // 本版只定义 view
     if (!isPreviewRelPath(path)) continue
     seen.add(id)
+    // 启用态载体 = <previewDir>/<path 首段>/.disabled（应用卡目录），路径首段不存在则恒启用
+    const firstSeg = (path.split('#')[0] || '').split('/')[0]
+    const backendCfg = parseBackendCfg(c.backend, previewDir, previewDir)
     out.push({
       id,
       title,
@@ -1666,6 +1685,9 @@ function readPreviewCards(previewDir: string): PreviewCard[] {
       host: 'view',
       tab: c.tab !== false,
       repo: typeof c.repo === 'string' ? c.repo.trim().slice(0, 500) : '',
+      enabled: !firstSeg || !existsSync(join(previewDir, firstSeg, CUSTOMIZATION_DISABLED_MARKER)),
+      backendName: backendCfg ? backendCfg.name || title : '',
+      backendCfg,
     })
   }
   return out
@@ -1701,6 +1723,9 @@ function readPreviewPaneCards(previewDir: string): PreviewPaneCard[] {
     const entry = typeof c.entry === 'string' && c.entry ? c.entry.trim() : 'index.html'
     if (!title || entry.includes('#') || !isPreviewRelPath(entry)) continue
     if (!existsSync(join(dir, entry)) || !statSync(join(dir, entry)).isFile()) continue
+    // 卡级后端：cwd 相对卡目录解析（缺省 = preview 根）；previewDir 仍回填项目 preview 根，
+    // 使 backend.log 与项目后端同位（一个项目一份日志）。
+    const backendCfg = parseBackendCfg(c.backend, previewDir, dir)
     out.push({
       id: e.name,
       title,
@@ -1708,6 +1733,9 @@ function readPreviewPaneCards(previewDir: string): PreviewPaneCard[] {
       entry,
       order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
       default: c.default === true,
+      enabled: !existsSync(join(dir, CUSTOMIZATION_DISABLED_MARKER)),
+      backendName: backendCfg ? backendCfg.name || title : '',
+      backendCfg,
     })
   }
   out.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
@@ -1739,24 +1767,85 @@ function readPreviewQuoteActions(previewDir: string): PreviewQuoteAction[] {
   return out
 }
 
-// 读 <previewDir>/preview.json 的 backend 声明；不存在或结构非法 → undefined
-function readBackendCfg(previewDir: string): BackendCfg | undefined {
-  const raw = readPreviewJson(previewDir) as {
-    backend?: { name?: unknown; cmd?: unknown; cwd?: string; port?: number; idleMinutes?: number; readyPath?: string }
-  } | null
-  const b = raw?.backend
-  if (!b || !Array.isArray(b.cmd) || !b.cmd.length) return undefined
+// backend 声明解析（唯一处）：项目级（preview.json 顶层 backend）与卡级（card.json / cards[] 条目
+// 的 backend）共用。cwd 相对 cwdBase 解析（项目级 = preview 目录，卡级 = 卡目录），缺省 = previewDir；
+// previewDir 恒回填项目 .claude/preview，供 backendLogPath 落同一份 backend.log。
+function parseBackendCfg(raw: unknown, previewDir: string, cwdBase: string): BackendCfg | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const b = raw as { name?: unknown; cmd?: unknown; cwd?: unknown; port?: unknown; idleMinutes?: unknown; readyPath?: unknown }
+  if (!Array.isArray(b.cmd) || !b.cmd.length) return undefined
   return {
     name: typeof b.name === 'string' && b.name ? b.name : undefined,
     cmd: b.cmd.map(String),
-    // cwd 相对 preview.json 所在目录解析（如 "../../comfyui-backend" → 项目根下 comfyui-backend），
-    // 缺省 = preview 目录本身
-    cwd: typeof b.cwd === 'string' && b.cwd ? resolve(previewDir, b.cwd) : previewDir,
+    cwd: typeof b.cwd === 'string' && b.cwd ? resolve(cwdBase, b.cwd) : previewDir,
     port: typeof b.port === 'number' ? b.port : 0,
     idleMinutes: typeof b.idleMinutes === 'number' ? b.idleMinutes : GATEWAY_IDLE_MINUTES,
     readyPath: typeof b.readyPath === 'string' && b.readyPath ? b.readyPath : '/api/system_stats', // 项目后端(如 ComfyUI)自身 API,勿随网关前缀迁移
-    previewDir, // 供 backendLogPath 定位该项目 .claude/preview/backend.log（非 preview.json 字段）
+    previewDir,
   }
+}
+
+// 读 <previewDir>/preview.json 的项目级 backend 声明；不存在或结构非法 → undefined
+function readBackendCfg(previewDir: string): BackendCfg | undefined {
+  const raw = readPreviewJson(previewDir) as { backend?: unknown } | null
+  return parseBackendCfg(raw?.backend, previewDir, previewDir)
+}
+
+// 传统单页预览（<previewDir>/index.html）的保留应用 id：启停端点据此把 .disabled 写到 preview 根。
+const PREVIEW_INDEX_CARD_ID = '__index__'
+
+// 卡级后端的进程键（唯一处）：项目级 = label，卡级 = label::<cardId>。
+// 同一项目的多张卡可各起一份后端（Pj18：PDF 卡 / 日志卡各一个 server）。
+function cardBackendKey(label: string, cardId: string): string {
+  return `${label}::${cardId}`
+}
+
+// 项目/全局根预览目录：proj.dir 恒 = <根>/.claude/projects → 上一级 .claude → preview
+function previewDirOf(proj: ProjectInfo): string {
+  return resolve(proj.dir, '..', 'preview')
+}
+
+// 已启用且有 backend 的卡清单（唯一处）：pane 卡（card.json）在前，preview.json 应用卡在后。
+// cardId = pane 卡目录名 / 应用卡 id，是进程键与启停端点的稳定键。
+interface CardBackendEntry {
+  id: string
+  cfg: BackendCfg
+}
+function enabledCardBackends(previewDir: string): CardBackendEntry[] {
+  const out: CardBackendEntry[] = []
+  for (const c of readPreviewPaneCards(previewDir)) {
+    if (c.enabled && c.backendCfg) out.push({ id: c.id, cfg: c.backendCfg })
+  }
+  for (const c of readPreviewCards(previewDir)) {
+    if (c.enabled && c.backendCfg) out.push({ id: c.id, cfg: c.backendCfg })
+  }
+  return out
+}
+
+// 下发前裁剪（/gateway/preview-cards）：后端 cfg（cmd/cwd/port）属网关侧实现，浏览器只要
+// 「有没有 backend + 显示名」——不带出去也不影响启停与挂载决策。
+function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: string }>(c: T): Record<string, unknown> {
+  const { backendCfg, ...rest } = c
+  return { ...rest, backend: !!backendCfg }
+}
+
+// 按卡 id 找已启用卡后端（/gateway/backend?card= 与启停端点共用）
+function findEnabledCardBackend(previewDir: string, cardId: string): CardBackendEntry | undefined {
+  if (!cardId) return undefined
+  return enabledCardBackends(previewDir).find((c) => c.id === cardId)
+}
+
+// 按页面 URL 首段找卡后端（/backend/<label>/<首段>/... 反代路由用）：
+// pane 卡首段 = 卡 id；preview.json 应用卡首段 = path 首段（如 models/index.html → models）。
+function findEnabledCardBackendBySeg(previewDir: string, seg: string): CardBackendEntry | undefined {
+  if (!seg) return undefined
+  const pane = readPreviewPaneCards(previewDir).find((c) => c.enabled && c.backendCfg && c.id === seg)
+  if (pane && pane.backendCfg) return { id: pane.id, cfg: pane.backendCfg }
+  for (const c of readPreviewCards(previewDir)) {
+    const first = (c.path.split('#')[0] || '').split('/')[0]
+    if (c.enabled && c.backendCfg && first === seg) return { id: c.id, cfg: c.backendCfg }
+  }
+  return undefined
 }
 
 // 网关神经元库发现根（2026-09-18 全项目神经元化）：内置双根只覆盖 cwd 根 + 全局根，
@@ -2292,15 +2381,46 @@ function parseSkillFrontmatter(text: string): { name: string; description: strin
 // 技能目录扫描（唯一处）：只认带 SKILL.md 的目录，名称/描述取 frontmatter，缺省回落目录名。
 // 便携根（listPlugins 的 personal.skills）与项目根（/gateway/plugins?label=）共用本函数——
 // 项目技能 = <项目根>/.claude/skills（项目会话安装落点见工作区规范）。
+// k = 目录名（启停端点与前端开关的稳定键，显示名 n 可能来自 frontmatter）；
+// en = 启用态（目录内无 .disabled 标记），与加载侧 isCustomizationDirEnabled 同一判据。
 function readSkillDir(skillsDir: string): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
   if (!isDir(skillsDir)) return out
   for (const e of readdirSync(skillsDir, { withFileTypes: true })) {
     if (!e.isDirectory() || e.name.startsWith('.')) continue
-    const fp = join(skillsDir, e.name, 'SKILL.md')
+    const dir = join(skillsDir, e.name)
+    const fp = join(dir, 'SKILL.md')
     if (!existsSync(fp)) continue
     const fm = parseSkillFrontmatter(readFileSync(fp, 'utf8'))
-    out.push({ n: fm.name || e.name, d: fm.description, inst: 1 })
+    out.push({
+      n: fm.name || e.name,
+      d: fm.description,
+      inst: 1,
+      k: e.name,
+      en: isCustomizationDirEnabled(dir) ? 1 : 0,
+    })
+  }
+  return out
+}
+
+// 已安装插件目录扫描（唯一处）：只认带 .claude-plugin/plugin.json 的直接子目录。
+// 便携根（listPlugins）与项目根（/gateway/plugins?label=，work 插件 tab）共用本函数。
+// k = 目录名（启停端点与前端开关的稳定键），en = 目录内无 .disabled 标记。
+function readPluginDir(pluginsDir: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  if (!isDir(pluginsDir)) return out
+  for (const e of readdirSync(pluginsDir, { withFileTypes: true })) {
+    if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'data' || e.name === 'marketplaces') continue
+    const m = readJsonObject(join(pluginsDir, e.name, '.claude-plugin', 'plugin.json'))
+    if (!m) continue
+    out.push({
+      n: String(m.name || e.name),
+      d: String(m.description || ''),
+      v: String(m.version || ''),
+      inst: 1,
+      k: e.name,
+      en: isCustomizationDirEnabled(join(pluginsDir, e.name)) ? 1 : 0,
+    })
   }
   return out
 }
@@ -2310,20 +2430,7 @@ function listPlugins(root: string): Record<string, unknown> {
   const skillsDir = join(root, '.claude', 'skills')
 
   // 已安装插件（跳过 data/marketplaces 等系统目录与隐藏目录）
-  const personalPlugins: Array<Record<string, unknown>> = []
-  if (isDir(pluginsDir)) {
-    for (const e of readdirSync(pluginsDir, { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'data' || e.name === 'marketplaces') continue
-      const m = readJsonObject(join(pluginsDir, e.name, '.claude-plugin', 'plugin.json'))
-      if (!m) continue
-      personalPlugins.push({
-        n: String(m.name || e.name),
-        d: String(m.description || ''),
-        v: String(m.version || ''),
-        inst: 1,
-      })
-    }
-  }
+  const personalPlugins = readPluginDir(pluginsDir)
 
   // 已安装技能（只有带 SKILL.md 的目录才算技能）
   const personalSkills = readSkillDir(skillsDir)
@@ -2331,9 +2438,12 @@ function listPlugins(root: string): Record<string, unknown> {
   // 公开市场（官方 marketplace.json 的 plugins[]；技能条目按名称含 skill 归类）
   const marketPlugins: Array<Record<string, unknown>> = []
   const marketSkills: Array<Record<string, unknown>> = []
+  // 已安装项的 k/en：公开市场里「已安装」的条目就是 personal 里那份目录，
+  // 补齐 k/en 后公开页的勾也能直接启停（否则那一排 ✓ 全是点了没反应的死按钮）。
+  const installedByName = new Map<string, Record<string, unknown>>()
+  for (const p of [...personalPlugins, ...personalSkills]) installedByName.set(String(p.n), p)
   const mktDir = join(pluginsDir, 'marketplaces')
   if (isDir(mktDir)) {
-    const installed = new Set(personalPlugins.map((p) => String(p.n)))
     for (const e of readdirSync(mktDir, { withFileTypes: true })) {
       if (!e.isDirectory()) continue
       const m = readJsonObject(join(mktDir, e.name, '.claude-plugin', 'marketplace.json'))
@@ -2341,7 +2451,9 @@ function listPlugins(root: string): Record<string, unknown> {
       for (const it of items) {
         const name = String(it?.name || '')
         if (!name) continue
-        const rec = { n: name, d: String(it?.description || ''), inst: installed.has(name) ? 1 : 0 }
+        const local = installedByName.get(name)
+        const rec: Record<string, unknown> = { n: name, d: String(it?.description || ''), inst: local ? 1 : 0 }
+        if (local) { rec.k = local.k; rec.en = local.en }
         if (/skill/i.test(name)) marketSkills.push(rec)
         else marketPlugins.push(rec)
       }
@@ -2761,7 +2873,9 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     return
   }
   if (req.method === 'GET' && url.pathname === '/gateway/health') {
-    sendJson(res, 200, { ok: true, mode: 'gateway' })
+    // boot：本网关进程启动时刻。前端用它判定「是否换了网关」——同一网关刷新保留工具栏开合，
+    // 换网关（boot 变）则复位为折叠（2026-11-07 用户定案）。
+    sendJson(res, 200, { ok: true, mode: 'gateway', boot: GATEWAY_BOOT_AT })
     return
   }
   // 2026-08-17 独立网关优雅关闭端点（受上方 /gateway/* token 校验保护）：/server off 调用。
@@ -2794,10 +2908,84 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
           return
         }
         const plDir = resolve(plProj.dir, '..', '..') // <项目根>/.claude/projects → <项目根>
-        sendJson(res, 200, { label: plLabel, skills: readSkillDir(join(plDir, '.claude', 'skills')) })
+        sendJson(res, 200, {
+          label: plLabel,
+          // work 插件 tab：项目自己的已安装插件 / 技能（无公开市场，只列个人已安装项）
+          plugins: readPluginDir(join(plDir, '.claude', 'plugins')),
+          skills: readSkillDir(join(plDir, '.claude', 'skills')),
+        })
         return
       }
       sendJson(res, 200, listPlugins(root))
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 插件/技能启停（2026-11-07 定案）：POST /gateway/plugins/enable {kind, name, enabled, label?}
+  // 状态 = 自定义件目录内的 .disabled 标记文件（存在即停用），不写 settings.json、不改
+  // plugin.json / SKILL.md（前者是厂家清单、后者是用户手写内容）。加载侧同一判据：
+  // utils/customizationToggle → loadSkillsFromSkillsDir / loadSkillsDirPlugins。
+  // name 只认直接子目录名（禁分隔符/上溯/隐藏目录），并按 kind 校验目录形态。
+  if (req.method === 'POST' && url.pathname === '/gateway/plugins/enable') {
+    try {
+      let eBody: unknown
+      try {
+        eBody = JSON.parse((await readBodyWithLimit(req, 64 * 1024)).toString('utf8') || '{}')
+      } catch (e) {
+        if (e instanceof ReportBodyTooLargeError) {
+          sendJson(res, 413, { error: 'too large' })
+          return
+        }
+        throw e
+      }
+      if (eBody === null || typeof eBody !== 'object' || Array.isArray(eBody)) {
+        sendJson(res, 400, { error: 'invalid body' })
+        return
+      }
+      const eb = eBody as Record<string, unknown>
+      const kind = eb.kind === 'plugins' || eb.kind === 'skills' ? eb.kind : ''
+      const name = typeof eb.name === 'string' ? eb.name.trim() : ''
+      const enabled = eb.enabled !== false
+      const eLabel = typeof eb.label === 'string' ? eb.label.trim() : ''
+      if (!kind) {
+        sendJson(res, 400, { error: 'kind 必须是 plugins 或 skills' })
+        return
+      }
+      if (!name || name === '.' || name === '..' || name.startsWith('.') || /[\\/]/.test(name)) {
+        sendJson(res, 400, { error: 'name 非法（只接受直接子目录名）' })
+        return
+      }
+      let eBase: string
+      if (eLabel) {
+        // 项目维度：plugins / skills 均可（work 插件 tab 管理项目自己的已安装项）
+        const eProj = findProjects(root).find((g) => g.label === eLabel)
+        if (!eProj) {
+          sendJson(res, 404, { error: 'project not found' })
+          return
+        }
+        eBase = join(resolve(eProj.dir, '..', '..'), '.claude', kind)
+      } else {
+        eBase = join(root, '.claude', kind)
+      }
+      const eDir = join(eBase, name)
+      if (!isDir(eDir)) {
+        sendJson(res, 404, { error: '目录不存在' })
+        return
+      }
+      const eIsPlugin = existsSync(join(eDir, '.claude-plugin', 'plugin.json'))
+      const eIsSkill = existsSync(join(eDir, 'SKILL.md'))
+      if (kind === 'plugins' ? !eIsPlugin : !eIsSkill) {
+        sendJson(res, 400, { error: kind === 'plugins' ? '该目录不是插件' : '该目录不是技能' })
+        return
+      }
+      const eMarker = join(eDir, CUSTOMIZATION_DISABLED_MARKER)
+      if (enabled) {
+        if (existsSync(eMarker)) unlinkSync(eMarker)
+      } else if (!existsSync(eMarker)) {
+        writeFileSync(eMarker, '')
+      }
+      sendJson(res, 200, { ok: true, kind, name, enabled })
     } catch (e) {
       sendError(res, e)
     }
@@ -3067,17 +3255,32 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   // 2026-08-19 Web 容器：/gateway/backend?label=<项目> → 懒加载 spawn 该项目 preview.json 声明的后端进程，
   // 返回 {url}：本机 iframe 直连；远程宿主由前端改走同源代理 /backend/<label>/（受上方 /gateway/* token 校验保护；后端仅监听 127.0.0.1，访问面可控）。
   if (req.method === 'GET' && url.pathname === '/gateway/backend') {
-    const bLabel = url.searchParams.get('label') || ''
-    const bProj = findProjects(root).find((g) => g.scope === 'project' && g.label === bLabel && g.hasBackend)
-    if (!bProj || !bProj.backendCfg) {
+    const bLabel = (url.searchParams.get('label') || '').trim()
+    const bCardId = (url.searchParams.get('card') || '').trim()
+    // label 允许项目与全局根（应用卡的服务器同样要能拉起）；是否有 backend 按下面两条支路判
+    const bProj = findProjects(root).find((g) => g.label === bLabel && g.hasPreview)
+    if (!bProj) {
+      sendJson(res, 404, { error: 'no backend for project' })
+      return
+    }
+    const bPreviewDir = previewDirOf(bProj)
+    // 带 card = 卡级后端（必须已启用且自己声明了 backend）；不带 card = 项目级 backend（旧链）
+    const bCard = bCardId ? findEnabledCardBackend(bPreviewDir, bCardId) : undefined
+    if (bCardId && !bCard) {
+      sendJson(res, 404, { error: 'no backend for card' })
+      return
+    }
+    const bKey = bCard ? cardBackendKey(bLabel, bCard.id) : bLabel
+    const bCfg = bCard ? bCard.cfg : readBackendCfg(bPreviewDir)
+    if (!bCfg) {
       sendJson(res, 404, { error: 'no backend for project' })
       return
     }
     try {
       // alreadyRunning：调用前进程已在册且存活（复用/收养，非本次 spawn）→ 前端不渲染「正在启动」覆盖层，iframe 直挂秒开
-      const pre = backendProcesses.get(bLabel)
+      const pre = backendProcesses.get(bKey)
       const alreadyRunning = !!(pre && backendProcAlive(pre))
-      const proc = await ensureBackend(bLabel, bProj.backendCfg)
+      const proc = await ensureBackend(bKey, bCfg)
       // 同源代理票证：为该浏览器种/续 HttpOnly cookie，开放 /backend/<label>/ 转发通道；
       // 已有票证则追加本 label 并续期（多项目并行预览互不顶掉）。
       sweepBpSessions()
@@ -3093,7 +3296,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       bpSess.expires = Date.now() + BP_COOKIE_TTL_MS
       res.setHeader('Set-Cookie', `${BP_COOKIE_NAME}=${ckKey}; Path=/backend; HttpOnly; SameSite=Lax; Max-Age=86400`)
       // name：overlay 提示用（preview.json backend.name 或项目 label），前端据此显示「正在启动 <name>…」，可插拔
-      sendJson(res, 200, { url: `http://127.0.0.1:${proc.port}/`, port: proc.port, pid: proc.pid, name: proc.cfg.name || bLabel, alreadyRunning })
+      sendJson(res, 200, { url: `http://127.0.0.1:${proc.port}/`, port: proc.port, pid: proc.pid, name: proc.cfg.name || (bCard ? bCard.id : bLabel), alreadyRunning })
     } catch (e) {
       sendError(res, e)
     }
@@ -3157,10 +3360,85 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       const cDir = resolve(cProj.dir, '..', 'preview')
       sendJson(res, 200, {
         label: cLabel,
-        cards: readPreviewCards(cDir),
+        cards: readPreviewCards(cDir).map(publicPreviewCard),
         quoteActions: readPreviewQuoteActions(cDir),
-        previewCards: readPreviewPaneCards(cDir),
+        previewCards: readPreviewPaneCards(cDir).map(publicPreviewCard),
+        // 传统单页预览（.claude/preview/index.html）：与「有卡」并列决定预览页签是否出现；
+        // 启用态载体 = <preview>/.disabled（与应用卡同一判据，管理页可启停）。
+        hasIndex: existsSync(join(cDir, 'index.html')),
+        indexEnabled: !existsSync(join(cDir, CUSTOMIZATION_DISABLED_MARKER)),
       })
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 卡片/应用启停（2026-11-07 定案）：POST /gateway/preview-cards/enable {label, card, enabled}
+  // 状态载体 = 目录内 .disabled 标记（与插件/技能同一判据 isCustomizationDirEnabled，网关可读 ⇒
+  // 开机自动拉起与工具栏显示都能按它决策）。card = pane 卡目录名，或 preview.json 应用卡 id
+  // （后者落到 <path 首段> 目录）。停用卡仍在清单里返回（管理页要能重新启用），只是 enabled=false。
+  if (req.method === 'POST' && url.pathname === '/gateway/preview-cards/enable') {
+    try {
+      let evBody: unknown
+      try {
+        evBody = JSON.parse((await readBodyWithLimit(req, 64 * 1024)).toString('utf8') || '{}')
+      } catch (e) {
+        if (e instanceof ReportBodyTooLargeError) {
+          sendJson(res, 413, { error: 'too large' })
+          return
+        }
+        throw e
+      }
+      if (evBody === null || typeof evBody !== 'object' || Array.isArray(evBody)) {
+        sendJson(res, 400, { error: 'invalid body' })
+        return
+      }
+      const ev = evBody as Record<string, unknown>
+      const evLabel = typeof ev.label === 'string' ? ev.label.trim() : ''
+      const evCard = typeof ev.card === 'string' ? ev.card.trim() : ''
+      const evEnabled = ev.enabled !== false
+      if (!evLabel || !evCard) {
+        sendJson(res, 400, { error: 'label/card 必填' })
+        return
+      }
+      if (!/^[a-zA-Z0-9_-]{1,32}$/.test(evCard)) {
+        sendJson(res, 400, { error: 'card 非法' })
+        return
+      }
+      const evProj = findProjects(root).find((g) => g.label === evLabel && g.hasPreview)
+      if (!evProj) {
+        sendJson(res, 404, { error: 'project not found' })
+        return
+      }
+      const evPreview = previewDirOf(evProj)
+      // 定位卡目录：传统单页预览 = preview 根（保留 id）；pane 卡 = <preview>/<card>；
+      // 应用卡 = <preview>/<path 首段>
+      let evDir = ''
+      if (evCard === PREVIEW_INDEX_CARD_ID) {
+        if (!existsSync(join(evPreview, 'index.html'))) {
+          sendJson(res, 404, { error: 'card not found' })
+          return
+        }
+        evDir = evPreview
+      } else if (readPreviewPaneCards(evPreview).some((c) => c.id === evCard)) {
+        evDir = join(evPreview, evCard)
+      } else {
+        const app = readPreviewCards(evPreview).find((c) => c.id === evCard)
+        const first = app ? (app.path.split('#')[0] || '').split('/')[0] : ''
+        if (first) evDir = join(evPreview, first)
+      }
+      const evTarget = evDir ? resolve(evDir) : ''
+      if (!evTarget || !isDir(evTarget) || (evTarget !== evPreview && !evTarget.startsWith(evPreview + sep))) {
+        sendJson(res, 404, { error: 'card not found' })
+        return
+      }
+      const evMarker = join(evTarget, CUSTOMIZATION_DISABLED_MARKER)
+      if (evEnabled) {
+        if (existsSync(evMarker)) unlinkSync(evMarker)
+      } else if (!existsSync(evMarker)) {
+        writeFileSync(evMarker, '')
+      }
+      sendJson(res, 200, { ok: true, label: evLabel, card: evCard, enabled: evEnabled })
     } catch (e) {
       sendError(res, e)
     }
@@ -3776,20 +4054,36 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       bpLabel = bpMatch[1]
     }
     const bpJar = parseCookieHeader(req.headers.cookie)
-    const bpKey = bpJar[BP_COOKIE_NAME]
-    const bpTicket = bpKey ? bpSessions.get(bpKey) : undefined
+    const bpCookieKey = bpJar[BP_COOKIE_NAME]
+    const bpTicket = bpCookieKey ? bpSessions.get(bpCookieKey) : undefined
     if (!bpTicket || !bpTicket.labels.has(bpLabel)) {
       sendJson(res, 401, { error: 'unauthorized' })
       return
     }
-    const bpProj = findProjects(root).find((g) => g.scope === 'project' && g.label === bpLabel && g.hasBackend)
-    if (!bpProj || !bpProj.backendCfg) {
+    const bpProj = findProjects(root).find((g) => g.label === bpLabel && g.hasPreview)
+    if (!bpProj) {
+      sendJson(res, 404, { error: 'no backend for project' })
+      return
+    }
+    const bpPreviewDir = previewDirOf(bpProj)
+    // 首段 = 卡页目录（pane 卡 id / 应用卡 path 首段）：命中已启用卡后端则走该卡，
+    // 否则回落项目级 backend（旧链：项目级后端托管多张卡页，如 Pj8 cuvette）。
+    let bpSeg = ''
+    try {
+      bpSeg = decodeURIComponent((bpMatch[2] || '/').split('/').filter(Boolean)[0] || '')
+    } catch {
+      bpSeg = ''
+    }
+    const bpCard = findEnabledCardBackendBySeg(bpPreviewDir, bpSeg)
+    const bpKey = bpCard ? cardBackendKey(bpLabel, bpCard.id) : bpLabel
+    const bpCfg = bpCard ? bpCard.cfg : readBackendCfg(bpPreviewDir)
+    if (!bpCfg) {
       sendJson(res, 404, { error: 'no backend for project' })
       return
     }
     let bpProc: BackendProc
     try {
-      bpProc = await ensureBackend(bpLabel, bpProj.backendCfg) // 直开页面（无父页心跳）也顺带保活
+      bpProc = await ensureBackend(bpKey, bpCfg) // 直开页面（无父页心跳）也顺带保活
     } catch (e) {
       sendError(res, e)
       return
@@ -5827,6 +6121,17 @@ export function startLocalGateway(opts?: { host?: string; port?: number; token?:
     saveGatewayTokenToDisk(currentToken)
     saveGatewayPortToDisk(currentPort)
     console.log(`[gateway] 内置网关监听 http://${currentHost}:${currentPort} (token=${currentToken})`)
+    // 全局根应用卡后端开机自启（2026-11-07 定案）：只拉全局根（工作区根的 .claude/preview），
+    // 仅独立 --gateway 进程；逐个「已启用且有 backend」的卡拉起，失败只记日志、不影响网关。
+    // 项目级后端的开机行为不变（项目后端仍按需懒加载）。
+    if (process.argv.includes('--gateway')) {
+      const bootPreview = join(getPortableRoot(), '.claude', 'preview')
+      for (const c of enabledCardBackends(bootPreview)) {
+        void ensureBackend(cardBackendKey(GLOBAL_PROJECT_LABEL, c.id), c.cfg).catch((e: unknown) => {
+          console.warn(`[gateway] 开机拉起全局应用 ${c.id} 失败: ${e instanceof Error ? e.message : String(e)}`)
+        })
+      }
+    }
     // mDNS 应答器只在全网卡监听时有意义；绑 127.0.0.1（调试）时不起
     if (currentHost === '0.0.0.0') mdnsStart()
   })

@@ -5,7 +5,7 @@
 
 ## 1. API 前缀与端点总览
 
-端点全挂 `/gateway/<端点>`：health / activate / shutdown / sessions / plugins / models / models/catalog / model / model-report / wsession[/stop] / diagnostics / session[/rename / .queued] / backend / project / file / file-cache / conversation / activity / events。根 `/api` 撤空（不保留旧路径、无兼容双挂）。**不变量**：网关与 `/backend/<label>/` 代理页面共享同一 origin，端点若挂根，被代理页面写死的绝对路径会误打网关自身；前缀化后写错只 404，永不误伤网关（「故意打网关」的预览页显式用 `/gateway/*`）。CLI 侧 `gatewayClient`/`conversationDisplay`/`server`、前端 `app.js`/`sw.js` 同此前缀。**唯一例外**：`readyPath` 缺省 `/api/system_stats` 是项目后端（ComfyUI）自身 API，勿迁移。总门鉴权 `startsWith('/gateway/')`（health/activate 公开），sw 缓存排除同步 `/gateway/`。
+端点全挂 `/gateway/<端点>`：health（响应带 `boot` = 本网关进程启动时刻；前端据此区分「同网关刷新」与「换了网关」，见 web-ui.md §58）/ activate / shutdown / sessions / plugins / models / models/catalog / model / model-report / wsession[/stop] / diagnostics / session[/rename / .queued] / backend / project / file / file-cache / conversation / activity / events。根 `/api` 撤空（不保留旧路径、无兼容双挂）。**不变量**：网关与 `/backend/<label>/` 代理页面共享同一 origin，端点若挂根，被代理页面写死的绝对路径会误打网关自身；前缀化后写错只 404，永不误伤网关（「故意打网关」的预览页显式用 `/gateway/*`）。CLI 侧 `gatewayClient`/`conversationDisplay`/`server`、前端 `app.js`/`sw.js` 同此前缀。**唯一例外**：`readyPath` 缺省 `/api/system_stats` 是项目后端（ComfyUI）自身 API，勿迁移。总门鉴权 `startsWith('/gateway/')`（health/activate 公开），sw 缓存排除同步 `/gateway/`。
 
 **文件缓存 `file-cache`（附件与粘贴图片共用一条链）**：`<会话启动根>/.claude/file-cache/<dirKey>/`，`dirKey` = 会话 uuid（`getSessionId()` 的目录名；与 sid 解码所得同源），无会话归属（首页首送前上传）= `_pending`。**`dirKey` 不编码项目**，读写都必须带 `sid`（或 `project` label）让网关解析出会话启动根。
 
@@ -94,17 +94,21 @@
 - `port`：`0` = 网关从 8130 起探测顺延（上限 8160）；显式端口则固定。
 - `idleMinutes`：后端无活跃持续该时长被空闲回收（默认继承 `GATEWAY_IDLE_MINUTES`=10 分钟）。
 - `readyPath`：就绪探测路径（默认 `/api/system_stats`，项目后端自身 API，非网关前缀）。
+- 同一份 `backend` 段也可写在 `.claude/preview/<id>/card.json`（卡级后端）与 `preview.json` 的 `cards[i].backend`（应用卡后端），字段与解析全同（`parseBackendCfg` 单一解析器）；卡级 `cwd` 相对**卡目录**，缺省 = preview 目录。
 
 ### 6.2 网关机制（localGateway.ts）
 
 - `findProjects` 读 `<项目>/.claude/preview/preview.json`，有 `backend` → 项目附 `hasBackend` + `backendCfg`。
-- `GET /gateway/backend?label=`（受 token 保护）：ensureBackend（未起则 spawn）→ `{url, port, pid}`；无 backend → 404。
+- `GET /gateway/backend?label=[&card=<id>]`（受 token 保护）：带 `card` ⇒ 用该卡自身 `backend`（卡须 `enabled`，否则 404 `no backend for card`）；不带 ⇒ 项目级 backend。ensureBackend（未起则 spawn）→ `{url, port, pid, name, alreadyRunning}`；无 backend → 404。
+- **进程分键**：项目级 = `label`，卡级 = `label::<cardId>`（`backendProcesses`/`backendPending`/`backends.json` 同键），同项目多卡后端并行互不顶掉。
 - spawn：占位符展开（`expandBackendCmdArg`）→ cmd[0] resolve 到 cwd → `spawn`（env 加 PORT，日志落盘**该项目自己的** `<项目>/.claude/preview/backend.log`，5MB 截断轮转）；就绪探测窗口 120×200ms（容忍 ~22s 冷启动）。
 - **解释器解析 = 工作区内置便携 runtime**（`backendRuntimeDirs()`）：spawn 把 `<portableRoot>/.claude/runtime/{python,python/Scripts,node}` 前置进子进程 `PATH`，故 `cmd[0]` 裸名（`python`/`node`）命中的是内置 runtime 而非机器级安装或系统 PATH（目录不存在时该 PATH 条目被系统静默忽略）——工作区整体拷走即可用。**不变量：preview 后端不依赖机器 PATH 状态。**
 - spawn 失败（缺解释器 ENOENT 等）经 `child.on('error')` 记入 `spawnError` → 就绪探测循环即时退出 → 抛给路由回 500 JSON（网关不退出）。**不变量：单个后端配置失败不得终止网关进程。**
 - **就绪探测用原生 net socket**（`backendReady`）：编译产物 node:http 的 request 对 aiohttp/Python 后端会挂起，net 直连写 HTTP 头读响应状态（200/404 即就绪）。
 - 生命周期：`stopLocalGateway` 遍历 killAllBackends（child.kill + taskkill /F /T /PID 兜底）+ 停回收 timer；空闲回收每 60s（仅 `--gateway` 模式）。
-- 前端两级加载：① `/gateway/backend` 命中 → iframe 直连 + 60s 心跳防误回收；② 静态 preview；两者皆无 → 空态占位。
+- **`/backend/<label>/<首段>/…` 反代按首段选后端**：首段命中「已启用且有 backend」的卡（pane 卡 id / 应用卡 path 首段）⇒ 走该卡后端（键 `label::<id>`）；否则回落项目级后端。
+- **开机自动拉起**：`--gateway` 模式 `server.listen` 后读全局根 `<工作区根>/.claude/preview`（card.json 卡 + preview.json 应用卡），对 `enabled && backend` 的逐个 `ensureBackend`（键 `全局根 · 散装对话::<id>`）；失败只写日志，不影响网关。
+- 前端两级加载：① `/gateway/backend` 命中 → iframe 直连 + 60s 心跳防误回收；② 静态 preview；两者皆无 → 空态占位。卡有自身 `backend` 时第一级请求带 `card`，卡无 backend ⇒ 直接静态（回落项目级 backend 的旧链只用于**项目级**后端场景）。
 
 ### 6.3 后端进程生命周期解耦
 
@@ -149,11 +153,15 @@
 **一张卡 = preview 目录下一个子目录**（`.claude/preview/<id>/`），卡自包含（自己的页面、脚本、资源），元信息在该目录的 `card.json`：
 
 ```json
-{ "title": "PDF", "icon": "plug", "entry": "index.html", "order": 10, "default": true }
+{ "title": "PDF", "icon": "plug", "entry": "index.html", "order": 10, "default": true,
+  "backend": { "name": "PDF 服务", "cmd": ["python", "server.py"], "readyPath": "/" } }
 ```
 
 - 网关扫描 `readPreviewPaneCards(previewDir)`：只认**直接子目录**且含 `card.json`；`id` = 目录名（`/^[a-zA-Z0-9_-]{1,32}$/`）。字段校验：`title` 非空（缺失整条丢弃）、`entry` 缺省 `index.html` 且须为 `isPreviewRelPath` 安全相对路径、目标文件必须存在、`order` 数字（缺省 100，升序）、`default` 布尔。排序 = `order` 再 `id`；**至多一张 default**（首张为准），有卡表而未标 default 时前端回落排序首张。
+- **启用态**：卡目录内 `.disabled` 存在 = 停用（判据常量 `CUSTOMIZATION_DISABLED_MARKER`，与插件/技能同一载体）。`readPreviewPaneCards` 恒返回**全部**卡（停用卡仍要在 work 插件页列出），每卡带 `enabled`；`preview.json` 的 `cards` 同规则（`enabled` 取 `<preview>/<path 首段>/.disabled`）。
 - 响应随 `/gateway/preview-cards` 的 `previewCards` 字段下发（与 `cards`/`quoteActions` 同一请求、同一生命周期）。`[]` = 无卡表 ⇒ 该项目沿用传统单页预览（`/preview/<label>/index.html`），旧项目零改动。
+- 下发字段（`publicPreviewCard`）：`{id,title,icon,entry|path,order,default,enabled,backend:<bool>,backendName}`；**cmd/cwd/port/readyPath 不下发**（后端进程只由网关管理）。响应另带 `hasIndex`（该项目 preview 根是否有 `index.html`）与 `indexEnabled`（`<preview>/.disabled` 是否不存在），前端据此区分「传统单页预览」与「仅有卡」，并让传统页在管理页可启停。
+- **启停端点 `POST /gateway/preview-cards/enable`**（`{label, card, enabled:bool}`）：定位卡目录（pane 卡 = `<preview>/<card>`；应用卡 = `<preview>/<path 首段>`；保留 id `__index__` = 传统单页预览，`.disabled` 落 preview 根，仅在该根有 `index.html` 时成立），须落在 preview 根内，写/删 `.disabled`；响应 `{ok,label,card,enabled}`。停用卡不产生工具栏页签、不预热也不拉起其服务器；停用传统页即工具栏「预览」页签消失、无卡时预览区回空态。
 - **卡页资源不需要新路由**：`/preview/<label>/<id>/<entry>` 与后端代理 `/backend/<label>/<id>/<entry>` 均已支持嵌套路径；网关只做卡表发现，不改托管规则。
 - 前端契约（tab 条渲染、切卡、卡↔宿主消息）见 web-ui.md §58「预览多卡片」。
 
@@ -209,11 +217,21 @@ CLI 交互权限弹窗接网关中继——`src/bridge/gatewayPermissionRelay.ts
 - 已安装插件 = `.claude/plugins/<name>/.claude-plugin/plugin.json`（跳过 `data`/`marketplaces`/隐藏目录）
 - 已安装技能 = `.claude/skills/<name>/SKILL.md` frontmatter（name/description）
 - 公开市场 = `.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` 的 `plugins[]`（名称含 "skill" 归技能类）
-- 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,inst}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+- 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,inst,k,en}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+  - `k` = 目录名（显示名 `n` 可来自 frontmatter，启停/寻址必须用 `k`）。personal 项恒有；public 项**已安装的**也按名称从 personal 反查补齐（同一目录的两份展示），未安装的 public 项没有
+  - `en` = 启用态 `1/0`（同目录无 `.disabled` 标记）；**判据与加载侧共源** `utils/customizationToggle.ts`
 
-**项目技能变体 `GET /gateway/plugins?label=<项目>`**（2026-11-05）：供 work 右栏「技能」工具页。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/skills/*/SKILL.md` frontmatter，响应 `{label, skills:[{n,d,inst}]}`；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单**结构不合并**（只有 `{label, skills}`，不产 plugins/分类）；两处共用同一扫描函数 `readSkillDir`（只认含 `SKILL.md` 的子目录，名称/描述取 frontmatter，缺省回落目录名）。
+**项目变体 `GET /gateway/plugins?label=<项目>`**：供 work 右栏「技能」工具页与「插件」tab（项目自己的插件/技能/应用视角）。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/plugins/*/.claude-plugin/plugin.json` 与 `<项目根>/.claude/skills/*/SKILL.md`，响应 `{label, plugins:[{n,d,v,inst,k,en}], skills:[{n,d,inst,k,en}]}`（**只含已安装个人项，不出公开市场**）；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单结构不同（该项目维度不产 public 分类）；两处共用同一扫描函数 `readPluginDir` / `readSkillDir`（只认含清单文件的子目录，名称/描述取清单元数据，缺省回落目录名）。
 
-**定位 = 只读清单**（浏览/检索/已装标记）；装卸/启停/配置仍走 CLI `/plugin`（`ManagePlugins.tsx`），web 不做插件写操作。
+**启停端点 `POST /gateway/plugins/enable`**（`{kind:'plugins'|'skills', name:<目录名>, enabled:bool, label?}`）：
+
+- 状态载体 = **自定义件目录内的 `.disabled` 标记文件**（存在即停用、不存在即启用，默认启用向后兼容）。**不写 settings.json、不改 `plugin.json` / `SKILL.md`**（前者是厂家清单、后者是用户手写内容）。
+- 落点：无 `label` → `<便携根>/.claude/{plugins|skills}/<name>`；有 `label` → 项目根 `.claude/{plugins|skills}/<name>`（`kind` 两种都支持，work 插件页用项目维度）。
+- 校验：`name` 只接受直接子目录名（禁分隔符 / `..` / 首字符 `.`）；目录须存在，且 `plugins` 项须有 `.claude-plugin/plugin.json`、`skills` 项须有 `SKILL.md`；否则 400/404。
+- 加载侧门控（两条，共源判据）：`loadSkillsFromSkillsDir`（技能目录整条跳过）与 `loadSkillsDirPlugins`（`createPluginFromPath` 的 enabled 参数）→ 停用的插件其命令/技能/agents/hooks/MCP 全不进 enabled 集。
+- 热生效：`skillChangeDetector` 把就地插件根 `.claude/plugins` 也纳入监听（`marketplaces/`、`data/` 整棵忽略），只对插件目录内的 `.disabled` 变更判为 `pluginChanged`；订阅方 `useSkillsChange` 走 `refreshActivePlugins(setAppState)`（与 `/reload-plugins` 同链），技能标记仍走原技能缓存清理。
+
+**定位 = 清单 + 启停**；装卸/其余配置仍走 CLI `/plugin`（`ManagePlugins.tsx`），web 不安装/卸载。
 
 ## 11. `/clients` 下行控制消息路由（按会话精确转发给在线 CLI）
 

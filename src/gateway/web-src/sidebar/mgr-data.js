@@ -42,6 +42,17 @@ import { refreshCard } from '../engine/registry.js'
     if (!data || !Array.isArray(data.skills)) throw new Error((data && data.error) || 'bad response')
     return data.skills
   }
+  // 项目插件清单（work 插件 tab）：与技能同一个端点，一次返回 {plugins, skills}（均只含已安装个人项）。
+  // 不做模块内缓存——work tab 每次项目切换由 work-plugins 自行持有并刷新（启停后要拿服务端真值）。
+  async function loadProjectPlugins(label) {
+    if (!label) return { plugins: [], skills: [] }
+    const res = await fetch(apiUrl('/gateway/plugins?label=' + encodeURIComponent(label)))
+    const data = await res.json()
+    if (!data || !Array.isArray(data.plugins) || !Array.isArray(data.skills)) {
+      throw new Error((data && data.error) || 'bad response')
+    }
+    return { plugins: data.plugins, skills: data.skills }
+  }
   // 项目技能按 label 的进程内缓存（+ 工具栏与 @ 搜索共用一份）：{list, loaded, loading, err}。
   // ensureProjectSkills 同一 label 只发一次请求（在途期间复用同一 Promise），失败记 err 并在下次调用时重试。
   const PROJ_SKILLS = new Map()
@@ -153,6 +164,7 @@ export {
   loadMgrData,
   ensureProjectSkills,
   loadModelsData,
+  loadProjectPlugins,
   loadProjectSkills,
   modelProviderOf,
   projSkillsOf,

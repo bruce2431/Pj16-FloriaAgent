@@ -34,6 +34,10 @@ import { navigate } from '../chat/route.js'
   let pvCards = []
   let pvCardsLabel = ''
   let pvCardsReady = false
+  let pvHasIndex = false
+  let pvIndexEnabled = false
+  // 传统单页预览的管理页保留 id：与网关 POST /gateway/preview-cards/enable 的保留键一致
+  const PREVIEW_INDEX_CARD_ID = '__index__'
   let pvCardsInflight = null
   let pvCardsInflightLabel = ''
   let pvCardPayloads = [] // [{ label, card, payload }]：卡→卡跳转的交接数据，目标帧 load 时消费一次
@@ -49,6 +53,11 @@ import { navigate } from '../chat/route.js'
         entry: typeof c.entry === 'string' && c.entry ? c.entry.trim() : 'index.html',
         order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
         default: c.default === true,
+        // 启用态 = 卡目录内无 .disabled（网关判定）；停用卡不进 tab / 不挂载，但留在卡表里供管理页启用。
+        enabled: c.enabled !== false,
+        // 卡级后端声明（网关下发布尔 + 显示名，不下发 cmd/cwd）：有后端卡 /gateway/backend 带 card 拉起。
+        hasBackend: c.backend === true,
+        backendName: typeof c.backendName === 'string' ? c.backendName : '',
       }))
       .filter((c) => {
         if (!/^[a-zA-Z0-9_-]{1,32}$/.test(c.id) || !c.title || seen.has(c.id)) return false
@@ -56,15 +65,40 @@ import { navigate } from '../chat/route.js'
         return true
       })
   }
-  function registerPreviewCards(label, cards) {
+  function registerPreviewCards(label, cards, hasIndex, indexEnabled) {
     if (!label) return
     pvCards = normPreviewCards(cards)
     pvCardsLabel = label
+    pvHasIndex = hasIndex === true
+    pvIndexEnabled = pvHasIndex && indexEnabled !== false
     pvCardsReady = true
   }
   // 当前项目的卡表（异 label = 空表，防串项目）。调用方按需 clone，不写回本表。
   function previewCardsFor(label) {
     return label && pvCardsLabel === label ? pvCards : []
+  }
+  // 已启用的卡（tab 条 / 卡选择 / 切换的唯一数据源）：停用卡只在管理页出现。
+  function enabledPreviewCardsFor(label) {
+    return previewCardsFor(label).filter((c) => c.enabled)
+  }
+  // 传统单页预览 .claude/preview/index.html 是否可视（存在且未被停用；与「有已启用卡」并列判可预览）
+  function previewHasIndexPage(label) {
+    return !!label && pvCardsLabel === label && pvHasIndex && pvIndexEnabled
+  }
+  // 传统单页预览的管理页条目（保留 id，启停走同一端点）。无该页 → null。
+  function previewLegacyIndexCard(label) {
+    if (!label || pvCardsLabel !== label || !pvHasIndex) return null
+    return {
+      id: PREVIEW_INDEX_CARD_ID,
+      title: '预览页',
+      icon: 'dshFile',
+      entry: 'index.html',
+      order: -1,
+      default: false,
+      enabled: pvIndexEnabled,
+      hasBackend: false,
+      backendName: '',
+    }
   }
   function previewCardsReadyFor(label) {
     return !!label && pvCardsLabel === label && pvCardsReady
@@ -74,7 +108,7 @@ import { navigate } from '../chat/route.js'
   }
   // 归一化激活卡：命中现有表则原样；否则回落 default（无 default 取排序首张）；无卡表 = ''。
   function previewCardNormId(label, id) {
-    const list = previewCardsFor(label)
+    const list = enabledPreviewCardsFor(label)
     if (!list.length) return ''
     if (id && list.some((c) => c.id === id)) return id
     const d = list.find((c) => c.default) || list[0]
@@ -168,11 +202,11 @@ import { navigate } from '../chat/route.js'
         if (seq !== extCardsSeq) return
         registerExtCards(label, d && d.cards, true)
         registerQuoteActions(label, d && d.quoteActions)
-        registerPreviewCards(label, d && d.previewCards)
+        registerPreviewCards(label, d && d.previewCards, d && d.hasIndex, d && d.indexEnabled)
       })
       .catch(() => {
         // 清单拿不到 = 该项目无外部卡/无浮窗动作/无预览卡（空表是正常态，不猜不兜底）
-        if (seq === extCardsSeq) registerPreviewCards(label, [])
+        if (seq === extCardsSeq) registerPreviewCards(label, [], false, false)
       })
   }
 
@@ -184,9 +218,10 @@ import { navigate } from '../chat/route.js'
   // 项目后端预热：右栏「工具栏」一打开就拉起该项目 backend，免去「点了第一个卡 tab 才开始 spawn」的等待。
   // 与 mountPreview 的 ① 分支同一请求（/gateway/backend 是唯一 spawn 口，未声明 backend 的项目 404 静默）；
   // ensureBackend 自带存活复用与 in-flight 去重，重复调用不会产生第二个进程。
-  function warmProjectBackend(label) {
+  function warmProjectBackend(label, cardId) {
     if (!label) return
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    const q = cardId ? `&card=${encodeURIComponent(cardId)}` : ''
+    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${q}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .catch(() => {})
   }
 
@@ -230,8 +265,9 @@ import { navigate } from '../chat/route.js'
       return
     }
     container.__pvWaitLabel = ''
-    const list = previewCardsFor(label)
-    const card = list.length ? (previewPaneCardDef(label, cardId) || list.find((c) => c.default) || list[0]) : null
+    // 卡选择只在**已启用**卡里做：停用卡不挂载（点它的 tab 也已在渲染层消失）。
+    const list = enabledPreviewCardsFor(label)
+    const card = list.length ? (list.find((c) => c.id === cardId) || list.find((c) => c.default) || list[0]) : null
     const cardActual = card ? card.id : ''
     if (hard && prevLabel) {
       // 换项目 = 上一项目的整池帧彻底拆除：逐帧当场注销（不等 isConnected 失格）
@@ -338,8 +374,11 @@ import { navigate } from '../chat/route.js'
       // 点击关闭（可提前进入）：focus iframe + 移除覆盖层；首次点击把键盘焦点交给 iframe 内部
       if (overlay) overlay.addEventListener('click', () => { frame.focus(); dismiss() })
     }
-    // ① Web 容器：backend 优先（/gateway/* 受网关 token 校验）
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    // ① Web 容器：backend 优先（/gateway/* 受网关 token 校验）。
+    // 卡自己声明了 backend ⇒ 带 card 拉起该卡专属后端；无卡级声明 ⇒ 走项目级 backend（旧链），
+    // 项目也没声明则 404 → 静态 preview。
+    const cardQ = card && card.hasBackend ? `&card=${encodeURIComponent(card.id)}` : ''
+    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (!(d && d.url)) throw new Error('no-backend')
@@ -352,12 +391,12 @@ import { navigate } from '../chat/route.js'
         mount(remotePage ? `/backend/${encodeURIComponent(label)}/${rel}` : d.url + rel, d.name, !!d.alreadyRunning)
         if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
         window.__backendHeartbeat = setInterval(() => {
-          fetch(`/gateway/backend?label=${encodeURIComponent(label)}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
+          fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
         }, 60000)
       })
       .catch(() => {
-        // ② 静态 preview；项目未申报 preview 目录 → 空态
-        if (!hasPreview) { mountEmpty(); return }
+        // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
+        if (!hasPreview || (!card && !previewHasIndexPage(label))) { mountEmpty(); return }
         const previewSrc = card
           ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(card.id)}/${cardEntryPath(card)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
           : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
@@ -386,9 +425,12 @@ import { navigate } from '../chat/route.js'
 export {
   activePreviewFrame,
   clearRailExt,
+  enabledPreviewCardsFor,
   ensurePreviewDecls,
   mountPreview,
   openProjectPreview,
+  previewHasIndexPage,
+  previewLegacyIndexCard,
   previewPaneCardDef,
   previewCardNormId,
   previewCardsFor,

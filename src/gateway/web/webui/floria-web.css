@@ -164,7 +164,10 @@ html[data-theme="dark"] {
 .mgr-search { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 9px 16px; margin-bottom: 22px; max-width: 420px; transition: border-color 0.15s, box-shadow 0.15s; }
 .mgr-search:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(77, 107, 254, 0.12); }
 .mgr-search svg { width: 16px; height: 16px; color: var(--text-2); flex: none; }
-.mgr-search input { border: none; outline: none; flex: 1; font-size: 14px; background: transparent; color: var(--text); }
+.mgr-search input { border: none; outline: none; flex: 1; font-size: 14px; background: transparent; color: var(--text); padding: 0; }
+/* 宿主全局 input:focus-visible 的蓝色描边会套在胶囊内部形成双环（styles.css 后加载、同特指度）——
+   本选择器提高一级特指度盖住；聚焦反馈由 .mgr-search:focus-within 的边框/外光晕统一表达。 */
+.mgr-search input:focus-visible { outline: none; }
 .mgr-search input::placeholder { color: var(--text-3); }
 .mgr-cats { display: flex; gap: 8px; margin-bottom: 16px; }
 .mgr-cat { padding: 5px 16px; border-radius: 999px; font-size: 13px; background: var(--hover); color: var(--text-2); transition: background 0.15s, color 0.15s; }

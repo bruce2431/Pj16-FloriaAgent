@@ -1,4 +1,5 @@
 import chokidar, { type FSWatcher } from 'chokidar'
+import { existsSync } from 'node:fs'
 import * as platformPath from 'path'
 import { getAdditionalDirectoriesForClaudeMd } from '../../bootstrap/state.js'
 import {
@@ -19,7 +20,9 @@ import { registerCleanup } from '../cleanupRegistry.js'
 import { logForDebugging } from '../debug.js'
 import { getFsImplementation } from '../fsOperations.js'
 import { executeConfigChangeHooks, hasBlockingResult } from '../hooks.js'
+import { getPluginsDirectory } from '../plugins/pluginDirectories.js'
 import { createSignal } from '../signal.js'
+import { CUSTOMIZATION_DISABLED_MARKER } from '../customizationToggle.js'
 
 /**
  * Time in milliseconds to wait for file writes to stabilize before processing.
@@ -68,7 +71,11 @@ let initialized = false
 let disposed = false
 let dynamicSkillsCallbackRegistered = false
 let unregisterCleanup: (() => void) | null = null
-const skillsChanged = createSignal()
+/** 就地插件根（.claude/plugins）：仅用来忽略其下系统目录，并识别插件标记变更。 */
+let pluginsWatchPath: string | null = null
+/** 变更事件载荷：pluginChanged = 变化来自插件（启停标记），订阅方须走全量插件刷新。 */
+export type SkillsChangeEvent = { pluginChanged: boolean }
+const skillsChanged = createSignal<[SkillsChangeEvent]>()
 
 // Test overrides for timing constants
 let testOverrides: {
@@ -95,11 +102,12 @@ export async function initialize(): Promise<void> {
       // because clearCommandsCache would call clearSkillCaches which
       // wipes out the dynamic skills we just loaded
       clearCommandMemoizationCaches()
-      // Notify listeners that skills changed
-      skillsChanged.emit()
+      // Notify listeners that skills changed (dynamic skills are skill-level, not plugin-level)
+      skillsChanged.emit({ pluginChanged: false })
     })
   }
 
+  pluginsWatchPath = getPluginsDirectory()
   const paths = await getWatchablePaths()
   if (paths.length === 0) return
 
@@ -122,7 +130,17 @@ export async function initialize(): Promise<void> {
     ignored: (path, stats) => {
       if (stats && !stats.isFile() && !stats.isDirectory()) return true
       // Ignore .git directories
-      return path.split(platformPath.sep).some(dir => dir === '.git')
+      if (path.split(platformPath.sep).some(dir => dir === '.git')) return true
+      // 插件根的 marketplaces/（内含 git 仓库）与 data/（插件数据）整棵不看：
+      // 启停标记只落在 plugins/<name>/.disabled 这一层。
+      if (pluginsWatchPath) {
+        const rel = platformPath.relative(pluginsWatchPath, path)
+        if (rel && !rel.startsWith('..') && !platformPath.isAbsolute(rel)) {
+          const top = rel.split(platformPath.sep)[0]
+          if (top === 'marketplaces' || top === 'data') return true
+        }
+      }
+      return false
     },
     ignorePermissionErrors: true,
     usePolling: USE_POLLING,
@@ -220,6 +238,17 @@ async function getWatchablePaths(): Promise<string[]> {
     }
   }
 
+  // 就地插件根（.claude/plugins）：管理页启停开关 = 目录内 .disabled 标记，
+  // 需与技能目录一样热生效（depth 2 足够覆盖 plugins/<name>/.disabled）。
+  if (pluginsWatchPath) {
+    try {
+      await fs.stat(pluginsWatchPath)
+      paths.push(pluginsWatchPath)
+    } catch {
+      // Path doesn't exist, skip it
+    }
+  }
+
   // Additional directories (--add-dir) skills
   for (const dir of getAdditionalDirectoriesForClaudeMd()) {
     const additionalSkillsPath = platformPath.join(dir, '.claude', 'skills')
@@ -271,11 +300,29 @@ function scheduleReload(changedPath: string): void {
       )
       return
     }
-    clearSkillCaches()
-    clearCommandsCache()
-    resetSentSkillNames()
-    skillsChanged.emit()
+    // 插件启停标记（.claude/plugins/<name>/.disabled，或就地插件目录内的同名标记）：
+    // 这是插件集合身份的变化，须走 refreshActivePlugins 全量刷新（订阅方负责），
+    // 这里不半截清理；技能标记/内容变更仍走原有的技能缓存清理。
+    const pluginChanged = paths.some(isPluginMarkerChange)
+    if (!pluginChanged) {
+      clearSkillCaches()
+      clearCommandsCache()
+      resetSentSkillNames()
+    }
+    skillsChanged.emit({ pluginChanged })
   }, testOverrides?.reloadDebounce ?? RELOAD_DEBOUNCE_MS)
+}
+
+/** 变更路径是否落在「插件目录的启停标记」上（判据：同目录有 .claude-plugin/plugin.json）。 */
+function isPluginMarkerChange(path: string): boolean {
+  if (platformPath.basename(path) !== CUSTOMIZATION_DISABLED_MARKER) return false
+  return existsSync(
+    platformPath.join(
+      platformPath.dirname(path),
+      '.claude-plugin',
+      'plugin.json',
+    ),
+  )
 }
 
 /**

@@ -135,39 +135,39 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
   // 应用详情的写回链（preview.json 的 repo 字段）要按 label 调 /gateway/file*——取 label 走本出口，
   // 不新增第二处字面量。
   const globalLabel = () => GLOBAL_LABEL
-  const APPS_KEY = 'appsEnabled' // floria-ui-v1 段名：已启用应用 id 数组
   let APP_CATALOG = [] // 全部可用应用（normExtCards 产物；插件卡「应用」列表数据源）
   let APP_TABS = [] // 已启用的应用 tab（侧栏；openCard 可解析）
-  let APPS_ENABLED = new Set()
   let appSeq = 0
 
-  function loadEnabledApps() {
-    const d = readUI()
-    const list = d && Array.isArray(d[APPS_KEY]) ? d[APPS_KEY] : []
-    APPS_ENABLED = new Set(list.filter((x) => typeof x === 'string'))
-  }
-  function saveEnabledApps() {
-    patchUI({ [APPS_KEY]: [...APPS_ENABLED] })
-  }
   function appCatalog() {
     return APP_CATALOG
   }
+  // 启用态真源 = 卡目录 / 应用目录内的 .disabled 标记（网关随清单下发 enabled），跨浏览器一致。
+  // 目录未就绪（无该应用）= 未启用。
   function isAppEnabled(id) {
-    return APPS_ENABLED.has(id)
+    const c = APP_CATALOG.find((x) => x.id === id)
+    return !!c && c.enabled !== false
   }
-  // 启用/停用唯一写口：改集合 → 落盘 → 重建侧栏 tab。返回落定后的启用态（调用方据此重渲按钮）。
-  function setAppEnabled(id, on) {
+  // 启用/停用唯一写口：落盘归网关（POST preview-cards/enable → 卡目录 .disabled），回来后整份刷新
+  // 目录并按新表重建 tab。失败抛错交给调用方回滚（不本地先改状态，避免与盘上真值漂移）。
+  async function setAppEnabled(id, on) {
     if (typeof id !== 'string' || !id) return false
-    if (on) APPS_ENABLED.add(id)
-    else APPS_ENABLED.delete(id)
-    saveEnabledApps()
-    applyAppTabs()
-    tabRefresh()
-    return APPS_ENABLED.has(id)
+    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
+    const res = await fetch('/gateway/preview-cards/enable' + q, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: GLOBAL_LABEL, card: id, enabled: !!on }),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'HTTP ' + res.status)
+    }
+    await loadAppCatalog()
+    return isAppEnabled(id)
   }
   // 目录 → 侧栏 tab（只取已启用者）。id 加 `app:` 前缀，与第一方裸词 id、EXT 的 `ext:` 零撞车。
   function applyAppTabs() {
-    APP_TABS = APP_CATALOG.filter((c) => APPS_ENABLED.has(c.id)).map((c) => ({
+    APP_TABS = APP_CATALOG.filter((c) => c.enabled !== false).map((c) => ({
       id: `app:${c.id}`,
       title: c.title,
       tip: `${c.title} · 应用（工作区根）`,
@@ -186,7 +186,6 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
   // 拉取点（唯一）：hideGate 补拉链调一次；断连重连自愈走同点。seq 守卫 = 只有最后一次响应可落目录。
   // 取不到 = 工作区根未申报应用（不猜不兜底，目录照旧为空）。
   function syncGlobalPlugins() {
-    loadEnabledApps() // 启用集合恒从盘上读（唯一真源；本函数也是「刷新/重连」的复位点）
     const cached = readUI()
     const e = cached && cached.extDecls ? cached.extDecls[GLOBAL_LABEL] : null
     if (e && Array.isArray(e.cards)) setAppCatalog(e.cards) // 缓存快照先落（列表即刻可用）
@@ -194,8 +193,12 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
       applyAppTabs()
       tabRefresh()
     }
+    loadAppCatalog()
+  }
+  // 拉一次工作区根应用清单（seq 守卫 = 只有最后一次响应可落目录；失败保持现有目录）。
+  function loadAppCatalog() {
     const seq = ++appSeq
-    fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== appSeq) return

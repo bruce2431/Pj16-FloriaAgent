@@ -12,6 +12,10 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
   let GATEWAY = false
   let GATEWAY_REVIEW = false // 审阅模式（server.mjs REVIEW_GATEWAY）：health 带 review 标志，token 门不建真 WS 直接走视觉流程
   let HOT_RELOAD = false // 开发审阅热重载（server.mjs HOT_RELOAD）：health 带 hotReload 标志，建 SSE 监听 public 变化自动刷新
+  // 本网关进程启动时刻（health.boot）：界面判「同一网关刷新」与「换了网关」的唯一凭据
+  // （work 工具栏开合只在同进程内保持，见 work-mount.initWork）。
+  let gwBoot = 0
+  const gatewayBootAt = () => gwBoot
   let gateAwait = false // token 门态：网关 token 验证通过前锁定为全空白 + 中间输入框
   let gateVerified = false // 网关 token/cookie 已验证（WS onopen 或 REVIEW 直置；声明提前供 needToken 用）
   // 2026-08-28 token 出 URL：gToken 仅作首链/门输入的附加凭据；已授权设备刷新后 gToken 为空，
@@ -319,6 +323,7 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       if (d.mode === 'gateway') GATEWAY = true
       if (d.review) GATEWAY_REVIEW = true
       if (d.hotReload) HOT_RELOAD = true
+      if (typeof d.boot === 'number') gwBoot = d.boot
     } catch { /* 非网关环境（静态托管）忽略 */ }
   }
 
@@ -345,6 +350,7 @@ export {
   gToken,
   gateAwait,
   gateVerified,
+  gatewayBootAt,
   gatewayCss,
   gws,
   initGateway,

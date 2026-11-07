@@ -15,7 +15,7 @@
     // work 模式（2026-09-25）：sbMode = 侧栏模式（chat=现状 / work=Prism 式工作区）；
     // projects = /gateway/sessions 的 groups（全部项目，含无会话者，chat 侧栏不用）；
     // workProj = 当前项目 label（= 槽键，见下 workSlots）；workFile = 打开的文件（项目内相对路径）。
-    // wkPreview = 预览列（最右，常驻）；wkMainTab = 下沉区当前 tab（'chat' 助手 / 'file' 编辑区），同时只显一个；
+    // wkPreview = 预览列（最右，常驻）；wkMainTab = 下沉区当前 tab（'chat' 助手 / 'file' 编辑区 / 'plugins' 项目插件页），同时只显一个；
     // wkAssist = 聊天 tab 是否在场；wkPrevW = 预览列宽 px（拖分界条调，见 work.js applyWorkCols）——**全局，不按项目分槽**
     // （是窗口几何，不是项目内容）。
     // wkAssistMode = 助手形态（'side'=靠栏 = 聊天 tab 内容 / 'float'=悬浮卡 / 'slim'=收敛输入栏）；

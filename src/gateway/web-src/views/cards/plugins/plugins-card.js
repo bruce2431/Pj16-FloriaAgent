@@ -59,7 +59,7 @@ import { apiUrl } from '../../../engine/gateway.js'
       onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
       onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
       onItem(key) { openDetail(key) },
-      onAction(key) { toggleApp(key) },
+      onAction(key) { onRowAction(key) },
       onRetry() { loadMgrData(true) },
     })
     renderMgrGrid()
@@ -96,6 +96,9 @@ import { apiUrl } from '../../../engine/gateway.js'
       items: rows.map(pluginItem),
       empty: `没有匹配的${label}`,
       onItem: openDetail,
+      // 个人行动作位是启停开关（无 action.key 的公开市场行不会调到 onAction）；
+      // 网格重渲走本函数，onAction 必须在这里给，否则点了只会 stopPropagation、什么也不发生。
+      onAction: onRowAction,
     }
   }
 
@@ -117,22 +120,89 @@ import { apiUrl } from '../../../engine/gateway.js'
     }
   }
 
-  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装}；动作位是纯状态指示（点击落到卡身、进详情）。
+  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装, k 目录名, en 启用态}。
+  // 个人（本地已安装）行 = 真开关（key 存在 → MgrUI 走 onAction）；公开市场行无 k，仍是纯状态指示。
   function pluginItem(x) {
+    const toggleable = !!x.k
+    const on = toggleable ? x.en !== 0 : !!x.inst
     return {
       key: x.n,
       name: x.n,
       desc: x.d || '暂无描述',
-      action: { on: !!x.inst, title: x.inst ? '已安装' : '未安装' },
+      action: toggleable
+        ? { on, key: x.n, title: on ? '已启用（点击停用）' : '已停用（点击启用）' }
+        : { on, title: x.inst ? '已安装' : '未安装' },
     }
   }
 
-  // 应用启停：启用态只影响本网格（侧栏 tab 由 setAppEnabled 内 renderMgrTabs 刷新）；详情页内切换则整页重渲。
+  // 行内动作分发：应用 → 应用启停；插件/技能个人行 → 目录标记启停；其余（公开市场）无动作。
+  function onRowAction(key) {
+    const v = state.mgrView
+    if (v.kind === 'apps') { toggleApp(key); return }
+    toggleCustomization(v.kind, key)
+  }
+
+  // 按名称找可启停的个人行：先查当前 cat，再兜底遍历该 kind 的全部 cat。
+  // 搜索/切 cat 与网格重渲之间可能短暂错位，找不到就明说（不静默 return——静默会让点击看起来毫无反应）。
+  function findTogglableRow(kind, key) {
+    const groups = (MGR && MGR[kind]) || {}
+    const v = state.mgrView
+    const order = [v.cat, ...Object.keys(groups).filter((c) => c !== v.cat)]
+    for (const cat of order) {
+      const arr = groups[cat]
+      if (!Array.isArray(arr)) continue
+      const hit = arr.find((r) => r.n === key && r.k)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  // 插件/技能启停：状态 = 目录内 .disabled 标记（后端 POST /gateway/plugins/enable 落/删）。
+  // 先乐观改本地 en 即时反馈，失败回滚并 toast。开关只影响「暴露给 agent」——
+  // 停用后不再进命令/技能/agents/hooks/MCP 集，下一条消息即生效（CLI 侧监听标记热刷）。
+  async function toggleCustomization(kind, key) {
+    const x = findTogglableRow(kind, key)
+    if (!x) { toast('未找到该条目（请刷新页面后重试）'); return }
+    const next = x.en === 0
+    // 同一个安装目录同时出现在「公开」（已安装）与「个人」两份清单里，两份都要同步，
+    // 否则切完回个人页看到的还是旧状态。
+    const setEn = (val) => {
+      const groups = (MGR && MGR[kind]) || {}
+      for (const cat of Object.keys(groups)) {
+        const arr = groups[cat]
+        if (!Array.isArray(arr)) continue
+        for (const r of arr) if (r.k === x.k) r.en = val
+      }
+    }
+    setEn(next ? 1 : 0)
+    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender() } else renderMgrGrid()
+    try {
+      const res = await fetch(apiUrl('/gateway/plugins/enable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, name: x.k, enabled: next }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'HTTP ' + res.status)
+      }
+    } catch (err) {
+      setEn(next ? 0 : 1)
+      if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender() } else renderMgrGrid()
+      toast('切换失败：' + (err && err.message ? err.message : String(err)))
+    }
+  }
+
+  // 应用启停：落盘归网关（卡目录 .disabled），回来后按服务端真值重渲；失败 toast、按钮保持原态。
+  // 侧栏 tab 由 setAppEnabled 内的目录刷新重建；详情页内切换则整页重渲。
   function toggleApp(key) {
     if (!key) return
     setAppEnabled(key, !isAppEnabled(key))
-    if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
-    renderMgrGrid()
+      .then(() => {
+        if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender(); return }
+        renderMgrGrid()
+      })
+      .catch((e) => toast('切换失败：' + ((e && e.message) || String(e))))
   }
 
   // ---------- 详情页（卡内子页；返回 = 清 MGR_DETAIL 重渲） ----------
@@ -156,13 +226,16 @@ import { apiUrl } from '../../../engine/gateway.js'
     if (!x) return null
     const isSkill = kind === 'skills'
     const personal = v.cat === 'personal'
+    // 个人行带 k（目录名）= 可启停；状态语义从「已安装」换成「已启用/已停用」。
+    const toggleable = !!x.k
+    const enabled = toggleable ? x.en !== 0 : !!x.inst
     return {
       kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
-      name: x.n, desc: x.d || '', ver: x.v || '', inst: !!x.inst,
+      name: x.n, desc: x.d || '', ver: x.v || '', inst: enabled, toggleable,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: personal ? '本地已安装' : '公开市场',
-      path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.n}` : '',
-      installedLabel: x.inst ? '已安装' : '未安装',
+      path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}` : '',
+      installedLabel: toggleable ? (enabled ? '已启用' : '已停用') : (x.inst ? '已安装' : '未安装'),
     }
   }
 
@@ -176,10 +249,13 @@ import { apiUrl } from '../../../engine/gateway.js'
       ['状态', it.installedLabel],
     ]
     if (it.path) info.push(['位置', it.path])
-    // 详情头动作位：应用 = 真开关（key = appId）；插件/技能 = 状态指示（无 key，不可点）。
+    // 详情头动作位：应用 = 真开关（key = appId）；个人插件/技能 = 真开关（key = 名称）；
+    // 公开市场条目 = 纯状态指示（无 key，不可点）。
     const action = it.appId
       ? { on: it.inst, key: it.appId, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
-      : { on: it.inst, title: it.installedLabel }
+      : it.toggleable
+        ? { on: it.inst, key: it.name, title: it.inst ? '已启用（点击停用）' : '已停用（点击启用）' }
+        : { on: it.inst, title: it.installedLabel }
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
@@ -192,7 +268,7 @@ import { apiUrl } from '../../../engine/gateway.js'
       info,
       extraHtml: repoRowHtml(it),
       onBack() { MGR_DETAIL = null; ctx.rerender() },
-      onAction(key) { toggleApp(key) },
+      onAction(key) { if (it.appId) toggleApp(key); else toggleCustomization(it.kind, key) },
       onMounted(host) { bindRepoEdit(host, it, ctx) },
     })
   }

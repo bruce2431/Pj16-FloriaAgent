@@ -19,6 +19,8 @@ import { gToken } from './gateway.js'
         host: typeof c.host === 'string' ? c.host : '',
         tab: c.tab !== false,
         repo: typeof c.repo === 'string' ? c.repo.trim() : '',
+        // 启用态由网关按目录标记下发（缺省 = 启用）；postMessage 来源无此字段 ⇒ 恒启用
+        enabled: c.enabled !== false,
       }))
       .filter((c) => /^[a-zA-Z0-9_-]{1,32}$/.test(c.id) && c.title && c.host === 'view' && isExtPath(c.path))
   }

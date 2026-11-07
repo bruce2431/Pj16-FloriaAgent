@@ -76,7 +76,7 @@ import { state } from './ui-state.js'
     const bool = (k) => (s && typeof s[k] === 'boolean' ? s[k] : def[k])
     const arr = (k) => (s && Array.isArray(s[k]) ? s[k].filter((x) => typeof x === 'string' && x) : def[k].slice())
     state.wkTab = str('wkTab', ['files', 'chat'])
-    state.wkMainTab = str('wkMainTab', ['chat', 'file'])
+    state.wkMainTab = str('wkMainTab', ['chat', 'file', 'plugins'])
     state.wkAssist = bool('wkAssist')
     state.wkAssistMode = str('wkAssistMode', ['side', 'float', 'slim'])
     state.wkAssistH = num('wkAssistH')
@@ -99,6 +99,28 @@ import { state } from './ui-state.js'
     stashWorkSlot() // 当前 live 视图先归入自己项目的槽（唯一写口），与下面同一次 patch
     patchUI({ sbMode: state.sbMode, workProj: state.workProj, wkPrevW: state.wkPrevW, workSlots: state.workSlots })
   }
+  // 工具栏开合的生命周期 = **同一网关进程运行期内**（用户定案）：存档里的 gwBoot 是上次写盘时网关的
+  // 启动时刻（/gateway/health 的 boot）。本次 boot 与存档不同 ⇒ 全部项目槽的工具栏复位折叠
+  // （wkPreview=false / wkPvTab=''）；相同 ⇒ 原样保持（刷新不清打开状态）。boot 未知（旧网关 / 非网关
+  // 环境）= 不动现状。调用点 = initWork（loadWork 之后、落地之前）。
+  function resetWorkPreviewOnBoot(bootAt) {
+    if (!bootAt) return
+    let prev = 0
+    try {
+      const raw = localStorage.getItem(UI_KEY)
+      const d = raw ? JSON.parse(raw) : null
+      if (d && typeof d.gwBoot === 'number') prev = d.gwBoot
+    } catch { /* 存储不可用：按首次处理 */ }
+    patchUI({ gwBoot: bootAt })
+    if (prev === bootAt) return
+    for (const s of Object.values(state.workSlots)) {
+      if (!s || typeof s !== 'object') continue
+      s.wkPreview = false
+      s.wkPvTab = ''
+    }
+    state.wkPreview = false
+    state.wkPvTab = ''
+  }
   // 置顶集唯一写口（togglePin 调用；read-modify-write 由 patchUI 保证不碰其它段）。
   function savePins() {
     patchUI({ wkPins: state.wkPins })
@@ -113,7 +135,7 @@ import { state } from './ui-state.js'
     if (Array.isArray(d.wkChats)) slot.wkChats = d.wkChats.filter((x) => typeof x === 'string' && x)
     if (Array.isArray(d.wkFiles)) slot.wkFiles = d.wkFiles.filter((x) => typeof x === 'string' && x)
     if (typeof d.workFile === 'string') slot.workFile = d.workFile
-    if (d.wkMainTab === 'chat' || d.wkMainTab === 'file') slot.wkMainTab = d.wkMainTab
+    if (d.wkMainTab === 'chat' || d.wkMainTab === 'file' || d.wkMainTab === 'plugins') slot.wkMainTab = d.wkMainTab
     if (typeof d.wkAssist === 'boolean') slot.wkAssist = d.wkAssist
     if (d.wkAssistMode === 'side' || d.wkAssistMode === 'float' || d.wkAssistMode === 'slim') slot.wkAssistMode = d.wkAssistMode
     if (typeof d.wkAssistH === 'number' && d.wkAssistH > 0) slot.wkAssistH = d.wkAssistH
@@ -160,6 +182,7 @@ export {
   loadWorkSlot,
   patchUI,
   readUI,
+  resetWorkPreviewOnBoot,
   saveMgrView,
   savePins,
   saveWork,

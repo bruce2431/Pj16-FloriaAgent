@@ -27,8 +27,8 @@
   <link rel="stylesheet" href="/vendor/katex/katex.min.css?v=473" />
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
        app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
-  <link rel="stylesheet" href="/webui/floria-web.css?v=3" />
-  <link rel="stylesheet" href="/styles.css?v=667" />
+  <link rel="stylesheet" href="/webui/floria-web.css?v=4" />
+  <link rel="stylesheet" href="/styles.css?v=676" />
 </head>
 <body>
 <div id="app">
@@ -109,6 +109,8 @@
           <div class="wk-tabs">
             <button class="wk-tab on" data-wktab="files">文件</button>
             <button class="wk-tab" data-wktab="chat">聊天</button>
+            <!-- 插件入口：与 chat 侧栏的「插件」tab 同位置；内容仍渲在下沉区第三态（#wk-plugins-pane） -->
+            <button class="wk-tab" data-wkplugins>插件</button>
             <div class="wk-tools">
               <button id="wk-new" class="wk-ico" title="新建聊天" aria-haspopup="menu"></button>
               <div id="wk-new-pop" class="popup" hidden>
@@ -208,6 +210,11 @@
       </div>
       <div class="wk-ed-body" id="wk-ed-body"></div>
     </section>
+
+    <!-- 插件页（work 下沉区第三态，2026-11-07 用户定案）：与 #work-editor / #session-card 同一格三选一
+         （.wk-show-plugins）。入口 = 下沉区顶栏 tab 条末枚固定「插件」页签（renderTopbar 渲染），
+         内容由 sidebar/work/work-plugins.js 用 @floria/web 的 mgr 组件族渲染；管理项目自己的插件/技能/应用。 -->
+    <section id="wk-plugins-pane"></section>
 
     <!-- 分界条（2026-09-27）：work 下沉区 ↔ 预览列的拖拽调宽条（参考 Pj18 preview 的 #divider）。
          只剩一条（预览在最右），显隐由 work.js 的 applyPanes 按「预览在场且已展开」判定。 -->
@@ -399,7 +406,7 @@
 <script src="/vendor/fflate.js?v=1"></script>
 <!-- UI 基础包 IIFE（2026-10-24）：挂 window.FloriaWeb（I / fileIcon / esc / fromHtml / VERSION），
      核心图标表改为转调本全局。须在 app.js 之前加载，缺包时模块直接抛错。 -->
-<script src="/webui/floria-web.iife.js?v=3"></script>
-<script src="/app.js?v=667"></script>
+<script src="/webui/floria-web.iife.js?v=4"></script>
+<script src="/app.js?v=676"></script>
 </body>
 </html>

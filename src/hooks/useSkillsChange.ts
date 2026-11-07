@@ -7,7 +7,11 @@ import {
 } from '../commands.js'
 import { onGrowthBookRefresh } from '../services/analytics/growthbook.js'
 import { logError } from '../utils/log.js'
-import { skillChangeDetector } from '../utils/skills/skillChangeDetector.js'
+import { refreshActivePlugins } from '../utils/plugins/refresh.js'
+import {
+  skillChangeDetector,
+  type SkillsChangeEvent,
+} from '../utils/skills/skillChangeDetector.js'
 
 /**
  * Keep the commands list fresh across two triggers:
@@ -24,21 +28,30 @@ import { skillChangeDetector } from '../utils/skills/skillChangeDetector.js'
 export function useSkillsChange(
   cwd: string | undefined,
   onCommandsChange: (commands: Command[]) => void,
+  setAppState?: Parameters<typeof refreshActivePlugins>[0],
 ): void {
-  const handleChange = useCallback(async () => {
-    if (!cwd) return
-    try {
-      // Clear all command caches to ensure fresh load
-      clearCommandsCache()
-      const commands = await getCommands(cwd)
-      onCommandsChange(commands)
-    } catch (error) {
-      // Errors during reload are non-fatal - log and continue
-      if (error instanceof Error) {
-        logError(error)
+  const handleChange = useCallback(
+    async (event?: SkillsChangeEvent) => {
+      if (!cwd) return
+      try {
+        // 插件启停标记变化 = 插件集合身份变化（命令/技能/agents/hooks/MCP 全受影响）：
+        // 走与 /reload-plugins 同一条全量刷新（refreshActivePlugins 内部也清全部缓存）。
+        if (event?.pluginChanged && setAppState) {
+          await refreshActivePlugins(setAppState)
+        } else {
+          clearCommandsCache()
+        }
+        const commands = await getCommands(cwd)
+        onCommandsChange(commands)
+      } catch (error) {
+        // Errors during reload are non-fatal - log and continue
+        if (error instanceof Error) {
+          logError(error)
+        }
       }
-    }
-  }, [cwd, onCommandsChange])
+    },
+    [cwd, onCommandsChange, setAppState],
+  )
 
   useEffect(() => skillChangeDetector.subscribe(handleChange), [handleChange])
 

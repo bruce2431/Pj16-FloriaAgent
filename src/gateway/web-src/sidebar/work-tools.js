@@ -15,7 +15,7 @@
 
 import { esc } from '../core/util.js'
 import { state } from '../engine/state.js'
-import { previewCardsFor } from '../feature/preview-frame.js'
+import { enabledPreviewCardsFor, previewHasIndexPage } from '../feature/preview-frame.js'
 /* @module sidebar/work-tools.js */
   const WK_TOOL_DEFS = []
 
@@ -65,11 +65,11 @@ import { previewCardsFor } from '../feature/preview-frame.js'
     return WK_TOOL_DEFS.length ? WK_TOOL_DEFS[0].id : ''
   }
 
-  // 当前项目有没有可视预览：预览卡（.claude/preview/<id>/card.json 申报）或传统单页
-  // .claude/preview/index.html（groups 的 hasPreview）。两者皆无 = 没有预览页。
+  // 当前项目有没有可视预览：**已启用**的预览卡（.claude/preview/<id>/card.json）或传统单页
+  // .claude/preview/index.html。停用卡不产生预览页签（工具栏胶囊里也不出现、服务器不拉起）。
   // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
   function wkPreviewAvailable(label) {
-    return !!label && (previewCardsFor(label).length > 0 || hasPreviewOf(label))
+    return !!label && (enabledPreviewCardsFor(label).length > 0 || previewHasIndexPage(label))
   }
   function wkPreviewKnown(label) {
     return !!label && wkProjGroups().length > 0 && previewCardsReadyFor(label)
@@ -83,10 +83,10 @@ import { previewCardsFor } from '../feature/preview-frame.js'
   function renderWkToolTabs() {
     const box = $('wk-pv-tabs')
     if (!box) return
-    const cards = previewCardsFor(state.workProj)
+    const cards = enabledPreviewCardsFor(state.workProj)
     const head = cards.length
       ? cards.map((c) => `<button type="button" class="wk-pv-tab" data-wkcard="${esc(c.id)}">${esc(c.title)}</button>`).join('')
-      : hasPreviewOf(state.workProj)
+      : previewHasIndexPage(state.workProj)
         ? '<button type="button" class="wk-pv-tab" data-wkpv="">预览</button>'
         : ''
     const html = head + wkToolDefs().map(

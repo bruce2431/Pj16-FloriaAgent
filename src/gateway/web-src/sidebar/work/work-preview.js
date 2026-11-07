@@ -1,5 +1,5 @@
 import { isTempProjLabel } from '../../core/util.js'
-import { activePreviewFrame, setPreviewActiveHook, setRailExtItems, takePendingCardPayload, warmProjectBackend } from '../../feature/preview-frame.js'
+import { activePreviewFrame, enabledPreviewCardsFor, setPreviewActiveHook, setRailExtItems, takePendingCardPayload, warmProjectBackend } from '../../feature/preview-frame.js'
 import { renderRailExt } from '../rail-ext.js'
 // 右栏预览与工具页态：预览帧挂载 renderWorkPreview / 页态唯一写口 setPvPane（setPvTab 与侧栏 api setPane('workspace') 是它的入口）/ 顶栏工具栏胶囊 + tab 条渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
 /* @module sidebar/work/work-preview.js */
@@ -38,7 +38,7 @@ import { renderRailExt } from '../rail-ext.js'
     const bar = $('wk-pv-tabs')
     if (bar) bar.hidden = !state.wkPreview
     const cardId = wkCardNormId()
-    if (previewCardsFor(state.workProj).length) state.wkPvCard = cardId
+    if (enabledPreviewCardsFor(state.workProj).length) state.wkPvCard = cardId
     // 卡 tab 与工具 tab 互斥高亮：工具态（id 非空）时不亮任何卡；预览态亮当前卡。
     document.querySelectorAll('#work-preview .wk-pv-tab[data-wkcard]').forEach((b) => b.classList.toggle('on', !id && b.dataset.wkcard === cardId))
     document.querySelectorAll('#work-preview .wk-pv-tab[data-wkpv]').forEach((b) => b.classList.toggle('on', b.dataset.wkpv === id))
@@ -70,13 +70,16 @@ import { renderRailExt } from '../rail-ext.js'
   // 「工具栏」胶囊，work-files.js）——顶栏不另立链路，故两条入口行为必然同源。
   // 注：page !== '' 时才走 wkToolNormId（未注册 id 会回落到首枚工具，不能拿它表达「回预览态」）。
   // 工具栏一打开就预热该项目后端：卡 tab 首次点击才 spawn 会空等，PDF 卡 / 日志卡切换尤其明显。
-  // 只对声明了 backend 的项目发；走同一 /gateway/backend 口（ensureBackend 存活复用 + in-flight 去重）。
+  // 预热范围 = 项目级 backend（旧链）+ 每个**已启用且有 backend**的卡（卡级 chain）；
+  // 停用卡不预热（工具栏里也没有它的 tab）。走同一 /gateway/backend 口（ensureBackend 存活复用 + in-flight 去重）。
   function warmWorkBackend() {
     const label = state.workProj
     if (!label) return
     const g = wkProjGroups().find((p) => p.label === label)
-    if (!g || !g.hasBackend) return
-    warmProjectBackend(label)
+    if (g && g.hasBackend) warmProjectBackend(label)
+    for (const c of enabledPreviewCardsFor(label)) {
+      if (c.hasBackend) warmProjectBackend(label, c.id)
+    }
   }
 
   function setPvPane(on, page) {
@@ -85,7 +88,7 @@ import { renderRailExt } from '../rail-ext.js'
     else if (page !== undefined) state.wkPvTab = page === '' ? '' : wkToolNormId(page)
     // 卡表已在时归一激活卡（表未就绪不能归一：会把持久化的卡 id 冲成 ''）；
     // 未就绪由 renderWorkPreview 拉完申报后再归一。
-    if (on && previewCardsFor(state.workProj).length) state.wkPvCard = wkCardNormId()
+    if (on && enabledPreviewCardsFor(state.workProj).length) state.wkPvCard = wkCardNormId()
     if (on) warmWorkBackend()
     applyPanes()
     if (state.wkPreview) syncPvContent()
@@ -103,7 +106,7 @@ import { renderRailExt } from '../rail-ext.js'
   // payload = 源卡交接给目标卡的上下文（如编译失败→日志卡要知道哪一篇/哪一次编译），
   // 目标帧 load 后经 floria-wk-card-init 下发；同卡重入不发 load，此处直接投递。
   function setPvCard(id, payload) {
-    if (!previewCardsFor(state.workProj).length) return
+    if (!enabledPreviewCardsFor(state.workProj).length) return
     const next = previewCardNormId(state.workProj, id)
     if (!next) return
     const same = next === state.wkPvCard && !state.wkPvTab && state.wkPreview

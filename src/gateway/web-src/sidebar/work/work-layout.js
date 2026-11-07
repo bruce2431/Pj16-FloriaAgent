@@ -61,9 +61,11 @@ import { isTempProjLabel } from '../../core/util.js'
     setPanel(false)
   }
 
-  // 下沉区当前显示的内容（唯一判定）：助手靠栏时按 wkMainTab（要看文件且确有文件才给 file，
-  // 否则回 chat）；助手脱流（float/slim）时它不在下沉格里 ⇒ 有文件顶上来、没有就空。'' = 下沉格空。
+  // 下沉区当前显示的内容（唯一判定）：插件页是独立第三态，与助手形态无关（有项目即在）；
+  // 其余：助手靠栏时按 wkMainTab（要看文件且确有文件才给 file，否则回 chat）；助手脱流
+  // （float/slim）时它不在下沉格里 ⇒ 有文件顶上来、没有就空。'' = 下沉格空。
   function wkShownTab() {
+    if (state.wkMainTab === 'plugins' && state.workProj) return 'plugins'
     if (wkAssistInFlow()) return state.wkMainTab === 'file' && state.workFile ? 'file' : 'chat'
     return state.workFile ? 'file' : ''
   }
@@ -151,7 +153,7 @@ import { isTempProjLabel } from '../../core/util.js'
         state.wkPreview = false
         state.wkPvTab = ''
       }
-      if (!state.wkAssist && !state.workFile && !state.wkPreview) {
+      if (!state.wkAssist && !state.workFile && !state.wkPreview && state.wkMainTab !== 'plugins') {
         state.wkAssist = true
         state.wkMainTab = 'chat'
         toast('至少保留一栏')
@@ -164,9 +166,11 @@ import { isTempProjLabel } from '../../core/util.js'
       const shown = wkShownTab()
       chatArea.classList.toggle('wk-show-chat', shown === 'chat')
       chatArea.classList.toggle('wk-show-file', shown === 'file')
+      chatArea.classList.toggle('wk-show-plugins', shown === 'plugins')
       chatArea.classList.toggle('wk-preview', !!state.wkPreview)
+      if (shown === 'plugins') mountWorkPlugins() // 内容由 work-plugins 自管（元素不变零写 DOM）
     } else {
-      chatArea.classList.remove('wk-show-chat', 'wk-show-file', 'wk-preview')
+      chatArea.classList.remove('wk-show-chat', 'wk-show-file', 'wk-show-plugins', 'wk-preview')
     }
     // 文件栏从无到有 → 编辑器重新参与布局，把切走前的滚动位置写回去（同文件才恢复）。
     if (!wasFile && chatArea.classList.contains('wk-show-file')) wkEdRestoreScroll()

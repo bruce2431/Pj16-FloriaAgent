@@ -694,7 +694,12 @@ export function REPL({
   const [localCommands, setLocalCommands] = useState(initialCommands);
 
   // Watch for skill file changes and reload all commands
-  useSkillsChange(isRemoteSession ? undefined : getProjectRoot(), setLocalCommands);
+  // （插件启停标记变化时走全量插件刷新，需 setAppState 落 AppState.plugins）
+  useSkillsChange(
+    isRemoteSession ? undefined : getProjectRoot(),
+    setLocalCommands,
+    setAppState,
+  );
 
   // Track proactive mode for tools dependency - SleepTool filters by proactive state
   const proactiveActive = React.useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? PROACTIVE_NO_OP_SUBSCRIBE, proactiveModule?.isProactiveActive ?? PROACTIVE_FALSE);

@@ -23,6 +23,7 @@ import {
   parseArgumentNames,
   substituteArguments,
 } from '../utils/argumentSubstitution.js'
+import { isCustomizationDirEnabled } from '../utils/customizationToggle.js'
 import { logForDebugging } from '../utils/debug.js'
 import {
   EFFORT_LEVELS,
@@ -429,6 +430,10 @@ async function loadSkillsFromSkillsDir(
 
         const skillDirPath = join(basePath, entry.name)
         const skillFilePath = join(skillDirPath, 'SKILL.md')
+
+        // 管理页「技能」开关：目录内存在 .disabled 标记即停用，整个目录不加载。
+        // 用户/项目/附加/managed 目录同一判据（判据来源见 utils/customizationToggle）。
+        if (!isCustomizationDirEnabled(skillDirPath)) return null
 
         // Skip @skills-dir in-place plugin directories (those containing a
         // .claude-plugin/ manifest) — they are loaded as plugins by the

@@ -105,7 +105,12 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
   function updateWkTools() {
     // tab 高亮唯一同步点（2026-10-21 待办）：state.wkTab 还会被切项目/启动恢复经 loadWorkSlot 改写，
     // 只在点击处理器里同步 class，恢复出来的「文件亮、内容却是聊天」就会错位。renderWorkBody 每次必经此处。
-    document.querySelectorAll('.wk-tab').forEach((b) => b.classList.toggle('on', b.dataset.wktab === state.wkTab))
+    // 插件页占下沉格时只亮「插件」，文件/聊天 tab 不亮（与 chat 侧栏 mgr-tabs 单态一致）
+    const pluginsView = state.wkMainTab === 'plugins' && !!state.workProj // 判据同 wkShownTab
+    document.querySelectorAll('.wk-tab').forEach((b) => {
+      if (b.hasAttribute('data-wkplugins')) { b.classList.toggle('on', pluginsView); return }
+      b.classList.toggle('on', !pluginsView && b.dataset.wktab === state.wkTab)
+    })
     const nb = $('wk-new')
     const isChat = state.wkTab === 'chat'
     if (nb) nb.title = isChat ? '新建聊天' : '新建文件'
@@ -120,7 +125,8 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
     if (!body) return
     updateWkTools()
     const html = wkBodyHtml()
-    if (body.innerHTML !== html) {
+    const rebuilt = body.innerHTML !== html
+    if (rebuilt) {
       // 重建前先收起展开态：旧行节点随 innerHTML 消亡，引用必须清掉（与 renderRecent 同口径）
       expandClear()
       peekClear()

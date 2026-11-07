@@ -61,12 +61,13 @@ import { pickHome, sessionInScope } from './scope.js'
     }
     // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
     const proj = home
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    // 已停用（en === 0）的自定义件不进 @ 提及：停用后 agent 侧也不暴露，入口需一致。
+    for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (match(s.n) || match(s.d))) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
       // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
       // 插件是便携根安装件、无项目归属，两种上下文都列。
-      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
     }
     items.push(...pickItems(q))
     if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
@@ -97,14 +98,15 @@ import { pickHome, sessionInScope } from './scope.js'
     const proj = pickHome()
     // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
     // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    // 已停用（en === 0）的自定义件不列：停用即不暴露给 agent，入口同步收口。
     if (proj) {
-      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+      for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
     } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+      for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     }
     // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
-    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
+    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && (!match || match(p.n) || match(p.d))) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
