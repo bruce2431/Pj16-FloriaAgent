@@ -8,6 +8,7 @@ import {
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import {
   getClaudeConfigHomeDir,
+  getPortableRoot,
   isEnvDefinedFalsy,
   isEnvTruthy,
 } from '../utils/envUtils.js'
@@ -281,4 +282,39 @@ export function isAutoMemPath(absolutePath: string): boolean {
   // SECURITY: Normalize to prevent path traversal bypasses via .. segments
   const normalizedPath = normalize(absolutePath)
   return normalizedPath.startsWith(getAutoMemPath())
+}
+
+/**
+ * Check if an absolute path is some project's auto-memory directory under the
+ * portable root: `<portableRoot>/<project>/.claude/projects/memory/...`.
+ *
+ * A session started at the portable root itself (global session) has its own
+ * memory at `<portableRoot>/.claude/projects/memory/` — isAutoMemPath() — while
+ * the projects it schedules keep theirs under a child directory. Those are
+ * still memory data rather than harness config, so the global session may
+ * maintain them without prompting. Requires at least one path segment between
+ * the portable root and `.claude` (a project directory), so the root's own
+ * memory dir is not matched here.
+ */
+export function isProjectMemoryPathUnderRoot(absolutePath: string): boolean {
+  const normalized = normalize(absolutePath)
+  const root = normalize(getPortableRoot())
+  const rootPrefix = root.endsWith(sep) ? root : root + sep
+  const lowerPath = normalized.toLowerCase()
+  const lowerPrefix = rootPrefix.toLowerCase()
+  if (!lowerPath.startsWith(lowerPrefix)) {
+    return false
+  }
+  const segments = normalized.slice(rootPrefix.length).split(sep)
+  for (let i = 0; i < segments.length - 3; i++) {
+    if (
+      segments[i]!.toLowerCase() === '.claude' &&
+      segments[i + 1]!.toLowerCase() === 'projects' &&
+      segments[i + 2]!.toLowerCase() === 'memory'
+    ) {
+      // i === 0 would be the portable root's own memory dir.
+      return i > 0 && segments.length > i + 3
+    }
+  }
+  return false
 }

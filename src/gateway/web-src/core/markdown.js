@@ -142,6 +142,8 @@ import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_RE, QUOTE_PDF_RE, Q
         const aurl = mdAttResolver(code)
         if (aurl) return `<img class="msg-img md-att-img" loading="lazy" alt="${alt}" src="${esc(aurl)}">`
       }
+      // 绝对 http(s) 图片（README 渲染等外部图文）：直接成图，不经应用图 resolver。
+      if (/^https?:\/\/[^\s]+$/i.test(code)) return `<img class="msg-img md-img" loading="lazy" alt="${alt}" src="${code}">`
       if (!mdImgResolver || !MD_IMG_CODE.test(code)) return `![${alt}](${code})`
       const url = mdImgResolver(code)
       if (!url) return `![${alt}](${code})`

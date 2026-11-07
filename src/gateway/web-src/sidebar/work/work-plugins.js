@@ -14,7 +14,7 @@ import { state } from '../../engine/state.js'
 import { loadProjectPlugins } from '../mgr-data.js'
 import { ensurePreviewDecls, previewCardsFor, previewCardsReadyFor, previewLegacyIndexCard } from '../../feature/preview-frame.js'
 import { renderWkToolTabs } from '../work-tools.js'
-import { bindRepoEdit, cachedRepoVersion, ensureRepoVersion, fillVersionRow, repoRowHtml, saveCardJsonRepo } from '../../feature/card-repo.js'
+import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, repoRowHtml } from '../../feature/card-repo.js'
 
 /* @module sidebar/work/work-plugins.js */
 
@@ -308,7 +308,10 @@ import { bindRepoEdit, cachedRepoVersion, ensureRepoVersion, fillVersionRow, rep
       initial: (x.n[0] || '?').toUpperCase(),
       name: x.n,
       desc: x.d || '',
-      ver: x.v || '',
+      // sub = 市场条目的仓库内子目录（git-subdir / 市场自带 ./plugins/x）：README 取子目录那份，仓库级版本不适用。
+      ver: x.sub ? '' : (cachedRepoVersion(x.repo) || x.v || ''),
+      repo: x.repo || '',
+      sub: x.sub || '',
       enabled: x.en !== 0,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: '项目本地已安装',
@@ -321,12 +324,10 @@ import { bindRepoEdit, cachedRepoVersion, ensureRepoVersion, fillVersionRow, rep
     if (!body) return
     const it = wplDetailItem()
     if (!it) { WPL_DETAIL = null; renderWpl(); return }
-    // 应用卡片只留「类型 / 来源 / 版本 + 上游仓库」；状态与位置不展示（用户定案）。
-    const info = [
-      ['类型', it.typeLabel],
-      ['来源', it.sourceLabel],
-      ['版本', it.ver || '—'],
-    ]
+    // 应用卡片只留「类型 / 版本 + 上游仓库」；状态、来源与位置不展示（用户定案）。
+    const info = [['类型', it.typeLabel]]
+    if (it.kind !== 'apps') info.push(['来源', it.sourceLabel])
+    info.push(['版本', it.ver || '—'])
     if (it.kind !== 'apps') {
       info.push(['状态', it.enabled ? '已启用' : '已停用'])
       info.push(['位置', it.path])
@@ -334,32 +335,24 @@ import { bindRepoEdit, cachedRepoVersion, ensureRepoVersion, fillVersionRow, rep
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
-      sub: `${it.typeLabel} · ${it.sourceLabel}`,
+      sub: it.kind === 'apps' ? it.typeLabel : `${it.typeLabel} · ${it.sourceLabel}`,
       icon: it.ico,
       color: it.color,
       initial: it.initial,
       action: { on: it.enabled, key: it.key, title: it.enabled ? '已启用（点击停用）' : '未启用（点击启用）' },
       desc: it.desc,
       info,
-      extraHtml: it.card ? repoRowHtml(it.repo) : '',
+      extraHtml: repoRowHtml(it.repo),
       onBack() { WPL_DETAIL = null; renderWpl() },
       onAction() { if (it.kind === 'apps') toggleWplApp(it.key); else toggleWplCustom(it.kind, it.key) },
       onMounted(host) {
-        if (!it.card) return
-        bindRepoEdit(host, {
-          repo: it.repo,
-          save: async (val) => {
-            await saveCardJsonRepo(WPL_LABEL, it.card.id, val)
-            it.card.repo = val
-          },
-          done: () => renderWplDetail(),
+        // 介绍排在信息表下方：有上游仓库时渲染 README，否则回退卡片自带 desc。
+        renderRepoIntro(host, it.repo, it.desc, it.sub)
+        if (!it.repo || it.sub) return
+        fillVersionRow(host, it.repo)
+        ensureRepoVersion(it.repo, () => {
+          if (WPL_DETAIL && WPL_DETAIL.key === it.key) fillVersionRow(host, it.repo)
         })
-        if (it.repo) {
-          fillVersionRow(host, it.repo)
-          ensureRepoVersion(it.repo, () => {
-            if (WPL_DETAIL && WPL_DETAIL.key === it.key) fillVersionRow(host, it.repo)
-          })
-        }
       },
     })
   }

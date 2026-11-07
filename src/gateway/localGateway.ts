@@ -1833,7 +1833,8 @@ function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: str
 
 // ---------- 上游版本探测（插件卡「应用」详情）----------
 // 只接受 https://github.com/<owner>/<repo>（严格两段，防 SSRF 到内网）；对外请求固定三个 GitHub 域名。
-// 依次回退：最新 Release tag → 最新 tag → 仓库根 package.json 的 version。成功缓存 10 分钟、
+// 依次回退：最新 Release tag → 最新 tag → 仓库根 package.json 的 version → 最新提交短 SHA
+// （无 Release/tag/package.json 的卡仓库也有 git 版本可显示）。成功缓存 10 分钟、
 // 失败缓存 1 分钟——详情页反复打开不重复打未认证 API。
 interface RepoVersionEntry {
   version: string
@@ -1844,6 +1845,11 @@ interface RepoVersionEntry {
 const repoVersionCache = new Map<string, RepoVersionEntry>()
 const REPO_VERSION_TTL_MS = 10 * 60 * 1000
 const REPO_VERSION_ERR_TTL_MS = 60 * 1000
+// 上游 README（应用详情「介绍」）：按仓库缓存全文，10min；失败 60s 后重试。
+type RepoReadmeEntry = { name: string; text: string; error?: string; at: number }
+const repoReadmeCache = new Map<string, RepoReadmeEntry>()
+const REPO_README_TTL_MS = 10 * 60 * 1000
+const REPO_README_MAX_CHARS = 80_000
 
 function parseGithubRepo(raw: string): { owner: string; repo: string } | null {
   let u: URL
@@ -1859,9 +1865,31 @@ function parseGithubRepo(raw: string): { owner: string; repo: string } | null {
   return { owner: seg[0], repo: seg[1] }
 }
 
+// GitHub 读接口凭据：环境变量优先，其次 github 插件 MCP 配置里的 GITHUB_PERSONAL_ACCESS_TOKEN。
+// 私有仓库（如 Pj15-LocalMediabase）匿名 API 会 404，带 token 才能读版本。60s 缓存，改配置无需重启网关。
+let githubTokenCache: { token: string; at: number } | null = null
+function githubToken(): string {
+  if (githubTokenCache && Date.now() - githubTokenCache.at < 60_000) return githubTokenCache.token
+  let token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim()
+  if (!token) {
+    try {
+      const p = join(getPortableRoot(), '.claude', 'plugins', 'github', '.mcp.json')
+      const cfg = JSON.parse(readFileSync(p, 'utf8')) as { mcpServers?: { github?: { env?: Record<string, string> } } }
+      token = String(cfg?.mcpServers?.github?.env?.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim()
+    } catch { /* 无插件配置：按匿名访问 */ }
+  }
+  githubTokenCache = { token, at: Date.now() }
+  return token
+}
+
 async function githubJson<T>(url: string): Promise<T> {
+  const token = githubToken()
   const res = await fetch(url, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Floria-Gateway' },
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Floria-Gateway',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
     signal: AbortSignal.timeout(8000),
   })
   if (!res.ok) throw new Error('HTTP ' + res.status)
@@ -1882,8 +1910,9 @@ async function probeRepoVersion(g: { owner: string; repo: string }): Promise<Rep
     if (name) return { version: name, source: 'tag', at: Date.now() }
   } catch { /* 无 tag：继续回退 */ }
   try {
+    const token = githubToken()
     const res = await fetch(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/HEAD/package.json`, {
-      headers: { 'User-Agent': 'Floria-Gateway' },
+      headers: { 'User-Agent': 'Floria-Gateway', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
       signal: AbortSignal.timeout(8000),
     })
     if (res.ok) {
@@ -1893,7 +1922,68 @@ async function probeRepoVersion(g: { owner: string; repo: string }): Promise<Rep
       }
     }
   } catch { /* 无 package.json */ }
+  try {
+    // 无 Release/tag/package.json 的仓库仍有 git 版本：取默认分支最新提交的短 SHA。
+    const commits = await githubJson<Array<{ sha?: string }>>(base + '/commits?per_page=1')
+    const sha = Array.isArray(commits) && commits[0] && typeof commits[0].sha === 'string' ? commits[0].sha.trim() : ''
+    if (sha) return { version: sha.slice(0, 7), source: 'commit', at: Date.now() }
+  } catch { /* 仓库不可访问（私有/不存在） */ }
   return { version: '', source: '', error: '未找到版本信息', at: Date.now() }
+}
+
+// 上游 README：先走 GitHub readme API（带 token ⇒ 私有库可读），失败再试 raw 的常见文件名。
+async function probeRepoReadme(g: { owner: string; repo: string }, sub = ''): Promise<RepoReadmeEntry> {
+  const token = githubToken()
+  const base = `https://api.github.com/repos/${g.owner}/${g.repo}`
+  // 子目录条目（市场 git-subdir / 市场仓库自带的 ./plugins/x）：README 在子目录里，仓库根的 README 是别的项目。
+  const dir = sub.replace(/^\/+|\/+$/g, '')
+  if (dir) {
+    // 走 contents API（api.github.com）：raw.githubusercontent.com 在部分网络环境下不可直连。
+    for (const name of ['README.md', 'readme.md', 'Readme.md', 'README.mdx']) {
+      try {
+        const res = await fetch(`${base}/contents/${dir}/${name}`, {
+          headers: {
+            Accept: 'application/vnd.github.raw',
+            'User-Agent': 'Floria-Gateway',
+            ...(token ? { Authorization: 'Bearer ' + token } : {}),
+          },
+          signal: AbortSignal.timeout(8000),
+        })
+        if (res.ok) {
+          const text = (await res.text()).slice(0, REPO_README_MAX_CHARS)
+          if (text.trim()) return { name, text, at: Date.now() }
+        }
+      } catch { /* 试下一个文件名 */ }
+    }
+    return { name: '', text: '', error: '未找到 README', at: Date.now() }
+  }
+  try {
+    const res = await fetch(base + '/readme', {
+      headers: {
+        Accept: 'application/vnd.github.raw',
+        'User-Agent': 'Floria-Gateway',
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (res.ok) {
+      const text = (await res.text()).slice(0, REPO_README_MAX_CHARS)
+      if (text.trim()) return { name: 'README', text, at: Date.now() }
+    }
+  } catch { /* 无 readme API 访问：继续回退 raw */ }
+  for (const name of ['README.md', 'readme.md', 'README.mdx']) {
+    try {
+      const res = await fetch(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/HEAD/${name}`, {
+        headers: { 'User-Agent': 'Floria-Gateway', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) {
+        const text = (await res.text()).slice(0, REPO_README_MAX_CHARS)
+        if (text.trim()) return { name, text, at: Date.now() }
+      }
+    } catch { /* 试下一个文件名 */ }
+  }
+  return { name: '', text: '', error: '未找到 README', at: Date.now() }
 }
 
 // 按卡 id 找已启用卡后端（/gateway/backend?card= 与启停端点共用）
@@ -2430,9 +2520,9 @@ function readJsonObject(p: string): Record<string, unknown> | null {
   }
 }
 
-function parseSkillFrontmatter(text: string): { name: string; description: string } {
+function parseSkillFrontmatter(text: string): { name: string; description: string; repo: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
-  const out = { name: '', description: '' }
+  const out = { name: '', description: '', repo: '' }
   if (!m) return out
   for (const line of m[1].split(/\r?\n/)) {
     const i = line.indexOf(':')
@@ -2441,6 +2531,7 @@ function parseSkillFrontmatter(text: string): { name: string; description: strin
     const val = line.slice(i + 1).trim()
     if (key === 'name') out.name = val
     else if (key === 'description') out.description = val
+    else if (key === 'repo' || key === 'repository') out.repo = val.replace(/^['"]|['"]$/g, '')
   }
   return out
 }
@@ -2462,6 +2553,7 @@ function readSkillDir(skillsDir: string): Array<Record<string, unknown>> {
     out.push({
       n: fm.name || e.name,
       d: fm.description,
+      repo: fm.repo,
       inst: 1,
       k: e.name,
       en: isCustomizationDirEnabled(dir) ? 1 : 0,
@@ -2480,16 +2572,46 @@ function readPluginDir(pluginsDir: string): Array<Record<string, unknown>> {
     if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'data' || e.name === 'marketplaces') continue
     const m = readJsonObject(join(pluginsDir, e.name, '.claude-plugin', 'plugin.json'))
     if (!m) continue
+    const repoRaw = m.repository
+    const repoField = typeof repoRaw === 'string' ? repoRaw : (repoRaw && typeof repoRaw === 'object' ? String((repoRaw as Record<string, unknown>).url || '') : '')
+    const homepage = typeof m.homepage === 'string' ? m.homepage : ''
+    const repo = /^https?:\/\/github\.com\//i.test(repoField) ? repoField : (/^https?:\/\/github\.com\//i.test(homepage) ? homepage : '')
     out.push({
       n: String(m.name || e.name),
       d: String(m.description || ''),
       v: String(m.version || ''),
+      repo,
       inst: 1,
       k: e.name,
       en: isCustomizationDirEnabled(join(pluginsDir, e.name)) ? 1 : 0,
     })
   }
   return out
+}
+
+// GitHub 仓库地址归一：接受 https://github.com/o/r(.git)、带路径/查询的链接，输出 https://github.com/o/r。
+function githubRepoUrl(raw: unknown): string {
+  const s = String(raw || '').trim()
+  const m = /^https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:[/#?].*)?$/i.exec(s)
+  return m ? `https://github.com/${m[1]}/${m[2]}` : ''
+}
+
+// 市场条目 → { repo, sub }：src 对象（url / git-subdir.url）取仓库，git-subdir 的 path 记子目录；
+// 相对 source（./plugins/x，随市场仓库一起分发）取市场仓库本身 + 该相对路径。
+function marketSource(it: Record<string, unknown>, marketplaceRepo: string): { repo: string; sub: string } {
+  const src = it.source as unknown
+  let repo = ''
+  let sub = ''
+  if (src && typeof src === 'object') {
+    const o = src as Record<string, unknown>
+    repo = githubRepoUrl(o.url)
+    if (o.source === 'git-subdir' && typeof o.path === 'string') sub = o.path.replace(/^\.?\//, '')
+  } else if (typeof src === 'string' && src.startsWith('.')) {
+    repo = marketplaceRepo
+    sub = src.replace(/^\.?\//, '')
+  }
+  if (!repo) repo = githubRepoUrl(it.homepage)
+  return { repo, sub }
 }
 
 function listPlugins(root: string): Record<string, unknown> {
@@ -2514,13 +2636,26 @@ function listPlugins(root: string): Record<string, unknown> {
     for (const e of readdirSync(mktDir, { withFileTypes: true })) {
       if (!e.isDirectory()) continue
       const m = readJsonObject(join(mktDir, e.name, '.claude-plugin', 'marketplace.json'))
+      // 市场自身的 GitHub 仓库（known_marketplaces.json 的 source.repo）：相对 source 条目（./plugins/x）
+      // 属于该仓库，详情页「上游仓库 / README」要指向它。
+      const km = readJsonObject(join(pluginsDir, 'known_marketplaces.json'))
+      const kmSrc = km && typeof km[e.name] === 'object' ? ((km[e.name] as Record<string, unknown>).source as Record<string, unknown> | undefined) : undefined
+      const marketplaceRepo = githubRepoUrl(kmSrc?.repo ? `https://github.com/${kmSrc.repo}` : '')
       const items = Array.isArray(m?.plugins) ? (m.plugins as Array<{ name?: unknown; description?: unknown }>) : []
       for (const it of items) {
         const name = String(it?.name || '')
         if (!name) continue
         const local = installedByName.get(name)
         const rec: Record<string, unknown> = { n: name, d: String(it?.description || ''), inst: local ? 1 : 0 }
-        if (local) { rec.k = local.k; rec.en = local.en }
+        const { repo: srcRepo, sub } = marketSource(it as Record<string, unknown>, marketplaceRepo)
+        if (srcRepo) rec.repo = srcRepo
+        if (sub) rec.sub = sub
+        if (local) {
+          rec.k = local.k
+          rec.en = local.en
+          // 已安装项自身申报过仓库（plugin.json / SKILL.md frontmatter）时以它为准（市场源可能只是打包仓）。
+          if (local.repo) { rec.repo = local.repo; delete rec.sub }
+        }
         if (/skill/i.test(name)) marketSkills.push(rec)
         else marketPlugins.push(rec)
       }
@@ -3458,6 +3593,32 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     const entry = await probeRepoVersion(g)
     repoVersionCache.set(key, entry)
     sendJson(res, 200, { version: entry.version, source: entry.source, error: entry.error })
+    return
+  }
+  // 上游 README：GET /gateway/repo-readme?repo=<GitHub 仓库地址> → { name, text, error? }
+  if (req.method === 'GET' && url.pathname === '/gateway/repo-readme') {
+    const repoUrl = (url.searchParams.get('repo') || '').trim()
+    const g = parseGithubRepo(repoUrl)
+    if (!g) {
+      sendJson(res, 400, { error: '仅支持 https://github.com/<owner>/<repo>' })
+      return
+    }
+    // path = 仓库内子目录（市场 git-subdir / 市场自带条目），只允许相对路径。
+    const sub = (url.searchParams.get('path') || '').trim().replace(/^\/+|\/+$/g, '')
+    if (sub && (sub.includes('..') || sub.includes('\\'))) {
+      sendJson(res, 400, { error: '非法的子目录' })
+      return
+    }
+    const key = `${g.owner}/${g.repo}/${sub}`.toLowerCase()
+    const hit = repoReadmeCache.get(key)
+    const ttl = hit && hit.text ? REPO_README_TTL_MS : REPO_VERSION_ERR_TTL_MS
+    if (hit && Date.now() - hit.at < ttl) {
+      sendJson(res, 200, { name: hit.name, text: hit.text, error: hit.error })
+      return
+    }
+    const entry = await probeRepoReadme(g, sub)
+    repoReadmeCache.set(key, entry)
+    sendJson(res, 200, { name: entry.name, text: entry.text, error: entry.error })
     return
   }
   // 卡片/应用启停（2026-11-07 定案）：POST /gateway/preview-cards/enable {label, card, enabled}

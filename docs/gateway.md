@@ -162,7 +162,8 @@
 - **启用态**：卡目录内 `.disabled` 存在 = 停用（判据常量 `CUSTOMIZATION_DISABLED_MARKER`，与插件/技能同一载体）。`readPreviewPaneCards` 恒返回**全部**卡（停用卡仍要在 work 插件页列出），每卡带 `enabled`；`preview.json` 的 `cards` 同规则（`enabled` 取 `<preview>/<path 首段>/.disabled`）。
 - 响应随 `/gateway/preview-cards` 的 `previewCards` 字段下发（与 `cards`/`quoteActions` 同一请求、同一生命周期）。`[]` = 无卡表 ⇒ 该项目沿用传统单页预览（`/preview/<label>/index.html`），旧项目零改动。
 - 下发字段（`publicPreviewCard`）：`{id,title,icon,entry|path,order,default,enabled,repo,backend:<bool>,backendName}`；**cmd/cwd/port/readyPath 不下发**（后端进程只由网关管理）。`repo` = 卡片上游仓库地址（GitHub https），供插件卡「应用」详情展示与版本探测。响应另带 `hasIndex`（该项目 preview 根是否有 `index.html`）与 `indexEnabled`（`<preview>/.disabled` 是否不存在），前端据此区分「传统单页预览」与「仅有卡」，并让传统页在管理页可启停。
-- **`GET /gateway/repo-version?repo=<GitHub URL>`**：探测上游版本 → `{version, source, error?}`（`source` = `release`/`tag`/`package.json`）。仅接受 `https://github.com/<owner>/<repo>`（严格两段）；依次回退 `releases/latest` → 最新 tag → `raw.githubusercontent.com/.../HEAD/package.json` 的 `version`；成功缓存 10 分钟、失败 1 分钟；超时 8s。失败回 `{version:'', error}` 而非 5xx，前端显示 `—`/错误态。
+- **`GET /gateway/repo-version?repo=<GitHub URL>`**：探测上游版本 → `{version, source, error?}`（`source` = `release`/`tag`/`package.json`/`commit`）。仅接受 `https://github.com/<owner>/<repo>`（严格两段）；依次回退 `releases/latest` → 最新 tag → `raw.githubusercontent.com/.../HEAD/package.json` 的 `version` → 默认分支最新提交的短 SHA（前 7 位）；成功缓存 10 分钟、失败 1 分钟；超时 8s。凭据取 `GITHUB_PERSONAL_ACCESS_TOKEN`/`GITHUB_TOKEN`/`GH_TOKEN` 环境变量，缺省读便携根 `.claude/plugins/github/.mcp.json` 的 `mcpServers.github.env.GITHUB_PERSONAL_ACCESS_TOKEN`（私有仓库可读，60s 缓存）。失败回 `{version:'', error}` 而非 5xx，前端显示 `—`/错误态。
+- **`GET /gateway/repo-readme?repo=<GitHub URL>`**：取上游 README 供应用详情「介绍」渲染 → `{name, text, error?}`（正文截断 80k 字符）。先 `repos/{owner}/{repo}/readme`（`Accept: application/vnd.github.raw`，与上条共用凭据 ⇒ 私有库可读），失败回退 `raw.githubusercontent.com/.../HEAD/{README.md,readme.md,README.mdx}`；成功缓存 10 分钟、失败 1 分钟，超时 8s。仅接受严格两段 GitHub 地址，失败回 `{text:'', error}`。
 - **启停端点 `POST /gateway/preview-cards/enable`**（`{label, card, enabled:bool}`）：定位卡目录（pane 卡 = `<preview>/<card>`；应用卡 = `<preview>/<path 首段>`；保留 id `__index__` = 传统单页预览，`.disabled` 落 preview 根，仅在该根有 `index.html` 时成立），须落在 preview 根内，写/删 `.disabled`；响应 `{ok,label,card,enabled}`。停用卡不产生工具栏页签、不预热也不拉起其服务器；停用传统页即工具栏「预览」页签消失、无卡时预览区回空态。
 - **卡页资源不需要新路由**：`/preview/<label>/<id>/<entry>` 与后端代理 `/backend/<label>/<id>/<entry>` 均已支持嵌套路径；网关只做卡表发现，不改托管规则。
 - 前端契约（tab 条渲染、切卡、卡↔宿主消息）见 web-ui.md §58「预览多卡片」。
@@ -219,11 +220,12 @@ CLI 交互权限弹窗接网关中继——`src/bridge/gatewayPermissionRelay.ts
 - 已安装插件 = `.claude/plugins/<name>/.claude-plugin/plugin.json`（跳过 `data`/`marketplaces`/隐藏目录）
 - 已安装技能 = `.claude/skills/<name>/SKILL.md` frontmatter（name/description）
 - 公开市场 = `.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` 的 `plugins[]`（名称含 "skill" 归技能类）
-- 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,inst,k,en}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+- 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,repo,inst,k,en}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+  - `repo` = 上游 GitHub 仓库：插件取 `plugin.json` 的 `repository`（对象取 `.url`；无则回落 `homepage`），技能取 `SKILL.md` frontmatter 的 `repo`/`repository`；仅接受 `https://github.com/` 前缀，无值给空串。供详情页「上游仓库 / 版本 / README 介绍」共用。
   - `k` = 目录名（显示名 `n` 可来自 frontmatter，启停/寻址必须用 `k`）。personal 项恒有；public 项**已安装的**也按名称从 personal 反查补齐（同一目录的两份展示），未安装的 public 项没有
   - `en` = 启用态 `1/0`（同目录无 `.disabled` 标记）；**判据与加载侧共源** `utils/customizationToggle.ts`
 
-**项目变体 `GET /gateway/plugins?label=<项目>`**：供 work 右栏「技能」工具页与「插件」tab（项目自己的插件/技能/应用视角）。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/plugins/*/.claude-plugin/plugin.json` 与 `<项目根>/.claude/skills/*/SKILL.md`，响应 `{label, plugins:[{n,d,v,inst,k,en}], skills:[{n,d,inst,k,en}]}`（**只含已安装个人项，不出公开市场**）；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单结构不同（该项目维度不产 public 分类）；两处共用同一扫描函数 `readPluginDir` / `readSkillDir`（只认含清单文件的子目录，名称/描述取清单元数据，缺省回落目录名）。
+**项目变体 `GET /gateway/plugins?label=<项目>`**：供 work 右栏「技能」工具页与「插件」tab（项目自己的插件/技能/应用视角）。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/plugins/*/.claude-plugin/plugin.json` 与 `<项目根>/.claude/skills/*/SKILL.md`，响应 `{label, plugins:[{n,d,v,repo,inst,k,en}], skills:[{n,d,repo,inst,k,en}]}`（**只含已安装个人项，不出公开市场**；`repo` 口径同上）；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单结构不同（该项目维度不产 public 分类）；两处共用同一扫描函数 `readPluginDir` / `readSkillDir`（只认含清单文件的子目录，名称/描述取清单元数据，缺省回落目录名）。
 
 **启停端点 `POST /gateway/plugins/enable`**（`{kind:'plugins'|'skills', name:<目录名>, enabled:bool, label?}`）：
 

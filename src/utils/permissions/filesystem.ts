@@ -4,7 +4,11 @@ import ignore from 'ignore'
 import memoize from 'lodash-es/memoize.js'
 import { homedir, tmpdir } from 'os'
 import { join, normalize, posix, sep } from 'path'
-import { hasAutoMemPathOverride, isAutoMemPath } from 'src/memdir/paths.js'
+import {
+  hasAutoMemPathOverride,
+  isAutoMemPath,
+  isProjectMemoryPathUnderRoot,
+} from 'src/memdir/paths.js'
 import { isAgentMemoryPath } from 'src/tools/AgentTool/agentMemory.js'
 import {
   CLAUDE_FOLDER_PERMISSION_PATTERN,
@@ -12,7 +16,11 @@ import {
   GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN,
 } from 'src/tools/FileEditTool/constants.js'
 import type { z } from 'zod/v4'
-import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getProjectRoot,
+  getSessionId,
+} from '../../bootstrap/state.js'
 import { checkStatsigFeatureGate_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -454,14 +462,16 @@ function isDangerousFilePathToAutoEdit(path: string): boolean {
         continue
       }
 
-      // Special cases: some .claude/ children are structural/content paths, not
-      // harness-executable config. Skip the .claude segment when it's followed by
-      // 'worktrees' (where Claude stores git worktrees), 'preview' (project
-      // preview deliverables — static pages served by the built-in gateway),
-      // 'neturon' (per-project neuron library — memories, logs and durable
-      // deliverables, i.e. content data rather than harness config), 'images'
-      // (AI-generated images served by the built-in gateway) or 'temp' (project
-      // scratch/output staging — throwaway content, not harness config).
+      // Special cases: some .claude/ children are structural/content paths or
+      // extension sources edited routinely as part of normal work. Skip the
+      // .claude segment when it's followed by 'worktrees' (where Claude stores
+      // git worktrees), 'preview' (project preview deliverables — static pages
+      // served by the built-in gateway), 'neturon' (per-project neuron library —
+      // memories, logs and durable deliverables, i.e. content data rather than
+      // harness config), 'images' (AI-generated images served by the built-in
+      // gateway), 'temp' (project scratch/output staging — throwaway content),
+      // 'skills' or 'plugins' (extension sources authored by the agent; their
+      // writes still pass deny/ask/allow rules and acceptEdits below).
       // Any nested .claude directories beneath them (not followed by a skipped
       // child) are still blocked.
       if (dir === '.claude') {
@@ -474,7 +484,9 @@ function isDangerousFilePathToAutoEdit(path: string): boolean {
           normalizedNext === 'preview' ||
           normalizedNext === 'neturon' ||
           normalizedNext === 'images' ||
-          normalizedNext === 'temp'
+          normalizedNext === 'temp' ||
+          normalizedNext === 'skills' ||
+          normalizedNext === 'plugins'
         ) {
           break // Skip this .claude, continue checking other segments
         }
@@ -1626,6 +1638,26 @@ export function checkEditableInternalPath(
       decisionReason: {
         type: 'other',
         reason: 'auto memory files are allowed for writing',
+      },
+    }
+  }
+
+  // Project memory dirs of other projects under the portable root. A session
+  // rooted at the portable root (global session) schedules project work and
+  // maintains those projects' memory buckets; they live under a child
+  // directory, so isAutoMemPath() (session-own project only) misses them.
+  // Project sessions keep their sandbox: only the global root qualifies.
+  if (
+    isProjectMemoryPathUnderRoot(normalizedPath) &&
+    normalizeCaseForComparison(normalize(getProjectRoot())) ===
+      normalizeCaseForComparison(normalize(getPortableRoot()))
+  ) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'project memory files are allowed for writing',
       },
     }
   }

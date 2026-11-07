@@ -11,15 +11,14 @@ import { toast } from '../../../core/util.js'
 import { saveMgrView } from '../../../core/storage.js'
 import { MGR, MGR_ERR, MGR_LOADING, loadMgrData } from '../../../sidebar/mgr-data.js'
 import { registerCard } from '../../../engine/registry.js'
-import { appCatalog, globalLabel, isAppEnabled, setAppEnabled, syncGlobalPlugins } from '../../../engine/ext-runtime.js'
+import { appCatalog, isAppEnabled, setAppEnabled } from '../../../engine/ext-runtime.js'
 import { apiUrl } from '../../../engine/gateway.js'
 import {
-  bindRepoEdit,
   cachedRepoVersion,
   ensureRepoVersion,
   fillVersionRow,
+  renderRepoIntro,
   repoRowHtml,
-  savePreviewJsonRepo,
 } from '../../../feature/card-repo.js'
 /* @module views/cards/plugins/plugins-card.js */
   // ---------- 插件卡（插件 / 技能 / 应用）----------
@@ -230,7 +229,7 @@ import {
       }
     }
     const v = state.mgrView
-    const src = (MGR && MGR[kind] && MGR[v.cat]) || []
+    const src = (MGR && MGR[kind] && MGR[kind][v.cat]) || []
     const x = src.find((r) => r.n === key)
     if (!x) return null
     const isSkill = kind === 'skills'
@@ -238,9 +237,13 @@ import {
     // 个人行带 k（目录名）= 可启停；状态语义从「已安装」换成「已启用/已停用」。
     const toggleable = !!x.k
     const enabled = toggleable ? x.en !== 0 : !!x.inst
+    const repo = x.repo || ''
+    // sub = 市场条目的仓库内子目录（git-subdir / 市场自带 ./plugins/x）；README 取子目录里的那份。
+    const sub = x.sub || ''
     return {
       kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
-      name: x.n, desc: x.d || '', ver: x.v || '', inst: enabled, toggleable,
+      name: x.n, desc: x.d || '', ver: sub ? '' : (cachedRepoVersion(repo) || x.v || ''), inst: enabled, toggleable,
+      repo, sub,
       typeLabel: isSkill ? '技能' : '插件',
       sourceLabel: personal ? '本地已安装' : '公开市场',
       path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}` : '',
@@ -251,12 +254,10 @@ import {
   function renderMgrDetail(body, ctx) {
     const it = detailItem()
     if (!it) { MGR_DETAIL = null; return renderMgrPlugins(body, ctx) }
-    // 应用卡片只留「类型 / 来源 / 版本 + 上游仓库」；状态与位置不展示（用户定案）。
-    const info = [
-      ['类型', it.typeLabel],
-      ['来源', it.sourceLabel],
-      ['版本', it.ver || '—'],
-    ]
+    // 应用卡片只留「类型 / 版本 + 上游仓库」；状态、来源与位置不展示（用户定案）。
+    const info = [['类型', it.typeLabel]]
+    if (!it.app) info.push(['来源', it.sourceLabel])
+    info.push(['版本', it.ver || '—'])
     if (!it.app) {
       info.push(['状态', it.installedLabel])
       if (it.path) info.push(['位置', it.path])
@@ -271,39 +272,27 @@ import {
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
-      sub: `${it.typeLabel} · ${it.sourceLabel}`,
+      sub: it.app ? it.typeLabel : `${it.typeLabel} · ${it.sourceLabel}`,
       icon: it.ico,
       color: it.color,
       initial: it.initial,
       action,
       desc: it.desc,
       info,
-      extraHtml: it.app ? repoRowHtml(it.repo) : '',
+      extraHtml: repoRowHtml(it.repo),
       onBack() { MGR_DETAIL = null; ctx.rerender() },
       onAction(key) { if (it.app) toggleApp(key); else toggleCustomization(it.kind, key) },
       onMounted(host) {
-        if (!it.app) return
         const live = it
-        bindRepoEdit(host, { repo: live.repo, save: (val) => saveAppRepo(live.app, val), done: () => ctx.rerender() })
-        if (live.repo) {
-          fillVersionRow(host, live.repo)
-          ensureRepoVersion(live.repo, () => {
-            if (MGR_DETAIL && MGR_DETAIL.key === live.key) fillVersionRow(host, live.repo)
-          })
-        }
+        // 介绍排在信息表下方：有上游仓库时渲染 README，否则回退卡片自带 desc。
+        renderRepoIntro(host, live.repo, live.desc, live.sub)
+        if (!live.repo || live.sub) return
+        fillVersionRow(host, live.repo)
+        ensureRepoVersion(live.repo, () => {
+          if (MGR_DETAIL && MGR_DETAIL.key === live.key) fillVersionRow(host, live.repo)
+        })
       },
     })
-  }
-
-  // 上游仓库写回：本卡「应用」只列工作区根 preview.json，写 cards[].repo。
-  // 写完同步本地目录与缓存快照（重渲立即看到新值）。
-  async function saveAppRepo(a, repo) {
-    await savePreviewJsonRepo(globalLabel(), a.id, repo)
-    // 顺序不可换：syncGlobalPlugins 会先用缓存快照整份替换 APP_CATALOG（旧值），
-    // 故本地写入必须落在这之后、重渲之前；网络回包会再整份覆盖为真值（含新 repo）。
-    syncGlobalPlugins()
-    const live = appCatalog().find((x) => x.id === a.id)
-    if (live) live.repo = repo
   }
 
 export {
