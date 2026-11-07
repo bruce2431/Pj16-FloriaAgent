@@ -53,6 +53,7 @@ import { navigate } from '../chat/route.js'
         entry: typeof c.entry === 'string' && c.entry ? c.entry.trim() : 'index.html',
         order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
         default: c.default === true,
+        repo: typeof c.repo === 'string' ? c.repo.trim() : '',
         // 启用态 = 卡目录内无 .disabled（网关判定）；停用卡不进 tab / 不挂载，但留在卡表里供管理页启用。
         enabled: c.enabled !== false,
         // 卡级后端声明（网关下发布尔 + 显示名，不下发 cmd/cwd）：有后端卡 /gateway/backend 带 card 拉起。

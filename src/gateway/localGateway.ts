@@ -172,6 +172,7 @@ interface PreviewPaneCard {
   entry: string // 卡目录内相对路径，默认 index.html
   order: number // tab 排序（小在前），缺省 100
   default: boolean // 默认激活卡（至多一张；无声明时取排序首张）
+  repo: string // 上游仓库（GitHub 等，用户填写；插件卡「应用」详情页展示与写入），缺省 ''
   // 启用态 = 卡目录内 .disabled 不存在（2026-11-07 定案：状态载体是目录标记，网关可读、跨浏览器一致）
   enabled: boolean
   backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
@@ -1733,6 +1734,7 @@ function readPreviewPaneCards(previewDir: string): PreviewPaneCard[] {
       entry,
       order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
       default: c.default === true,
+      repo: typeof c.repo === 'string' ? c.repo.trim().slice(0, 500) : '',
       enabled: !existsSync(join(dir, CUSTOMIZATION_DISABLED_MARKER)),
       backendName: backendCfg ? backendCfg.name || title : '',
       backendCfg,
@@ -1827,6 +1829,71 @@ function enabledCardBackends(previewDir: string): CardBackendEntry[] {
 function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: string }>(c: T): Record<string, unknown> {
   const { backendCfg, ...rest } = c
   return { ...rest, backend: !!backendCfg }
+}
+
+// ---------- 上游版本探测（插件卡「应用」详情）----------
+// 只接受 https://github.com/<owner>/<repo>（严格两段，防 SSRF 到内网）；对外请求固定三个 GitHub 域名。
+// 依次回退：最新 Release tag → 最新 tag → 仓库根 package.json 的 version。成功缓存 10 分钟、
+// 失败缓存 1 分钟——详情页反复打开不重复打未认证 API。
+interface RepoVersionEntry {
+  version: string
+  source: string
+  error?: string
+  at: number
+}
+const repoVersionCache = new Map<string, RepoVersionEntry>()
+const REPO_VERSION_TTL_MS = 10 * 60 * 1000
+const REPO_VERSION_ERR_TTL_MS = 60 * 1000
+
+function parseGithubRepo(raw: string): { owner: string; repo: string } | null {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' || (u.hostname !== 'github.com' && u.hostname !== 'www.github.com')) return null
+  const seg = u.pathname.replace(/\.git$/i, '').split('/').filter(Boolean)
+  if (seg.length !== 2) return null
+  if (!/^[A-Za-z0-9_.-]+$/.test(seg[0]) || !/^[A-Za-z0-9_.-]+$/.test(seg[1])) return null
+  return { owner: seg[0], repo: seg[1] }
+}
+
+async function githubJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Floria-Gateway' },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  return (await res.json()) as T
+}
+
+async function probeRepoVersion(g: { owner: string; repo: string }): Promise<RepoVersionEntry> {
+  const base = `https://api.github.com/repos/${g.owner}/${g.repo}`
+  try {
+    const rel = await githubJson<{ tag_name?: string }>(base + '/releases/latest')
+    if (rel && typeof rel.tag_name === 'string' && rel.tag_name.trim()) {
+      return { version: rel.tag_name.trim(), source: 'release', at: Date.now() }
+    }
+  } catch { /* 无 Release：继续回退 */ }
+  try {
+    const tags = await githubJson<Array<{ name?: string }>>(base + '/tags?per_page=1')
+    const name = Array.isArray(tags) && tags[0] && typeof tags[0].name === 'string' ? tags[0].name.trim() : ''
+    if (name) return { version: name, source: 'tag', at: Date.now() }
+  } catch { /* 无 tag：继续回退 */ }
+  try {
+    const res = await fetch(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/HEAD/package.json`, {
+      headers: { 'User-Agent': 'Floria-Gateway' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (res.ok) {
+      const pkg = (await res.json()) as { version?: unknown }
+      if (typeof pkg.version === 'string' && pkg.version.trim()) {
+        return { version: pkg.version.trim(), source: 'package.json', at: Date.now() }
+      }
+    }
+  } catch { /* 无 package.json */ }
+  return { version: '', source: '', error: '未找到版本信息', at: Date.now() }
 }
 
 // 按卡 id 找已启用卡后端（/gateway/backend?card= 与启停端点共用）
@@ -3371,6 +3438,26 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     } catch (e) {
       sendError(res, e)
     }
+    return
+  }
+  // 上游版本：GET /gateway/repo-version?repo=<GitHub 仓库地址> → { version, source, error? }
+  if (req.method === 'GET' && url.pathname === '/gateway/repo-version') {
+    const repoUrl = (url.searchParams.get('repo') || '').trim()
+    const g = parseGithubRepo(repoUrl)
+    if (!g) {
+      sendJson(res, 400, { error: '仅支持 https://github.com/<owner>/<repo>' })
+      return
+    }
+    const key = `${g.owner}/${g.repo}`.toLowerCase()
+    const hit = repoVersionCache.get(key)
+    const ttl = hit && hit.version ? REPO_VERSION_TTL_MS : REPO_VERSION_ERR_TTL_MS
+    if (hit && Date.now() - hit.at < ttl) {
+      sendJson(res, 200, { version: hit.version, source: hit.source, error: hit.error })
+      return
+    }
+    const entry = await probeRepoVersion(g)
+    repoVersionCache.set(key, entry)
+    sendJson(res, 200, { version: entry.version, source: entry.source, error: entry.error })
     return
   }
   // 卡片/应用启停（2026-11-07 定案）：POST /gateway/preview-cards/enable {label, card, enabled}

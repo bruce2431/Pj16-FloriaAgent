@@ -14,6 +14,7 @@ import { state } from '../../engine/state.js'
 import { loadProjectPlugins } from '../mgr-data.js'
 import { ensurePreviewDecls, previewCardsFor, previewCardsReadyFor, previewLegacyIndexCard } from '../../feature/preview-frame.js'
 import { renderWkToolTabs } from '../work-tools.js'
+import { bindRepoEdit, cachedRepoVersion, ensureRepoVersion, fillVersionRow, repoRowHtml, saveCardJsonRepo } from '../../feature/card-repo.js'
 
 /* @module sidebar/work/work-plugins.js */
 
@@ -287,11 +288,14 @@ import { renderWkToolTabs } from '../work-tools.js'
         desc: legacy
           ? '传统单页预览（.claude/preview/index.html）'
           : c.hasBackend ? `卡级服务器：${c.backendName || c.id}` : '静态预览页（未声明服务器）',
-        ver: '',
+        ver: legacy ? '' : cachedRepoVersion(c.repo || ''),
         enabled: c.enabled,
         typeLabel: '应用',
         sourceLabel: legacy ? '项目传统预览页' : '项目 .claude/preview 卡片',
         path: legacy ? '.claude/preview/index.html' : `.claude/preview/${c.id}`,
+        // 上游仓库只属于 card.json 卡片（传统单页没有卡片元信息，不展示）
+        card: legacy ? null : c,
+        repo: legacy ? '' : (c.repo || ''),
       }
     }
     const x = wplRows(kind).find((r) => r.n === key)
@@ -317,13 +321,16 @@ import { renderWkToolTabs } from '../work-tools.js'
     if (!body) return
     const it = wplDetailItem()
     if (!it) { WPL_DETAIL = null; renderWpl(); return }
+    // 应用卡片只留「类型 / 来源 / 版本 + 上游仓库」；状态与位置不展示（用户定案）。
     const info = [
       ['类型', it.typeLabel],
       ['来源', it.sourceLabel],
       ['版本', it.ver || '—'],
-      ['状态', it.enabled ? '已启用' : '已停用'],
-      ['位置', it.path],
     ]
+    if (it.kind !== 'apps') {
+      info.push(['状态', it.enabled ? '已启用' : '已停用'])
+      info.push(['位置', it.path])
+    }
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
@@ -334,8 +341,26 @@ import { renderWkToolTabs } from '../work-tools.js'
       action: { on: it.enabled, key: it.key, title: it.enabled ? '已启用（点击停用）' : '未启用（点击启用）' },
       desc: it.desc,
       info,
+      extraHtml: it.card ? repoRowHtml(it.repo) : '',
       onBack() { WPL_DETAIL = null; renderWpl() },
       onAction() { if (it.kind === 'apps') toggleWplApp(it.key); else toggleWplCustom(it.kind, it.key) },
+      onMounted(host) {
+        if (!it.card) return
+        bindRepoEdit(host, {
+          repo: it.repo,
+          save: async (val) => {
+            await saveCardJsonRepo(WPL_LABEL, it.card.id, val)
+            it.card.repo = val
+          },
+          done: () => renderWplDetail(),
+        })
+        if (it.repo) {
+          fillVersionRow(host, it.repo)
+          ensureRepoVersion(it.repo, () => {
+            if (WPL_DETAIL && WPL_DETAIL.key === it.key) fillVersionRow(host, it.repo)
+          })
+        }
+      },
     })
   }
 

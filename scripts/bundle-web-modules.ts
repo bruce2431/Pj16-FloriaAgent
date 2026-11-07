@@ -67,6 +67,9 @@ const PIECES: { file: string; part: number }[] = [
   // registry 顶层 `setTabRefresh(renderMgrTabs)` 注入本件的重渲回调 ⇒ 本件须排在 registry 之前（TDZ）。
   { file: 'engine/ext-runtime.js', part: 1 },
   { file: 'engine/registry.js', part: 1 },
+  // 卡片上游仓库与版本（feature/card-repo.js）：插件卡「应用」详情与 work 插件页共用；只依赖
+  // core/util（esc/toast）与 engine/gateway（apiUrl，调用期取用），须排在两处消费方之前。
+  { file: 'feature/card-repo.js', part: 1 },
   // 视图卡组件（2026-10-01 卡片化二期）：一模块一卡，各卡顶层 registerCard 自注册入 engine/registry。
   { file: 'views/cards/ext/ext-card.js', part: 1 },
   { file: 'views/cards/preview/preview-card.js', part: 1 },

@@ -5178,6 +5178,152 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 注入后 EXT/APP_TABS 的任何变更（网关清单回程、postMessage 注册、启用开关）即时刷侧栏。
   setTabRefresh(renderMgrTabs)
 
+
+  const VERSION_TTL_MS = 5 * 60 * 1000
+  const versionCache = new Map() // repo → { version, at }
+  const versionPending = new Map() // repo → Promise
+
+  const repoKey = (repo) => String(repo || '').trim()
+
+  // 已缓存的版本（同步取；未拉过返回 ''）
+  function cachedRepoVersion(repo) {
+    const hit = versionCache.get(repoKey(repo))
+    return hit ? hit.version : ''
+  }
+
+  // 拉一次上游版本（按 repo 去重、5 分钟缓存）。完成后回调 onDone（调用方据此就地刷新版本行）。
+  function ensureRepoVersion(repo, onDone) {
+    const key = repoKey(repo)
+    if (!key) return
+    const hit = versionCache.get(key)
+    if (hit && Date.now() - hit.at < VERSION_TTL_MS) return
+    const pending = versionPending.get(key)
+    if (pending) {
+      if (onDone) pending.then(onDone)
+      return
+    }
+    const p = fetch(apiUrl('/gateway/repo-version?repo=' + encodeURIComponent(key)))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+      .then((d) => { versionCache.set(key, { version: String((d && d.version) || ''), at: Date.now() }) })
+      .catch(() => { versionCache.set(key, { version: '', at: Date.now() }) })
+      .finally(() => { versionPending.delete(key) })
+    versionPending.set(key, p)
+    p.then(() => { if (onDone) onDone() })
+  }
+
+  // 仓库变更后作废旧版本，下一次打开详情重新拉
+  function invalidateRepoVersion(repo) {
+    versionCache.delete(repoKey(repo))
+  }
+
+  // MgrUI.detail 的信息表由包渲染，无版本行句柄：按 dt 文字找到「版本」行就地回填。
+  function fillVersionRow(body, repo) {
+    const v = cachedRepoVersion(repo)
+    if (!v || !body) return false
+    for (const row of body.querySelectorAll('.mgr-dl-kvrow')) {
+      const dt = row.querySelector('dt')
+      if (dt && dt.textContent === '版本') {
+        const dd = row.querySelector('dd')
+        if (dd) { dd.textContent = v; return true }
+      }
+    }
+    return false
+  }
+
+  // 信息表末尾的「上游仓库」业务行（值可编辑）。只把 http(s) 渲成链接，用户输入不直进 href。
+  function repoRowHtml(repo) {
+    const safeRepo = /^https?:\/\/[^\s]+$/i.test(repo || '') ? repo : ''
+    return '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
+      (repo
+        ? (safeRepo
+          ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(repo)}</a>`
+          : `<span class="mgr-repo-plain">${esc(repo)}</span>`)
+        : '<span class="mgr-repo-empty">未填写</span>') +
+      `<button class="mgr-repo-edit" type="button">${repo ? '修改' : '填写'}</button></dd></div>`
+  }
+
+  // 就地编辑：填写/修改 → 输入框 → 保存调 saveRepo(val)（落盘），完成后 done() 整页重渲。
+  // 冲突/失败一律 toast，不静默覆盖。
+  function bindRepoEdit(body, opts) {
+    const it = opts || {}
+    const btn = body.querySelector('.mgr-repo-edit')
+    if (!btn) return
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const dd = btn.closest('.mgr-repo-dd')
+      if (!dd || dd.querySelector('.mgr-repo-in')) return
+      dd.innerHTML =
+        `<input class="mgr-repo-in" type="text" value="${esc(it.repo || '')}" placeholder="https://github.com/owner/repo" spellcheck="false">` +
+        '<button class="mgr-repo-save" type="button">保存</button>' +
+        '<button class="mgr-repo-cancel" type="button">取消</button>'
+      const inp = dd.querySelector('.mgr-repo-in')
+      inp.focus()
+      inp.select()
+      dd.querySelector('.mgr-repo-cancel').addEventListener('click', () => it.done && it.done())
+      const save = async () => {
+        const val = inp.value.trim()
+        if (val && !/^https?:\/\/[^\s]+$/i.test(val)) { toast('仓库地址需以 http(s):// 开头'); return }
+        try {
+          await it.save(val)
+          invalidateRepoVersion(val)
+          toast(val ? '已保存上游仓库' : '已清除上游仓库')
+          if (it.done) it.done()
+        } catch (err) {
+          toast('保存失败：' + (err && err.message ? err.message : String(err)))
+        }
+      }
+      dd.querySelector('.mgr-repo-save').addEventListener('click', save)
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); save() }
+        else if (ev.key === 'Escape') { ev.preventDefault(); if (it.done) it.done() }
+      })
+    })
+  }
+
+  // 读 JSON 文件 + mtime 基线（写回冲突检测用）
+  async function readJsonFile(label, path) {
+    const res = await fetch(apiUrl('/gateway/file?label=' + encodeURIComponent(label) + '&path=' + encodeURIComponent(path)))
+    if (!res.ok) throw new Error('读取 ' + path + ' 失败（HTTP ' + res.status + '）')
+    const baseMtime = Number(String(res.headers.get('ETag') || '').replace(/"/g, '')) || undefined
+    let json
+    try { json = JSON.parse(await res.text()) } catch { throw new Error(path + ' 不是合法 JSON') }
+    return { json, baseMtime }
+  }
+
+  async function writeJsonFile(label, path, json, baseMtime) {
+    const w = await fetch(apiUrl('/gateway/file/write'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, path, content: JSON.stringify(json, null, 2) + '\n', baseMtime }),
+    })
+    if (!w.ok) {
+      const d = await w.json().catch(() => ({}))
+      throw new Error(w.status === 409 ? '文件已被他人修改，请重试' : (d.error || 'HTTP ' + w.status))
+    }
+  }
+
+  // preview.json 应用：写 cards[].repo
+  async function savePreviewJsonRepo(label, id, repo) {
+    const path = '.claude/preview/preview.json'
+    const { json, baseMtime } = await readJsonFile(label, path)
+    const cards = Array.isArray(json && json.cards) ? json.cards : []
+    const card = cards.find((c) => c && typeof c === 'object' && c.id === id)
+    if (!card) throw new Error('preview.json 里没有该应用')
+    if (repo) card.repo = repo
+    else delete card.repo
+    await writeJsonFile(label, path, json, baseMtime)
+  }
+
+  // card.json 卡片：写 <卡目录>/card.json 顶层 repo（其余字段原样保留）
+  async function saveCardJsonRepo(label, cardId, repo) {
+    const path = `.claude/preview/${cardId}/card.json`
+    const { json, baseMtime } = await readJsonFile(label, path)
+    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('card.json 结构非法')
+    if (repo) json.repo = repo
+    else delete json.repo
+    await writeJsonFile(label, path, json, baseMtime)
+  }
+
   // ---------- 外部卡片（卡片化二期）----------
   // 用途：项目 `.claude/preview/` 里的界面单元（卡片）被 Floria web 内部调用——preview 在
   // preview.json 的 cards 段静态声明，或由预览页 postMessage 实时注册；宿主只按声明的 host 摆位，
@@ -5411,11 +5557,12 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (kind === 'apps') {
       const a = appCatalog().find((x) => x.id === key)
       if (!a) return null
+      const on = isAppEnabled(a.id)
       return {
         kind, key, ico: I[a.icon] || '', color: MgrUI.color(a.id), initial: (a.title[0] || '?').toUpperCase(),
-        name: a.title, desc: '', ver: '', inst: isAppEnabled(a.id),
+        name: a.title, desc: '', ver: cachedRepoVersion(a.repo), inst: on,
         typeLabel: '应用', sourceLabel: '工作区根 .claude/preview 申报',
-        path: a.path, appId: a.id, installedLabel: isAppEnabled(a.id) ? '已启用' : '未启用',
+        app: a, installedLabel: on ? '已启用' : '未启用',
         repo: a.repo || '',
       }
     }
@@ -5441,17 +5588,20 @@ function setFirstSendHash(v) { firstSendHash = v }
   function renderMgrDetail(body, ctx) {
     const it = detailItem()
     if (!it) { MGR_DETAIL = null; return renderMgrPlugins(body, ctx) }
+    // 应用卡片只留「类型 / 来源 / 版本 + 上游仓库」；状态与位置不展示（用户定案）。
     const info = [
       ['类型', it.typeLabel],
       ['来源', it.sourceLabel],
       ['版本', it.ver || '—'],
-      ['状态', it.installedLabel],
     ]
-    if (it.path) info.push(['位置', it.path])
-    // 详情头动作位：应用 = 真开关（key = appId）；个人插件/技能 = 真开关（key = 名称）；
+    if (!it.app) {
+      info.push(['状态', it.installedLabel])
+      if (it.path) info.push(['位置', it.path])
+    }
+    // 详情头动作位：应用 = 真开关（key = 应用 id）；个人插件/技能 = 真开关（key = 名称）；
     // 公开市场条目 = 纯状态指示（无 key，不可点）。
-    const action = it.appId
-      ? { on: it.inst, key: it.appId, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
+    const action = it.app
+      ? { on: it.inst, key: it.key, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
       : it.toggleable
         ? { on: it.inst, key: it.name, title: it.inst ? '已启用（点击停用）' : '已停用（点击启用）' }
         : { on: it.inst, title: it.installedLabel }
@@ -5465,90 +5615,32 @@ function setFirstSendHash(v) { firstSendHash = v }
       action,
       desc: it.desc,
       info,
-      extraHtml: repoRowHtml(it),
+      extraHtml: it.app ? repoRowHtml(it.repo) : '',
       onBack() { MGR_DETAIL = null; ctx.rerender() },
-      onAction(key) { if (it.appId) toggleApp(key); else toggleCustomization(it.kind, key) },
-      onMounted(host) { bindRepoEdit(host, it, ctx) },
-    })
-  }
-
-  // 上游仓库（仅应用）：值可编辑，写回工作区根 .claude/preview/preview.json 的 cards[].repo。
-  // 展示为链接只认 http(s)——用户输入的串不得直接进 href（javascript: 等）。业务行 HTML 由本卡负责。
-  function repoRowHtml(it) {
-    if (!it.appId) return ''
-    const safeRepo = /^https?:\/\/[^\s]+$/i.test(it.repo || '') ? it.repo : ''
-    return '<div class="mgr-dl-kvrow mgr-repo-row"><dt>上游仓库</dt><dd class="mgr-repo-dd">' +
-      (it.repo
-        ? (safeRepo
-          ? `<a class="mgr-repo-link" href="${esc(safeRepo)}" target="_blank" rel="noopener">${esc(it.repo)}</a>`
-          : `<span class="mgr-repo-plain">${esc(it.repo)}</span>`)
-        : '<span class="mgr-repo-empty">未填写</span>') +
-      `<button class="mgr-repo-edit" type="button">${it.repo ? '修改' : '填写'}</button></dd></div>`
-  }
-
-  // 上游仓库编辑：点「填写/修改」就地换输入框；保存 = 读 preview.json（带 ETag 基线）→ 改该卡 repo →
-  // /gateway/file/write 写回。冲突（409）不静默覆盖，提示后重渲（用户重新编辑即拿到新基线）。
-  function bindRepoEdit(body, it, ctx) {
-    const btn = body.querySelector('.mgr-repo-edit')
-    if (!btn) return
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const dd = btn.closest('.mgr-repo-dd')
-      if (!dd || dd.querySelector('.mgr-repo-in')) return
-      dd.innerHTML =
-        `<input class="mgr-repo-in" type="text" value="${esc(it.repo || '')}" placeholder="https://github.com/owner/repo" spellcheck="false">` +
-        '<button class="mgr-repo-save" type="button">保存</button>' +
-        '<button class="mgr-repo-cancel" type="button">取消</button>'
-      const inp = dd.querySelector('.mgr-repo-in')
-      inp.focus()
-      inp.select()
-      dd.querySelector('.mgr-repo-cancel').addEventListener('click', () => ctx.rerender())
-      const save = async () => {
-        const val = inp.value.trim()
-        if (val && !/^https?:\/\/[^\s]+$/i.test(val)) { toast('仓库地址需以 http(s):// 开头'); return }
-        try {
-          await saveAppRepo(it.appId, val)
-          // 顺序不可换：syncGlobalPlugins 会先用缓存快照整份替换 APP_CATALOG（旧值），
-          // 故本地写入必须落在这之后、重渲之前；网络回包会再整份覆盖为真值（含新 repo）。
-          syncGlobalPlugins()
-          const a = appCatalog().find((x) => x.id === it.appId)
-          if (a) a.repo = val
-          toast(val ? '已保存上游仓库' : '已清除上游仓库')
-          ctx.rerender()
-        } catch (err) {
-          toast('保存失败：' + (err && err.message ? err.message : String(err)))
+      onAction(key) { if (it.app) toggleApp(key); else toggleCustomization(it.kind, key) },
+      onMounted(host) {
+        if (!it.app) return
+        const live = it
+        bindRepoEdit(host, { repo: live.repo, save: (val) => saveAppRepo(live.app, val), done: () => ctx.rerender() })
+        if (live.repo) {
+          fillVersionRow(host, live.repo)
+          ensureRepoVersion(live.repo, () => {
+            if (MGR_DETAIL && MGR_DETAIL.key === live.key) fillVersionRow(host, live.repo)
+          })
         }
-      }
-      dd.querySelector('.mgr-repo-save').addEventListener('click', save)
-      inp.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); save() }
-        else if (ev.key === 'Escape') { ev.preventDefault(); ctx.rerender() }
-      })
+      },
     })
   }
 
-  async function saveAppRepo(id, repo) {
-    const label = globalLabel()
-    const path = '.claude/preview/preview.json'
-    const res = await fetch(apiUrl('/gateway/file?label=' + encodeURIComponent(label) + '&path=' + encodeURIComponent(path)))
-    if (!res.ok) throw new Error('读取 preview.json 失败（HTTP ' + res.status + '）')
-    const baseMtime = Number(String(res.headers.get('ETag') || '').replace(/"/g, '')) || undefined
-    let json
-    try { json = JSON.parse(await res.text()) } catch { throw new Error('preview.json 不是合法 JSON') }
-    const cards = Array.isArray(json && json.cards) ? json.cards : []
-    const card = cards.find((c) => c && typeof c === 'object' && c.id === id)
-    if (!card) throw new Error('preview.json 里没有该应用')
-    if (repo) card.repo = repo
-    else delete card.repo
-    const w = await fetch(apiUrl('/gateway/file/write'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, path, content: JSON.stringify(json, null, 2) + '\n', baseMtime }),
-    })
-    if (!w.ok) {
-      const d = await w.json().catch(() => ({}))
-      throw new Error(w.status === 409 ? '文件已被他人修改，请重试' : (d.error || 'HTTP ' + w.status))
-    }
+  // 上游仓库写回：本卡「应用」只列工作区根 preview.json，写 cards[].repo。
+  // 写完同步本地目录与缓存快照（重渲立即看到新值）。
+  async function saveAppRepo(a, repo) {
+    await savePreviewJsonRepo(globalLabel(), a.id, repo)
+    // 顺序不可换：syncGlobalPlugins 会先用缓存快照整份替换 APP_CATALOG（旧值），
+    // 故本地写入必须落在这之后、重渲之前；网络回包会再整份覆盖为真值（含新 repo）。
+    syncGlobalPlugins()
+    const live = appCatalog().find((x) => x.id === a.id)
+    if (live) live.repo = repo
   }
 
   // ---------- 会话卡 ----------
@@ -5602,6 +5694,7 @@ function setFirstSendHash(v) { firstSendHash = v }
         entry: typeof c.entry === 'string' && c.entry ? c.entry.trim() : 'index.html',
         order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
         default: c.default === true,
+        repo: typeof c.repo === 'string' ? c.repo.trim() : '',
         // 启用态 = 卡目录内无 .disabled（网关判定）；停用卡不进 tab / 不挂载，但留在卡表里供管理页启用。
         enabled: c.enabled !== false,
         // 卡级后端声明（网关下发布尔 + 显示名，不下发 cmd/cwd）：有后端卡 /gateway/backend 带 card 拉起。
@@ -7965,11 +8058,14 @@ function setFirstSendHash(v) { firstSendHash = v }
         desc: legacy
           ? '传统单页预览（.claude/preview/index.html）'
           : c.hasBackend ? `卡级服务器：${c.backendName || c.id}` : '静态预览页（未声明服务器）',
-        ver: '',
+        ver: legacy ? '' : cachedRepoVersion(c.repo || ''),
         enabled: c.enabled,
         typeLabel: '应用',
         sourceLabel: legacy ? '项目传统预览页' : '项目 .claude/preview 卡片',
         path: legacy ? '.claude/preview/index.html' : `.claude/preview/${c.id}`,
+        // 上游仓库只属于 card.json 卡片（传统单页没有卡片元信息，不展示）
+        card: legacy ? null : c,
+        repo: legacy ? '' : (c.repo || ''),
       }
     }
     const x = wplRows(kind).find((r) => r.n === key)
@@ -7995,13 +8091,16 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!body) return
     const it = wplDetailItem()
     if (!it) { WPL_DETAIL = null; renderWpl(); return }
+    // 应用卡片只留「类型 / 来源 / 版本 + 上游仓库」；状态与位置不展示（用户定案）。
     const info = [
       ['类型', it.typeLabel],
       ['来源', it.sourceLabel],
       ['版本', it.ver || '—'],
-      ['状态', it.enabled ? '已启用' : '已停用'],
-      ['位置', it.path],
     ]
+    if (it.kind !== 'apps') {
+      info.push(['状态', it.enabled ? '已启用' : '已停用'])
+      info.push(['位置', it.path])
+    }
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
@@ -8012,8 +8111,26 @@ function setFirstSendHash(v) { firstSendHash = v }
       action: { on: it.enabled, key: it.key, title: it.enabled ? '已启用（点击停用）' : '未启用（点击启用）' },
       desc: it.desc,
       info,
+      extraHtml: it.card ? repoRowHtml(it.repo) : '',
       onBack() { WPL_DETAIL = null; renderWpl() },
       onAction() { if (it.kind === 'apps') toggleWplApp(it.key); else toggleWplCustom(it.kind, it.key) },
+      onMounted(host) {
+        if (!it.card) return
+        bindRepoEdit(host, {
+          repo: it.repo,
+          save: async (val) => {
+            await saveCardJsonRepo(WPL_LABEL, it.card.id, val)
+            it.card.repo = val
+          },
+          done: () => renderWplDetail(),
+        })
+        if (it.repo) {
+          fillVersionRow(host, it.repo)
+          ensureRepoVersion(it.repo, () => {
+            if (WPL_DETAIL && WPL_DETAIL.key === it.key) fillVersionRow(host, it.repo)
+          })
+        }
+      },
     })
   }
 

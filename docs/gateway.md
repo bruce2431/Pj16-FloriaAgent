@@ -154,13 +154,15 @@
 
 ```json
 { "title": "PDF", "icon": "plug", "entry": "index.html", "order": 10, "default": true,
+  "repo": "https://github.com/owner/card-repo",
   "backend": { "name": "PDF 服务", "cmd": ["python", "server.py"], "readyPath": "/" } }
 ```
 
-- 网关扫描 `readPreviewPaneCards(previewDir)`：只认**直接子目录**且含 `card.json`；`id` = 目录名（`/^[a-zA-Z0-9_-]{1,32}$/`）。字段校验：`title` 非空（缺失整条丢弃）、`entry` 缺省 `index.html` 且须为 `isPreviewRelPath` 安全相对路径、目标文件必须存在、`order` 数字（缺省 100，升序）、`default` 布尔。排序 = `order` 再 `id`；**至多一张 default**（首张为准），有卡表而未标 default 时前端回落排序首张。
+- 网关扫描 `readPreviewPaneCards(previewDir)`：只认**直接子目录**且含 `card.json`；`id` = 目录名（`/^[a-zA-Z0-9_-]{1,32}$/`）。字段校验：`title` 非空（缺失整条丢弃）、`entry` 缺省 `index.html` 且须为 `isPreviewRelPath` 安全相对路径、目标文件必须存在、`order` 数字（缺省 100，升序）、`default` 布尔、`repo` 字符串（trim 后截 500 字符，缺省 `''`）。排序 = `order` 再 `id`；**至多一张 default**（首张为准），有卡表而未标 default 时前端回落排序首张。
 - **启用态**：卡目录内 `.disabled` 存在 = 停用（判据常量 `CUSTOMIZATION_DISABLED_MARKER`，与插件/技能同一载体）。`readPreviewPaneCards` 恒返回**全部**卡（停用卡仍要在 work 插件页列出），每卡带 `enabled`；`preview.json` 的 `cards` 同规则（`enabled` 取 `<preview>/<path 首段>/.disabled`）。
 - 响应随 `/gateway/preview-cards` 的 `previewCards` 字段下发（与 `cards`/`quoteActions` 同一请求、同一生命周期）。`[]` = 无卡表 ⇒ 该项目沿用传统单页预览（`/preview/<label>/index.html`），旧项目零改动。
-- 下发字段（`publicPreviewCard`）：`{id,title,icon,entry|path,order,default,enabled,backend:<bool>,backendName}`；**cmd/cwd/port/readyPath 不下发**（后端进程只由网关管理）。响应另带 `hasIndex`（该项目 preview 根是否有 `index.html`）与 `indexEnabled`（`<preview>/.disabled` 是否不存在），前端据此区分「传统单页预览」与「仅有卡」，并让传统页在管理页可启停。
+- 下发字段（`publicPreviewCard`）：`{id,title,icon,entry|path,order,default,enabled,repo,backend:<bool>,backendName}`；**cmd/cwd/port/readyPath 不下发**（后端进程只由网关管理）。`repo` = 卡片上游仓库地址（GitHub https），供插件卡「应用」详情展示与版本探测。响应另带 `hasIndex`（该项目 preview 根是否有 `index.html`）与 `indexEnabled`（`<preview>/.disabled` 是否不存在），前端据此区分「传统单页预览」与「仅有卡」，并让传统页在管理页可启停。
+- **`GET /gateway/repo-version?repo=<GitHub URL>`**：探测上游版本 → `{version, source, error?}`（`source` = `release`/`tag`/`package.json`）。仅接受 `https://github.com/<owner>/<repo>`（严格两段）；依次回退 `releases/latest` → 最新 tag → `raw.githubusercontent.com/.../HEAD/package.json` 的 `version`；成功缓存 10 分钟、失败 1 分钟；超时 8s。失败回 `{version:'', error}` 而非 5xx，前端显示 `—`/错误态。
 - **启停端点 `POST /gateway/preview-cards/enable`**（`{label, card, enabled:bool}`）：定位卡目录（pane 卡 = `<preview>/<card>`；应用卡 = `<preview>/<path 首段>`；保留 id `__index__` = 传统单页预览，`.disabled` 落 preview 根，仅在该根有 `index.html` 时成立），须落在 preview 根内，写/删 `.disabled`；响应 `{ok,label,card,enabled}`。停用卡不产生工具栏页签、不预热也不拉起其服务器；停用传统页即工具栏「预览」页签消失、无卡时预览区回空态。
 - **卡页资源不需要新路由**：`/preview/<label>/<id>/<entry>` 与后端代理 `/backend/<label>/<id>/<entry>` 均已支持嵌套路径；网关只做卡表发现，不改托管规则。
 - 前端契约（tab 条渲染、切卡、卡↔宿主消息）见 web-ui.md §58「预览多卡片」。
