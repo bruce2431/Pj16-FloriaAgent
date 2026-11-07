@@ -107,6 +107,10 @@ a { text-decoration: none; color: inherit; }
    让 iframe 真正填满卡体后，此前的方角覆盖才显形。 */
 .view-card { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 2px; border-radius: var(--radius); background: var(--chat-bg); overflow: hidden; }
 .view-card[hidden] { display: none; }
+/* 常驻预热卡（registry 的 standby）：应用/外部卡启用即建卡加载 iframe，切换只做显隐、不重建 DOM。
+   绝对定位到槽内同尺寸（保留布局宽高让应用按真实尺寸排版）→ 不参与 flex 布局、不挡当前卡；
+   透明 + 不可交互，离场后留在原地等下次切换。 */
+.view-card.view-standby { position: absolute; inset: 0; margin: 2px; opacity: 0; pointer-events: none; z-index: 0; }
 /* 管理/预览卡的滚动层与内容列：几何镜像会话卡的 #chat-scroll（24/20/8 内边距）+ .mgr-on 时代的
    920px 内容宽（会话卡的 #messages 保持 760px，两者各自独立） */
 .view-scroll { flex: 1; min-height: 0; overflow-y: auto; scroll-behavior: smooth; scrollbar-gutter: stable; overflow-anchor: none; padding: 24px 20px 8px; }

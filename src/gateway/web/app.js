@@ -5061,6 +5061,8 @@ function setFirstSendHash(v) { firstSendHash = v }
   // mgrTabsHtml 缓存：算出的 HTML 无变化则零写 DOM——冗余调用（路由/5s 对账）不清掉 .on 高亮与焦点。
   let mgrTabsHtml = ''
   function renderMgrTabs() {
+    // 目录/默认项变化点顺带对齐常驻预热（幂等：已预载的跳过；停用或换项目的立即拆除）
+    preloadEnabledCards()
     const box = $('mgr-tabs')
     if (!box) return
     const html = CARDS.concat(appTabs(), extTabs())
@@ -5078,6 +5080,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // ---------- 槽位（#chat-area = 无形槽）：同一时刻恰好一张卡 ----------
   // 管理/预览卡按需创建、离开即 .remove()——神经元图的 rAF 以 canvas.isConnected 自毁，
   // display:none 不释放；会话卡改 hidden（其 DOM 是单例，见上）。
+  // 应用/外部卡例外：常驻预热（见下），离场只隐藏不拆除。
   let curCardEl = null
   function makeCard(id) {
     const el = document.createElement('section')
@@ -5088,11 +5091,49 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
   function showCard(el) {
     if (el === curCardEl) return el
-    if (curCardEl && curCardEl !== sessionCard) curCardEl.remove()
+    if (curCardEl && curCardEl !== sessionCard) {
+      // 预载卡离场不拆除：留着 iframe 现状，再切回来零白屏
+      if (standby.has(curCardEl.dataset.view)) curCardEl.classList.add('view-standby')
+      else curCardEl.remove()
+    }
     curCardEl = el
+    el.classList.remove('view-standby')
+    el.hidden = false
     sessionCard.hidden = el !== sessionCard
-    if (el !== sessionCard) chatArea.appendChild(el)
+    if (el !== sessionCard && !el.isConnected) chatArea.appendChild(el)
     return el
+  }
+
+  // ---------- 常驻预热（应用 / 外部卡） ----------
+  // 启用即预载：给每张已启用的 APP/EXT 卡建一张常驻卡（绝对定位、透明、不可交互），iframe 在这里
+  // 完成文档加载与首屏渲染；切换 = 同一张卡显隐，不重建 DOM ⇒ 不再有 iframe 白屏。
+  // 代价：启用几张就后台常驻几个 iframe；停用/换项目时 pruneStandby 立即拆除。
+  const standby = new Map()
+  function preloadCard(id) {
+    if (standby.has(id) || !(id.startsWith('app:') || id.startsWith('ext:'))) return
+    if (curCardEl && curCardEl.dataset.view === id) return
+    const c = cardOf(id)
+    if (!c || !c.mount) return
+    const el = makeCard(id)
+    el.classList.add('view-standby')
+    chatArea.appendChild(el)
+    standby.set(id, el)
+    c.mount(el.querySelector('.view-body'), { id: c.id, rerender: (p) => openCard(id, p) })
+  }
+  function pruneStandby() {
+    const alive = new Set(appTabs().concat(extTabs()).map((v) => v.id))
+    for (const [id, el] of standby) {
+      if (alive.has(id) || curCardEl === el) continue
+      el.remove()
+      standby.delete(id)
+    }
+  }
+  function preloadEnabledCards() {
+    pruneStandby()
+    for (const v of appTabs().concat(extTabs())) {
+      if (!v.tab || !isCardAllowedInContext(v.id, state)) continue
+      preloadCard(v.id)
+    }
   }
   // 同 id 的卡在场则复用：卡体整换但 .view-scroll 不动 ⇒ 滚动位置天然保持
   // （旧版进管理视图手写 scrollTop 存取块因此退场）
@@ -5112,8 +5153,10 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!c) return null
     const prev = currentCardId()
     if (prev && prev !== id) cardOf(prev)?.deactivate?.()
-    const el = showCard(c.card ? c.card() : reuseOrMake(c.id))
-    if (c.mount) c.mount(el.querySelector('.view-body'), { id: c.id, payload, rerender: (p) => openCard(id, p) })
+    const pre = standby.get(id)
+    const el = showCard(pre || (c.card ? c.card() : reuseOrMake(c.id)))
+    // 预载卡已 mount 过：直接显示现状，不再重建 iframe（重建即白屏）
+    if (c.mount && !pre) c.mount(el.querySelector('.view-body'), { id: c.id, payload, rerender: (p) => openCard(id, p) })
     return el
   }
   // 契约出口：卡外（如 preview-frame 硬进入分支）可显式卸某卡视图态，不必懂该卡的清理清单。
