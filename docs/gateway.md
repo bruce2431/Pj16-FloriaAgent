@@ -311,11 +311,13 @@ web `@` 提及 /「+」菜单的「目录 / 文件」组数据源（[web-ui.md](
 - **穿越防护单一实现**：`resolveWithinRoot(root, rel)`（导出纯函数）先 `resolve(root)` 得 `base`，剥离首尾 `/` 与反斜杠归一后 `resolve(base, rel)`，要求 `abs === base || abs.startsWith(base + sep)`——越界（`..` 逃逸、盘符、根绝对路径）返回 `null` → **403**；命中但非目录 → **404** `not a directory`。**基准必须先 `resolve` 再做 `startsWith` 比较**：直接用调用方传入的 `root` 拼 `sep` 时，形如 `F:/x` 的正斜杠根会与实际解析出的反斜杠路径失配，把根内路径误判成越界。
 - **探针锚点**：`probes/probe-gateway-fs.ts`（直接 import `resolveWithinRoot` 测真实现：根内 6 例 + 越界 7 例 + 分支只读/`listOneLevel`/403/404 文本断言，18 项）。
 
-## 16. 项目内文件树写端点（`/gateway/file/rename`、`/gateway/file/delete`、`/gateway/file/reveal`、`/gateway/file/write`、`/gateway/file/create`、`/gateway/file/upload`、`/gateway/file/move`）
+## 16. 项目内文件树写端点（`/gateway/file/rename`、`/gateway/file/delete`、`/gateway/file/archive`、`/gateway/file/reveal`、`/gateway/file/write`、`/gateway/file/create`、`/gateway/file/upload`、`/gateway/file/move`）
 
 work 文件树行操作浮窗（[web-ui.md](web-ui.md) §45）的提交侧。两端点只解析 `label` 找项目根，语义与防护全在导出纯函数里——端点即「纯函数结果码 → HTTP 码」的直译，写法与 `/gateway/fs` 复用 `resolveWithinRoot` 同源。
 
 **`POST /gateway/file/rename`** body `{label, path, name}` → `renameProjectEntry(projRoot, path, name)`。只改 basename、不跨目录移动。新名走 `sanitizeEntryName`（同 `POST /gateway/file-cache` 的清洗口径，已抽出共用：basename 化 + `\/:*?"<>|` 与控制符换 `_` + Windows 保留名加 `_` 前缀 + 截断 120 字符且保扩展名）；新名里的路径/盘符式前缀被 basename 剥掉（只可能「少字」，不可能逃出项目根）。**目标已存在 → 409 拒绝，不覆盖也不自动序号**——改名是用户显式输入，静默换成别的名字比报错更糟；新名与原名相同 → 200 幂等 no-op。响应 `{ok, name, path}`（`path` 为改名后的项目内相对路径，正斜杠）。
+
+**`POST /gateway/file/archive`** body `{label, path}` → `archiveProjectEntry(projRoot, path)`（**仅目录**，文件 400 `仅目录可归档`）。归档语义与项目归档一致：`tar -czf <项目根>/.achrives/<目录名>-<YYYYMMDDHHMMSS>.tar.gz -C <项目根> <relPath>`（系统 tar，顺序流），成功后 `trashProjectEntry` 把原目录移入 `<项目根>/.trash/`。tar 失败清掉本次半成品，失败文案带 stderr 尾部；打包成功但移 `.trash` 失败 → 500 且错误带已生成的包路径。响应 `{ok, path:'.achrives/<名>', trash:'.trash/<名>', size}`。`.achrives` / `.trash` 均以点开头，不进文件树。
 
 **`POST /gateway/file/delete`** body `{label, path}` → `trashProjectEntry(projRoot, path)`。**「删除」= 移动**（工作区规范禁止 `rm`）：`renameSync` 到 `<项目根>/.trash/`，永不真删、永不覆盖——`.trash/` 下同名冲突加 `<YYYYMMDDHHMMSS>-` 前缀（同秒再撞加 `-N`）。目录删除 = 整棵子树一次搬走。响应 `{ok, trash:'.trash/<名>'}`。`.trash` 以 `.` 开头，本就不进 `/gateway/project` 文件树（`walkProjectTree` 跳过点开头条目，且在 `SKIP_TREE_DIRS` 内）。
 
@@ -335,6 +337,7 @@ work 文件树行操作浮窗（[web-ui.md](web-ui.md) §45）的提交侧。两
 
 - **`POST /gateway/project/archive`** body `{label}` → `archiveProject()`：`tar -czf <root>/.achrives/<label>-<YYYYMMDDHHMMSS>.tar.gz -C <root> <label>`（系统 tar：Windows 10+ 自带 `System32\tar.exe`，macOS/Linux 自带；顺序流打包、内存恒定），成功后 `renameSync` 把原目录移入 `<root>/.trash/<ts>-<label>`。**格式选 tar.gz 不选 zip**：无中央目录索引，进程中断只截断尾部、不会整包不可读；`.achrives/` 里的历史 `.zip` 原样保留。tar 失败清掉本次半成品；打包成功但 `.trash` 移动失败（Windows 占用）→ 500，错误文案带已生成的包路径，原目录原地不动。响应 `{ok, archive:'.achrives/<名>', trash:'.trash/<名>', bytes}`。
 - **`POST /gateway/project/delete`** body `{label}` → `deleteTempProject()`：**仅根级时间戳任务区**（`/^\d{8,14}-/`）可删，其余 400；语义 = 目录移入 `<root>/.trash/<ts>-<label>`（禁止 `rm`）。响应 `{ok, trash}`。
+- **`POST /gateway/project/rename`** body `{label, name}` → `renameProjectDir()`：`<root>/<label>` 整目录 `renameSync` 为 `<root>/<name>`（label 即项目标识，会话转录在项目内随目录一起走，不迁移数据）。名称走 `sanitizeEntryName`，**点开头一律 400**（`.trash`/`.achrives` 之类会被项目扫描跳过）；同名已存在 → 409；与归档同口径走 `projectUseBlocker`（有在线会话 409）+ `killBackend(label)` + `closeSseWatchesUnder()`，成功后端点调 `ensureSseWatches(root)` 按新布局补齐 watch。响应 `{ok, label:'<新名>'}`。
 - **移目录前必须关掉本项目的 SSE watcher**：`ensureSseWatches` 对每个项目 watch `<项目>/.claude/projects`，Windows 上该 `fs.watch` 句柄会让**父目录**（项目根）`renameSync` 返回 `EPERM`（实测：watch `a/b` 后 rename `a` 失败，`w.close()` 后同一次 rename 立刻成功）——不关则表现为「tar 已生成，但移入 `.trash` 失败」。故 `moveProjectDirToTrash` 在 rename 前调 `closeSseWatchesUnder(projRoot)`（按路径前缀摘 `sseWatches` 并 close；项目整体移走，watcher 本就该销毁）。
 - **占用防护（两口共用 `projectUseBlocker`）**：项目内有在线会话 → **409** `项目内有在线会话，请先关闭会话再操作`（判据两条：`cliClients` 的 sid 经 `sessionRootFromId` 还原启动根落在项目内；`sessionActivity` 中 TTL 内且 `isPidAlive` 的 `cwd` 落在项目内——后者兜住断线重连 ~1s 的注册空窗）。**不自动杀用户会话**。预览后端是网关自己的子进程（不是用户会话），归档 / 删除前由端点调 `killBackend(label)` 停掉，避免改名后残留进程失根。
 - 两端点同步等待（大项目打包是分钟级）：请求返回即完成信号，前端等待期 toast「正在归档…」。受 `/gateway/*` token 校验保护。

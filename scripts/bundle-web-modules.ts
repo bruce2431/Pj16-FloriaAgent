@@ -136,6 +136,11 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'inputbar/ctx-meter.js', part: 1 },
   // 网关客户端（engine/gateway.js）四段：定义段 / 在线态 setConn / connect / initGateway，原 IIFE 分处四地。
   { file: 'engine/gateway.js', part: 1 },
+  // 工具栏三层（2026-11-07 模块化：项目隔离 / 文件层 / 条目层自 mention.js + commands.js 切出）：
+  // scope 只有函数声明；pick 另有顶层 `const pick/pickAll` 两块状态，须先于 mention.js 与 commands.js 初始化；
+  // entries 的 `const GROUP_OF/CMD_VIEWS` 供 commands.js#3 的渲染用，故排在 commands.js 中间段之后。
+  { file: 'inputbar/toolbar/scope.js', part: 1 },
+  { file: 'inputbar/toolbar/pick.js', part: 1 },
   { file: 'inputbar/mention.js', part: 1 },
   // CM6 接管底栏（2026-10-14 #17 B 口径）：须在 mention.js 后（挂载读 #cm-host / inputEl 已声明；
   // 运行期函数跨 IIFE 提升，序位按 eval 期依赖就近）。
@@ -144,7 +149,9 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'inputbar/commands.js', part: 1 },
   { file: 'inputbar/model-select.js', part: 1 },
   { file: 'inputbar/commands.js', part: 2 },
+  { file: 'inputbar/toolbar/entries.js', part: 1 },
   { file: 'inputbar/model-select.js', part: 2 },
+  { file: 'inputbar/commands.js', part: 3 },
   { file: 'engine/gateway.js', part: 2 },
   { file: 'chat/stage.js', part: 1 },
   // 原 chat/messages.js 段2（暂存补投/排队主张）纯搬迁为独立模块。

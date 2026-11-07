@@ -11220,6 +11220,32 @@ function setFirstSendHash(v) { firstSendHash = v }
       toast('删除失败：' + (e.message || e))
     }
   }
+  // 目录行归档（2026-11-07）：与项目行归档同语义——打成 <项目根>/.achrives/<名>-<ts>.tar.gz，
+  // 原目录移入 <项目根>/.trash/。成功后该子树整体离场，打开集与编辑区按「目录删除」同口径清理。
+  async function archiveWorkEntry(p) {
+    if (!p) return
+    try {
+      toast('正在归档「' + baseOf(p) + '」…')
+      const res = await fetch(apiUrl('/gateway/file/archive'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: state.workProj, path: p }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '归档失败')
+      if (state.workFile === p || state.workFile.startsWith(p + '/')) state.workFile = ''
+      for (const k of [...wkOpen]) if (k === p || k.startsWith(p + '/')) wkOpen.delete(k)
+      saveWork()
+      wkTreeRemove(p)
+      renderWorkBody()
+      renderEditor()
+      applyPanes()
+      toast('已归档到 ' + data.path + '，原目录移入 ' + data.trash)
+      loadProjectTree(state.workProj, true)
+    } catch (e) {
+      toast('归档失败：' + (e.message || e))
+    }
+  }
   // 文件 / 目录行菜单「项 + 动作」唯一实现（2026-10-25）：侧栏文件树行 `.wk-row` 与 work 顶栏
   // 文件 pill `[data-wkftab]` 共用本 spec，禁止各写一套菜单。getEntry(el) → { path, dir }。
   // 「下载」仅文件出（2026-10-13 待办 1）：目录整棵打包无既有实现，不新造。
@@ -11234,12 +11260,16 @@ function setFirstSendHash(v) { firstSendHash = v }
           { a: 'rename', icon: I.dshEdit, label: '重命名' },
         ]
         const del = { a: 'delete', icon: I.dshStop, label: '删除', danger: true }
-        return dir ? [...head, del] : [...head, { a: 'download', icon: I.dshDownload, label: '下载' }, del]
+        const arc = { a: 'archive', icon: I.dshCompact, label: '归档' }
+        return dir
+          ? [...head, arc, del]
+          : [...head, { a: 'download', icon: I.dshDownload, label: '下载' }, del]
       },
       pick: (a, el) => {
         const { path } = entryOf(el)
         if (a === 'reveal') revealWorkEntry(path)
         else if (a === 'rename') openFileRename(path)
+        else if (a === 'archive') archiveWorkEntry(path)
         else if (a === 'download') downloadWorkEntry(path)
         else deleteWorkEntry(path)
       },
@@ -11307,19 +11337,60 @@ function setFirstSendHash(v) { firstSendHash = v }
       toast('删除失败：' + (e.message || e))
     }
   }
+  // 项目重命名（2026-11-07）：改的是 <工作区根>/<label> 目录名（label 即项目标识，会话转录在项目内
+  // 随目录一起走）。改名后要把「按 label 索引的本地状态」整体搬到新键：project 槽（state.workSlots）
+  // 与两个指针（workProj / workSlotKey），以及 chat 侧的 state.newProject；打开集/编辑文件是项目内
+  // 相对路径，不受影响。
+  async function renameWorkProject(label) {
+    if (!label) return
+    openRenameDialog({
+      heading: '重命名项目',
+      placeholder: '输入新项目名',
+      okText: '重命名',
+      value: label,
+      onSubmit: async (name) => {
+        if (state.workProj === label && wkEdDirty) await wkEdFlush() // 先落盘，避免丢未保存编辑
+        const res = await fetch(apiUrl('/gateway/project/rename'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, name }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) throw new Error(data.error || '重命名失败')
+        const next = data.label
+        if (state.workSlots && state.workSlots[label]) {
+          state.workSlots[next] = state.workSlots[label]
+          delete state.workSlots[label]
+        }
+        if (state.workProj === label) state.workProj = next
+        if (state.workSlotKey === label) state.workSlotKey = next
+        if (state.newProject === label) state.newProject = next
+        saveWork()
+        await loadSessions() // 项目列表 / 会话归属都按新目录重扫
+        renderWorkChrome()
+        renderWorkBody()
+        renderTopbar()
+        toast('项目已重命名为「' + next + '」')
+      },
+    })
+  }
   // 项目行菜单项：归档恒有；删除只对临时项目（长期项目走归档，避免误删整棵项目）。
   function projectRowMenuSpec() {
     return {
       items: (el) => {
         const label = el.dataset.pk || ''
         if (!label) return []
-        const out = [{ a: 'archive', icon: I.dshCompact, label: '归档' }]
+        const out = [
+          { a: 'rename', icon: I.dshEdit, label: '重命名' },
+          { a: 'archive', icon: I.dshCompact, label: '归档' },
+        ]
         if (isTempProjLabel(label)) out.push({ a: 'delete', icon: I.dshTrash, label: '删除', danger: true })
         return out
       },
       pick: (a, el) => {
         const label = el.dataset.pk || ''
-        if (a === 'archive') archiveWorkProject(label)
+        if (a === 'rename') renameWorkProject(label)
+        else if (a === 'archive') archiveWorkProject(label)
         else if (a === 'delete') deleteWorkProject(label)
       },
     }
@@ -12385,76 +12456,65 @@ function setFirstSendHash(v) { firstSendHash = v }
     document.head.appendChild(s)
   }
 
-  // ---------- @ 提及（2026-08-15）：输入 @ 弹出「近48h 会话 + 插件/技能」浮窗（2026-09-18 会话区提前），选中插入内联 chip ----------
-  // 消息文本中 chip 序列化为 [插件:名称] / [会话:名称] 令牌（CLI 终端渲染为 [名称]，遥测端渲染为 chip；
-  // 令牌保留 kind 供两端差异化渲染 + 未来插件激活扩展）。
-  // @ 提及 icon（2026-09-28 换 dsh v0.2.0-rc.1 产品图标集，16 描线/currentColor；旧 24 手绘那套作废）。
-  // 语义与 dsh 一致：会话=ChatLines、插件=PluginPinwheel、技能=Skill、目录=FolderClose、文件=Browse
-  // ——与 + 浮窗行图标同源（同一批 I.* 常量），两处不得分叉。会话/文件两枚随 chip 构造器下移 core/mention-syntax.js。
-  const MENTION_PLUGIN_ICON = I.dshPlugin
-  const MENTION_SKILL_ICON = I.dshSkill
-  // ---------- 目录 / 文件引用（2026-09-26）：@ 浮窗与 + 工具栏共用的一组「逐级浏览工作区根」状态 ----------
-  // 数据源 = GET /gateway/fs?path=<相对工作区根的子路径>（只读单层；网关侧复用 listOneLevel，跳过隐藏项
-  // 与重型目录、目录在前、单层不设条数上限）。pick.path 是**相对工作区根**的当前层路径，'' = 根——与 chip 上行的
-  // 路径同基准（用户定案：相对全局根）。令牌形态 [@目录:路径] / [@文件:路径] 见 core/mention-syntax.js。
-  // 引用原文块 ⇄ 折叠令牌的解析与编码统一在 core/mention-syntax.js（唯一真源：气泡/底栏共用）。
-  const MENTION_DIR_ICON = I.dshFolder
-  const MENTION_UP_ICON = I.dshUp
-  // CM6 接管后 sentinel（零宽 DOM 锚）退役：@ 查询锚点 = doc 位置 anchor（'@' 所在 pos）
-  let mention = { open: false, anchor: 0, q: '', items: [], sel: 0 }
-  // entries: null=未加载；[]=空目录；[TreeNode…]=已加载。seq 丢弃迟到的旧响应（快速连点目录）。
-  // searchOff：搜索/浏览模式开关（2026-10-14 待办 20）——false 且查询非空 = 全局搜索模式；
-  // 下钻/返回目录后翻 true（回到层内浏览），浮窗重开（refreshPick）复位 false。
-  const pick = { path: '', entries: null, loading: false, err: '', seq: 0, searchOff: false, q: '' }
-  // 全工作区递归清单（待办 20 的数据层）：BFS 逐层 /gateway/fs（每层分批并发，层间 await）。
-  // 不设深度/目录数/条目数上限——搜索要能命中工作区任意深度的文件（2026-10-25 用户定案：
-  // 截断过于严重，应显示全部）。隐藏目录与 node_modules/dist/.git 等仍由网关侧跳过。
-  // 浮窗每次打开经 refreshPick 重置重建（目录内容是外部可变状态，不跨打开缓存）。
-  // items 是**流式**清单：BFS 每扫完一批目录就并进去（用户边打边出结果，不必等全量跑完），
-  // done=true 才表示跑完整轮。浮窗打开即预热（refreshPick），打字时通常已可用。
-  const pickAll = { items: [], done: false, busy: false, seq: 0, err: '', onProgress: null }
-  const PICK_FS_CONCURRENCY = 24
-
-  // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
-  // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
-  // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
-  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
-  function groupOf(it) {
-    return GROUP_OF[it.kind] || '指令'
-  }
-
-  // ---------- 目录 / 文件浏览（数据层；两个浮窗共用，渲染各自负责） ----------
-  // 文件组的落点 = 当前上下文项目目录（用户定案「先显示本项目的文件」）：会话态取该会话所属项目，
-  // 非会话态取目标项目（`newSessionProject()`——work 模式即工作项目）。空串 = 无项目上下文 → 从工作区根起。
+  // ---------- 上下文项目（工具栏项目隔离的唯一来源）----------
+  // 会话态 = 该会话所属项目；非会话态 = 目标项目（`newSessionProject()`，work 模式即工作项目）。
+  // 空串 = 全局上下文（无项目归属）→ 文件从工作区根起、技能取便携根全局、会话不设隔离。
   function pickHome() {
     const s = state.currentHash ? findSession(state.currentHash) : null
     if (s) return sessionProjLabel(s)
     return newSessionProject() || ''
   }
-  // 会话是否属于当前上下文项目（@ 提及与 + 工具栏会话页的共用判据）。
-  // 会话的项目归属只有一处 = core/util.js sessionProjLabel（临时项目归一为全局 ''）。
-  function inHomeProject(s) {
-    return sessionProjLabel(s) === pickHome()
+  // 会话隔离判据（2026-11-07 用户定案）：home = 调用方算好的 `pickHome()`（列表循环里只算一次）。
+  //  - 有项目上下文 → **严格**只给该项目的会话（sessionProjLabel 是项目归属的唯一真源）；
+  //  - 全局上下文（home 为空）→ **不设隔离**，所有项目的会话都可被引用/搜索（用户明确的例外）。
+  function sessionInScope(s, home) {
+    if (!home) return true
+    return sessionProjLabel(s) === home
   }
+  // ---------- 目录 / 文件引用（2026-09-26）：@ 浮窗与 + 工具栏共用的一组「逐级浏览」状态 ----------
+  // 数据源 = GET /gateway/fs?path=<相对工作区根的子路径>（只读单层；网关侧复用 listOneLevel，跳过隐藏项
+  // 与重型目录、目录在前、单层不设条数上限）。pick.path 是**相对工作区根**的当前层路径，'' = 根——与 chip 上行的
+  // 路径同基准（用户定案：相对全局根）。令牌形态 [@目录:路径] / [@文件:路径] 见 core/mention-syntax.js。
+  // entries: null=未加载；[]=空目录；[TreeNode…]=已加载。seq 丢弃迟到的旧响应（快速连点目录）。
+  // searchOff：搜索/浏览模式开关（2026-10-14 待办 20）——false 且查询非空 = 递归搜索模式（范围 = pickAll.root）；
+  // 下钻/返回目录后翻 true（回到层内浏览），浮窗重开（refreshPick）复位 false。
+  const pick = { path: '', entries: null, loading: false, err: '', seq: 0, searchOff: false, q: '' }
+  // 递归清单（待办 20 的数据层）：BFS 逐层 /gateway/fs（每层分批并发，层间 await）。
+  // **扫描根 = pickAll.root = 当前上下文项目目录（pickHome）**，只有全局上下文才是工作区根——
+  // 搜索范围与层内浏览同基准，检索不跨项目（2026-11-07 用户实报「在 Pj8 工作，工具栏检索串项目」：
+  // 此前根恒为 ''，一次搜索把其它项目的同名文件全列出来）。
+  // 不设深度/目录数/条目数上限——当前项目内任意深度都能命中（2026-10-25 用户定案：截断过于严重，
+  // 应显示全部）。隐藏目录与 node_modules/dist/.git 等仍由网关侧跳过。
+  // 浮窗每次打开经 refreshPick 重置重建（目录内容是外部可变状态，不跨打开缓存）。
+  // items 是**流式**清单：BFS 每扫完一批目录就并进去（用户边打边出结果，不必等全量跑完），
+  // done=true 才表示跑完整轮。浮窗打开即预热（refreshPick），打字时通常已可用。
+  const pickAll = { items: [], done: false, busy: false, seq: 0, err: '', onProgress: null, root: '' }
+  const PICK_FS_CONCURRENCY = 24
+
   function pickParent() {
     const p = pick.path
     const i = p.lastIndexOf('/')
     return i < 0 ? '' : p.slice(0, i)
   }
   function pickLabel() {
-    // 搜索模式（2026-10-14 待办 20）：文件组标题提示结果口径（层内浏览则照旧标当前层）
-    if (pick.q && !pick.searchOff) return pickAll.done ? '工作区全局搜索' : '全局搜索…'
+    // 搜索模式（2026-10-14 待办 20）：文件组标题提示结果口径（层内浏览则照旧标当前层）。
+    // 范围写进标题（= pickAll.root，即当前上下文项目；全局 = 工作区根），用户一眼能看出没跨项目。
+    if (pick.q && !pick.searchOff) {
+      const scope = pickAll.root || '工作区根'
+      return scope + (pickAll.done ? ' · 搜索' : ' · 搜索中…')
+    }
     if (pick.loading) return '加载中…'
     if (pick.err) return '加载失败'
     return pick.path || '工作区根'
   }
-  // 构建全工作区递归清单（幂等；构建期间 busy 挡重入，seq 丢弃被 refreshPick 作废的旧轮）。
+  // 构建项目内递归清单（幂等；构建期间 busy 挡重入，seq 丢弃被 refreshPick 作废的旧轮）。
   // 完成不自行重渲——由调用方的 after 回调负责（浮窗还开着才重渲）。
   async function ensurePickAll() {
     if (pickAll.done || pickAll.busy) return
     pickAll.busy = true
     const seq = ++pickAll.seq
-    let layer = ['']
+    const seed = pickAll.root
+    let layer = [seed]
     const seen = new Set()
     let rootErr = ''
     try {
@@ -12470,8 +12530,8 @@ function setFirstSendHash(v) { firstSendHash = v }
                 const r = await fetch(apiUrl('/gateway/fs?path=' + encodeURIComponent(p)))
                 const data = await r.json()
                 if (!r.ok || !data || !Array.isArray(data.entries)) {
-                  // 根层失败 = 整份清单不可信（空结果会谎报「无匹配」）：记错并作废本轮，浮窗重开再试。
-                  if (!p) rootErr = (data && data.error) || '工作区索引失败'
+                  // 扫描根失败 = 整份清单不可信（空结果会谎报「无匹配」）：记错并作废本轮，浮窗重开再试。
+                  if (p === seed) rootErr = (data && data.error) || `索引失败：${seed || '工作区根'}`
                   return
                 }
                 for (const e of data.entries) {
@@ -12483,8 +12543,8 @@ function setFirstSendHash(v) { firstSendHash = v }
                   }
                 }
               } catch (e) {
-                /* 子层失败跳过，不拖垮整轮（根层失败另记） */
-                if (!p) rootErr = e.message || '工作区索引失败'
+                /* 子层失败跳过，不拖垮整轮（扫描根失败另记） */
+                if (p === seed) rootErr = e.message || `索引失败：${seed || '工作区根'}`
               }
             }),
           )
@@ -12538,9 +12598,10 @@ function setFirstSendHash(v) { firstSendHash = v }
     }
     return seq === pick.seq
   }
-  // 当前层的可选条目 / 全局搜索结果（2026-10-14 待办 20）。
+  // 当前层的可选条目 / 递归搜索结果（2026-10-14 待办 20）。
   // q 为空或已下钻（searchOff）= 原层内浏览：上级目录行 + 当前层全部（按 q 过滤后同样全列）。
-  // q 非空且未下钻 = 全局搜索：跨工作区递归清单（pickAll）按名称过滤，命中多少列多少（不截断）。
+  // q 非空且未下钻 = 递归搜索：**当前上下文项目内**的递归清单（pickAll，根 = pickAll.root）
+  // 按名称过滤，命中多少列多少（不截断）；不再扫到别的项目。
   // 清单未就绪时文件组暂空（其余组照常），pickSearchKick 建完重渲补上。
   // 「上级目录」只取决于「当前是不是工作区根」，与**这一层的内容**无关——故加载中/加载失败时它照样在，
   // 否则某一层拉不到（目录已删/端点失败）就退不回去，整个文件组成死层。条目本身不塞假行。
@@ -12570,6 +12631,44 @@ function setFirstSendHash(v) { firstSendHash = v }
     pick.searchOff = true
     return loadPickPath(it.path)
   }
+  // 浮窗打开时定位到当前上下文项目并加载该层（不缓存：目录内容是外部可变状态，缓存会让新建的文件不可见）。
+  // **每次打开都回到项目层**（同 @ 浮窗每次打开重置 q/sel）——打开是新的一轮手势，不是接着上次浏览的位置；
+  // 层内下钻/返回由 pickEnter 自己拉，走同一处 loadPickPath。
+  function refreshPick(after) {
+    pick.entries = null // 立刻清旧层：否则换项目后先闪一帧上一个项目的条目（在途请求由 loadPickPath 的 seq 作废）
+    pick.err = ''
+    pick.q = '' // 查询/层级同属上一轮手势：不复位会先渲一帧旧查询结果（两个浮窗共用本状态）
+    pick.path = ''
+    pick.searchOff = false // 浮窗重开 = 新一轮手势：回到递归搜索模式（待办 20；范围见 pickAll.root）
+    pickAll.items = [] // 递归清单随打开重建（目录内容外部可变，不跨打开缓存；在途轮由 seq 作废）
+    pickAll.done = false
+    pickAll.err = ''
+    pickAll.seq++
+    // 搜索根与层内浏览同基准（pickHome：会话所属项目 / work 工作项目；空串 = 全局 → 工作区根）。
+    // 搜索只扫这一棵子树，不再跨项目（2026-11-07 用户实报「在 Pj8 工作，工具栏检索串项目」）。
+    pickAll.root = pickHome()
+    // 作废在途轮时必须同步释放 busy：旧轮 finally 见 seq 不符只跳过写回、不会复位 busy，
+    // 否则下一次输入永远起不了新轮（文件搜索整组空白）
+    pickAll.busy = false
+    // 打开即预热递归清单（不等用户打出查询词才开始扫：早开始早出结果）。
+    // 流式批回调与层加载共用 after（渲染点已判 cmd.open）。
+    pickAll.onProgress = after || null
+    ensurePickAll().catch(() => {})
+    loadPickPath(pickAll.root).then((ok) => { if (ok && after) after() })
+  }
+  // ---------- @ 提及（2026-08-15）：输入 @ 弹出同一工具栏（2026-09-18 会话区提前），选中插入内联 chip ----------
+  // 消息文本中 chip 序列化为 [插件:名称] / [会话:名称] 令牌（CLI 终端渲染为 [名称]，遥测端渲染为 chip；
+  // 令牌保留 kind 供两端差异化渲染 + 未来插件激活扩展）。
+  // @ 提及 icon（2026-09-28 换 dsh v0.2.0-rc.1 产品图标集，16 描线/currentColor；旧 24 手绘那套作废）。
+  // 语义与 dsh 一致：会话=ChatLines、插件=PluginPinwheel、技能=Skill、目录=FolderClose、文件=Browse
+  // ——与 + 浮窗行图标同源（同一批 I.* 常量），两处不得分叉。会话/文件两枚随 chip 构造器下移 core/mention-syntax.js。
+  const MENTION_PLUGIN_ICON = I.dshPlugin
+  const MENTION_SKILL_ICON = I.dshSkill
+  const MENTION_DIR_ICON = I.dshFolder
+  const MENTION_UP_ICON = I.dshUp
+  // CM6 接管后 sentinel（零宽 DOM 锚）退役：@ 查询锚点 = doc 位置 anchor（'@' 所在 pos）
+  let mention = { open: false, anchor: 0, q: '', items: [], sel: 0 }
+
   function mentionChipIcon(kind, ptype) {
     if (kind === 'session') return MENTION_SESSION_ICON
     if (kind === 'path' || kind === 'filepick' || kind === 'imgpick') return ptype === 'dir' ? MENTION_DIR_ICON : MENTION_FILE_ICON
@@ -12681,66 +12780,6 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 输入 @ 不另立浮窗，直接唤起同一个 + 工具栏并进入 mention 模式（打开/加载/重渲统一在
     // commands.js 的 openCmdPopMention；本件只维护 @ 的锚点与查询词）。
     openCmdPopMention()
-  }
-
-  // 浮窗打开时定位到当前上下文项目并加载该层（不缓存：目录内容是外部可变状态，缓存会让新建的文件不可见）。
-  // **每次打开都回到项目层**（同 @ 浮窗每次打开重置 q/sel）——打开是新的一轮手势，不是接着上次浏览的位置；
-  // 层内下钻/返回由 pickEnter 自己拉，走同一处 loadPickPath。
-  function refreshPick(after) {
-    pick.entries = null // 立刻清旧层：否则换项目后先闪一帧上一个项目的条目（在途请求由 loadPickPath 的 seq 作废）
-    pick.err = ''
-    pick.q = '' // 查询/层级同属上一轮手势：不复位会先渲一帧旧查询结果（两个浮窗共用本状态）
-    pick.path = ''
-    pick.searchOff = false // 浮窗重开 = 新一轮手势：回到全局搜索模式（待办 20）
-    pickAll.items = [] // 递归清单随打开重建（目录内容外部可变，不跨打开缓存；在途轮由 seq 作废）
-    pickAll.done = false
-    pickAll.err = ''
-    pickAll.seq++
-    // 作废在途轮时必须同步释放 busy：旧轮 finally 见 seq 不符只跳过写回、不会复位 busy，
-    // 否则下一次输入永远起不了新轮（文件搜索整组空白）
-    pickAll.busy = false
-    // 打开即预热全局清单（不等用户打出查询词才开始扫：全量约 1500 个目录请求，早开始早出结果）。
-    // 流式批回调与层加载共用 after（渲染点已判 cmd.open）。
-    pickAll.onProgress = after || null
-    ensurePickAll().catch(() => {})
-    loadPickPath(pickHome()).then((ok) => { if (ok && after) after() })
-  }
-
-  // 弹窗的统一条目源（@ 模式与 + 工具栏搜索共用；+ 的入口视图另走 commands.js 的 cmdEntries）。
-  // **全局搜索 = 扁平列表**（2026-10-25 用户定案：不做类别隔离），按时间倒序混排：
-  // 会话 updatedAt / 文件目录 mtime（/gateway/fs 返回）/ 本次上传（now）；无时间字段的技能与指令 t=0 稳定排末尾。
-  // **空查询 / 已下钻 = 浏览**：保留数据层既有顺序（上传 → 近 48h 会话 → 技能 → 当前层），不做时间排序。
-  function mentionItems(q) {
-    const ql = (q || '').trim().toLowerCase()
-    const match = (s) => !ql || String(s || '').toLowerCase().includes(ql)
-    const globalSearch = !!ql && !pick.searchOff
-    const now = Date.now()
-    const items = []
-    // 「上传」组（待办 6）：本次上传的附件（图片/文件），选中插回正文 md 引用。属于「刚刚发生」，时间取 now。
-    for (const u of uploadedMentionItems()) if (match(u.name)) items.push({ ...u, t: now })
-    // 会话：**空查询**只给近 48h 建议（免浮窗一开就几百条）；**有查询词**时搜全量——标题检索必须与
-    // 侧栏一致，不能因会话旧于 48h 就查不到（2026-10-17 用户实测：侧栏有「202610131215-有机随想」，
-    // 输入 @2026101312 却只剩文件命中）。
-    const cutoff = now - 48 * 3600 * 1000
-    for (const s of ALL) {
-      // 2026-11-06 A：会话只给当前上下文项目的（此前混入全部项目的会话）
-      if (!inHomeProject(s)) continue
-      if (!globalSearch && s.updatedAt < cutoff) continue
-      // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
-      if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
-    }
-    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
-    const proj = pickHome()
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
-    if (MGR) {
-      // 2026-11-06 A：技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
-      // 插件是便携根安装件、无项目归属，两种上下文都列。
-      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
-    }
-    items.push(...pickItems(q))
-    if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
-    return items
   }
 
   // 条目落地的唯一入口（点击与回车共用）：目录/上级=下钻重渲；文件=插 chip；会话/技能=插 chip。
@@ -12994,20 +13033,6 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
   const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
-  // 「+」浮窗的入口视图（2026-10-25 用户定案：扁平分组的工具栏太乱，改为入口形式——首屏只列
-  // 上传动作 + 四类入口，点进某一类后展示该类**全部**条目，不截断；底栏有查询词时退回跨类搜索）。
-  const CMD_VIEWS = [
-    { view: 'session', name: '会话', desc: '引用一个会话', icon: MENTION_SESSION_ICON },
-    { view: 'file', name: '文件', desc: '浏览工作区文件与目录', icon: I.dshFolder },
-    { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
-    { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
-  ]
-  // 过滤查询唯一来源 = 底栏输入框文本（2026-10-14 待办 20 返修）：弃独立搜索框——旧框每次 input 都
-  // innerHTML 重渲并**重建框自身**，IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，
-  // 底栏 contenteditable 原样不动，中文 IME 正常。命令前缀 / 由 cmdEntries 剥。
-  function barQuery() {
-    return serializeInput().trim()
-  }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -13079,17 +13104,74 @@ function setFirstSendHash(v) { firstSendHash = v }
     skills: MENTION_SKILL_ICON,
     plugins: MENTION_PLUGIN_ICON,
   }
+  // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
+  // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
+  // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
+  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
+  function groupOf(it) {
+    return GROUP_OF[it.kind] || '指令'
+  }
+  // 「+」浮窗的入口视图（2026-10-25 用户定案：扁平分组的工具栏太乱，改为入口形式——首屏只列
+  // 上传动作 + 四类入口，点进某一类后展示该类**全部**条目，不截断；底栏有查询词时退回跨类搜索）。
+  const CMD_VIEWS = [
+    { view: 'session', name: '会话', desc: '引用一个会话', icon: MENTION_SESSION_ICON },
+    { view: 'file', name: '文件', desc: '浏览工作区文件与目录', icon: I.dshFolder },
+    { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
+    { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
+  ]
+  // 过滤查询唯一来源 = 底栏输入框文本（2026-10-14 待办 20 返修）：弃独立搜索框——旧框每次 input 都
+  // innerHTML 重渲并**重建框自身**，IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，
+  // 底栏 contenteditable 原样不动，中文 IME 正常。命令前缀 / 由 cmdEntries 剥。
+  function barQuery() {
+    return serializeInput().trim()
+  }
 
-  // ---- 命令菜单（dsh PopupSelectController 移植：open→加载一次→本地过滤→高亮→选择→确认门）----
-  // 2026-09-09 二轮：统一条目 = 图片选择行（恒首位）+ 技能（MGR.skills.personal，/gateway/plugins）
-  // + 近 48h 会话（同 @ 提及链）+ 命令（MOCK_COMMANDS）；搜索滤 name/desc（图片行恒显）。
+  // 弹窗的统一条目源（@ 模式与 + 工具栏搜索共用；+ 的入口视图另走 cmdEntries）。
+  // **全局搜索 = 扁平列表**（2026-10-25 用户定案：不做类别隔离），按时间倒序混排：
+  // 会话 updatedAt / 文件目录 mtime（/gateway/fs 返回）/ 本次上传（now）；无时间字段的技能与指令 t=0 稳定排末尾。
+  // **空查询 / 已下钻 = 浏览**：保留数据层既有顺序（上传 → 近 48h 会话 → 技能 → 当前层），不做时间排序。
+  function mentionItems(q) {
+    const ql = (q || '').trim().toLowerCase()
+    const match = (s) => !ql || String(s || '').toLowerCase().includes(ql)
+    const globalSearch = !!ql && !pick.searchOff
+    const now = Date.now()
+    const items = []
+    // 「上传」组（待办 6）：本次上传的附件（图片/文件），选中插回正文 md 引用。属于「刚刚发生」，时间取 now。
+    for (const u of uploadedMentionItems()) if (match(u.name)) items.push({ ...u, t: now })
+    // 会话：**空查询**只给近 48h 建议（免浮窗一开就几百条）；**有查询词**时搜全量——标题检索必须与
+    // 侧栏一致，不能因会话旧于 48h 就查不到（2026-10-17 用户实测：侧栏有「202610131215-有机随想」，
+    // 输入 @2026101312 却只剩文件命中）。
+    // 项目隔离 = sessionInScope：有项目上下文只给该项目的会话；全局上下文不设隔离（2026-11-07 定案）。
+    // home 只算一次（每条会话都重算 pickHome 会做 N 次 findSession）。
+    const home = pickHome()
+    const cutoff = now - 48 * 3600 * 1000
+    for (const s of ALL) {
+      if (!sessionInScope(s, home)) continue
+      if (!globalSearch && s.updatedAt < cutoff) continue
+      // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
+      if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
+    }
+    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
+    const proj = home
+    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    if (MGR) {
+      // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
+      // 插件是便携根安装件、无项目归属，两种上下文都列。
+      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+    }
+    items.push(...pickItems(q))
+    if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
+    return items
+  }
+
   // 会话行（会话入口与搜索共用）：sid = 会话间协作的寻址键，两个路口径必须一致（同 @ 提及链）。
   function cmdSessionRows(match, grp) {
     const out = []
+    const home = pickHome()
     for (const s of [...ALL].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      // 2026-11-06 A：只列当前上下文项目的会话（此前遍历 ALL 混入所有项目）；
-      // 判据与 @ 提及共用 inHomeProject（空串 = 全局，同 pickHome 口径）。
-      if (!inHomeProject(s)) continue
+      // 项目隔离与 @ 提及共用 sessionInScope（有项目只给本项目；全局不设限制）。
+      if (!sessionInScope(s, home)) continue
       if (match && !match(s.title || '')) continue
       out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp })
     }
@@ -13105,7 +13187,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   function cmdSkillRows(match, grp) {
     const out = []
     const proj = pickHome()
-    // 2026-11-06 A：技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
+    // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
     // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
     if (proj) {
       for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
@@ -13117,16 +13199,16 @@ function setFirstSendHash(v) { firstSendHash = v }
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
-  // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
-  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
   // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
   function pickProgressRenders() {
     return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
   }
+  // 文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
+  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
   function pushSearchState(items, base) {
     if (pickAll.err) { items.push({ kind: 'pathwait', name: '索引失败', desc: pickAll.err }); return }
-    if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引工作区' }); return }
+    if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引 ' + (pickAll.root || '工作区根') }); return }
     if (items.length === (base || 0)) items.push({ kind: 'pathwait', name: '无匹配结果', desc: '' })
   }
   function cmdEntries() {
@@ -13148,7 +13230,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       else if (cmd.view === 'cmd') {
         for (const o of MOCK_COMMANDS) if (match(o.name) || match(o.desc)) items.push({ kind: 'cmd', name: o.name, desc: o.desc, ref: o, grp: '指令' })
       }
-      // 文件视图：有查询词 = 只搜文件（同一条全局文件清单，不含会话/技能）；空查询 = 层内浏览。
+      // 文件视图：有查询词 = 只搜文件（同一条项目文件清单，不含会话/技能）；空查询 = 层内浏览。
       else if (cmd.view === 'file') {
         if (q) {
           const base = items.length
@@ -13176,218 +13258,6 @@ function setFirstSendHash(v) { firstSendHash = v }
     for (const v of CMD_VIEWS) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
     return items
   }
-  // 弹窗的**唯一开链**（2026-10-25 用户定案：输入 @ 触发与底栏点 + 完全同一条链路，不另写）。
-  // mentionMode 只决定查询词来源（@ 后文本 vs 底栏全文）；有无查询词由 cmdEntries 判：
-  // 无词 = 首屏入口（与 + 一致），有词且在 @ 模式 = 扁平全局搜索。
-  function openCmdPop(mentionMode) {
-    const fresh = !cmd.open
-    if (msel.open) closeModelPop()
-    if (!mentionMode) closeMentionPop()
-    cmd.open = true
-    cmd.mentionMode = !!mentionMode
-    cmd.view = '' // 每次打开都回首屏入口（手势起点一致）
-    cmd.status = 'ready'
-    cmd.active = 0
-    cmd.confirming = null
-    cmd.acknowledged = false
-    cmd.error = null
-    renderCmdPop()
-    // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
-    // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
-    renderTaskDock()
-    // 过滤在底栏打字（待办 20 返修）：焦点回底栏，用户继续输入列表即变；触屏不抢焦点（iOS 弹键盘，
-    // 与旧搜索框同一处置——用户自己点输入框唤起）。@ 唤起时光标本就在底栏，不重复聚焦。
-    if (!mentionMode && !isTouch()) composerFocus()
-    if (fresh) {
-      // 首次打开确保技能清单/目录层已加载（异步），加载完用当前状态重渲
-      loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
-      // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
-      ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
-      refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
-    }
-  }
-  function openCmdPopMention() { openCmdPop(true) }
-  function toggleCmdPop() {
-    if (cmd.open) { closeCmdPop(); return }
-    openCmdPop(false)
-  }
-  function closeCmdPop() {
-    if (!cmd.open) { cmd.mentionMode = false; return }
-    cmd.open = false
-    cmd.mentionMode = false
-    cmd.confirming = null
-    cmd.acknowledged = false
-    cmdPop.hidden = true
-    // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
-    renderTaskDock()
-    // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
-    resetMention()
-    const rm = $('risk-modal')
-    if (!rm.hidden) closeRiskModal()
-  }
-  function renderCmdPop() {
-    if (!cmd.open) return
-    // dsh confirmation gate：确认态下命令卡隐藏，改由全屏 RiskConfirmation 模态接管
-    if (cmd.confirming) { cmdPop.hidden = true; renderRiskModal(); return }
-    // 单页分组渲染（无 tab）：四组行列表；已选附件缩略图不在本浮窗重复显示（见下）。
-    // 独立搜索框已退役（2026-10-14 待办 20 返修）：过滤文本 = 底栏输入框（barQuery），列表随底栏
-    // 打字自动变化（ctx-meter 在底栏 input 事件里调 renderCmdPop）。
-    cmd.items = cmdEntries()
-    // 视图切换/查询变化后条目数会变：高亮下标夹回合法区间，否则回车会选中 undefined。
-    cmd.active = Math.min(cmd.active, Math.max(0, cmd.items.length - 1))
-    // 滚动位置跨重渲保持（2026-11-05 根因）：列表在文件索引流式进度/数据落地时会整体重渲，
-    // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
-    // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
-    // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
-    const prevVp = cmdPop.querySelector('.viewport')
-    const keepTop = prevVp ? prevVp.scrollTop : 0
-    const prevActive = cmd.prevActive
-    let html = ''
-    if (cmd.error !== null) {
-      html += `<div class="error" role="alert"><span class="errorText">${esc(cmd.error)}</span>${cmd.status === 'failed' ? `<button type="button" class="retry">重试</button>` : ''}</div>`
-    } else {
-      // 待发附件的唯一可见回显 = 底栏 `#img-pills`（inputbar/images.js renderImgPills）；
-      // 本浮窗只做选择/上传入口，不再重复渲染缩略图（2026-10-22 用户实测：同一批图在浮窗与底栏各出现一次）。
-      // 搜索结果（@ 后有查询词）= 扁平时间线，不印分组标题（用户定案「不隔离」）；@ 无词/+ 模式 = 入口视图分组。
-      // 未进视图的跨类搜索才是扁平时间线；进了某类视图仍按组显示（导航行与该类标题）。
-      const flat = cmd.mentionMode && !cmd.view && !!mention.q.trim()
-      let lastGrp = ''
-      html += `<div role="listbox" class="viewport">${cmd.items.map((it, i) => {
-        const g = it.grp || groupOf(it)
-        const grp = g === '文件' ? '文件 · ' + pickLabel() : g
-        // 「返回」行不单立分组标题（2026-11-06 D）：视图内此前先印「导航」再印该类标题，
-        // 两条上箭头/分组叠在顶部像重复了一栏；返回行随该视图的标题下呈现即可。
-        const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
-        if (it.kind !== 'back') lastGrp = grp
-        const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
-        const label = it.kind === 'cmd' ? `/${it.name}` : it.name
-        const detail = it.kind === 'path' ? it.path : it.desc
-        const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
-        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
-      }).join('')}</div>`
-    }
-    cmdPop.innerHTML = html
-    cmdPop.hidden = false
-    cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
-    cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
-    const vp = cmdPop.querySelector('.viewport')
-    if (vp) vp.scrollTop = keepTop
-    if (cmd.active !== prevActive) {
-      const on = cmdPop.querySelector('.row.rowActive')
-      if (on) on.scrollIntoView({ block: 'nearest' })
-    }
-    cmd.prevActive = cmd.active
-  }
-  // 风险确认门（dsh RiskConfirmation + Modal 移植）：全屏遮罩 + 居中对话框，checkbox 勾选后才可确认
-  function renderRiskModal() {
-    const o = cmd.confirming
-    if (!o) { const m = $('risk-modal'); if (!m.hidden) m.hidden = true; return }
-    const rm = $('risk-modal')
-    rm.innerHTML = `
-      <div class="mask"></div>
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="执行 /${esc(o.name)}？">
-        <div class="header">
-          <h2 class="title">执行 /${esc(o.name)}？</h2>
-          <button type="button" class="close" aria-label="关闭">${I.dshClose}</button>
-        </div>
-        <div class="body">
-          <div class="warning">${I.dshWarn}<p>${esc(o.risk)}</p></div>
-          <label class="acknowledgement"><input type="checkbox" ${cmd.acknowledged ? 'checked' : ''}/><span>我已了解该操作的风险</span></label>
-        </div>
-        <div class="footer">
-          <button type="button" class="button outline">取消</button>
-          <button type="button" class="button primary" ${cmd.acknowledged ? '' : 'disabled'}>确认执行</button>
-        </div>
-      </div>`
-    rm.hidden = false
-    const cb = rm.querySelector('.acknowledgement input')
-    if (cb) cb.addEventListener('change', () => { cmdAck(cb.checked) })
-    // 无需 stopPropagation：外部关闭已改 mousedown+contains（mousedown 在重渲染前命中目标），不再误判（dsh Modal 同语义）
-    rm.querySelector('.mask')?.addEventListener('click', () => closeRiskModal())
-    rm.querySelector('.close')?.addEventListener('click', () => closeRiskModal())
-    rm.querySelector('.outline')?.addEventListener('click', () => closeRiskModal())
-    rm.querySelector('.primary')?.addEventListener('click', () => cmdConfirm())
-  }
-  // 取消确认：清除确认态、恢复命令列表（dsh cancelConfirmation：确认卡关闭、列表重显）
-  function closeRiskModal() {
-    const rm = $('risk-modal')
-    rm.hidden = true
-    rm.innerHTML = ''
-    cmd.confirming = null
-    cmd.acknowledged = false
-    renderCmdPop()
-  }
-  function cmdMove(d) {
-    const n = cmd.items.length
-    if (!n) return
-    cmd.active = (cmd.active + d + n) % n
-    renderCmdPop()
-  }
-  // 统一选择分发（2026-09-09 二轮）：图片行=选图（选完 img-file change 关浮窗）；技能/会话=chip 追加输入栏；
-  // 命令=原链（risk→确认门 / settle→写入输入栏）
-  function cmdSelect() {
-    const it = cmd.items[cmd.active]
-    if (!it || cmd.submitting) return
-    // 入口视图导航（两个模式共用，必须先于 @ 落地判：否则 @ 里点「文件」会被当成插入 [插件:文件] 胶囊）：
-    // 入口行 = 进入该类（此后查询词只在该类里搜）；返回行 = 回首屏。
-    if (it.kind === 'entry') { cmd.view = it.view; cmd.active = 0; renderCmdPop(); return }
-    if (it.kind === 'back') { cmd.view = ''; cmd.active = 0; renderCmdPop(); return }
-    // @ 模式：所有条目都落地到 @ 锚点（含上传附件写回正文、目录下钻重渲）——统一走 mention.js，
-    // 与 + 模式的「追加到输入栏末尾」刻意不同（@ 是就地替换查询）。
-    if (cmd.mentionMode) { if (it.kind !== 'pathwait') selectMentionItem(it); return }
-    if (it.kind === 'imgpick') { $('img-file').click(); return }
-    if (it.kind === 'filepick') { $('file-upload').click(); return }
-    // 已上传附件引用行（+ 模式）：引用原文追加到输入栏末尾（@ 模式走上方的 selectMentionItem 就地替换）。
-    if (it.kind === 'attref') { composerAppendText(it.md + ' '); closeCmdPop(); return }
-    if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
-    // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
-    // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
-      pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
-      return
-    }
-    if (it.kind === 'path') { appendMentionChip('path', it.path, '', 'file'); closeCmdPop(); return }
-    if (it.kind === 'skill' || it.kind === 'plugin') { appendMentionChip('plugin', it.name); closeCmdPop(); return }
-    if (it.kind === 'session') { appendMentionChip('session', it.name, it.sid); closeCmdPop(); return }
-    const o = it.ref
-    if (o.risk) { cmd.confirming = o; cmd.acknowledged = false; renderCmdPop(); return }
-    cmdSettle(o)
-  }
-  // 浮窗直选落地（无 @ 光标锚点）：令牌追加到输入栏末尾 + 尾随空格，光标到末尾（CM6 接管后
-  // chip = doc 令牌文本的装饰视图，composerAppendToken 落 doc 即成 chip）。
-  function appendMentionChip(kind, name, sid, ptype) {
-    const token = kind === 'session'
-      ? (sid ? `[会话:${name}|${sid}]` : `[会话:${name}]`)
-      : kind === 'path'
-        ? mentionPathToken(name, ptype)
-        : `[插件:${name}]`
-    composerAppendToken(token)
-    syncGwSend()
-  }
-  function cmdAck(v) { cmd.acknowledged = v; renderCmdPop() }
-  function cmdConfirm() {
-    if (!cmd.confirming || !cmd.acknowledged) return
-    const o = cmd.confirming
-    cmd.confirming = null
-    cmd.acknowledged = false
-    cmdSettle(o)
-  }
-  // 选择落地：把命令文本写入输入栏（claim 带参数提示 / bare 直接插入），回车发送由 CLI 端执行；本地展示同闭环
-  function cmdSettle(o) {
-    setInputText(o.claim ? `/${o.name} ` : `/${o.name}`)
-    closeCmdPop()
-    composerFocus()
-    toast(`命令已写入输入栏：/${o.name}（回车发送）`)
-  }
-  // CM6 接管后 = doc 全文替换（composerSetText 内含 readOnly 阀 + 触发 updateListener → syncGwSend）
-  function setInputText(text) {
-    composerSetText(text)
-    syncGwSend()
-  }
-
-  // ---- 模型选择（dsh ModelSelect 移植：trigger 显示「模型名 · 推理等级」，root 两行 Model/Effort 各自 drill）----
-  // 当前选中模型 id：本地 MODEL_CUR 优先，未同步时回落 MODELS 的 activeModel/model（凭据池同源）
   function currentChoice() {
     const id = MODEL_CUR.model || (MODELS && (MODELS.activeModel || (MODELS.model ? String(MODELS.model) : ''))) || ''
     if (!id) return null
@@ -13636,6 +13506,218 @@ function setFirstSendHash(v) { firstSendHash = v }
 
 function setModelCur(v) { MODEL_CUR = v }
 function setModelUserPicked(v) { modelUserPicked = v }
+  // 弹窗的**唯一开链**（2026-10-25 用户定案：输入 @ 触发与底栏点 + 完全同一条链路，不另写）。
+  // mentionMode 只决定查询词来源（@ 后文本 vs 底栏全文）；有无查询词由 cmdEntries 判：
+  // 无词 = 首屏入口（与 + 一致），有词且在 @ 模式 = 扁平全局搜索。
+  function openCmdPop(mentionMode) {
+    const fresh = !cmd.open
+    if (msel.open) closeModelPop()
+    if (!mentionMode) closeMentionPop()
+    cmd.open = true
+    cmd.mentionMode = !!mentionMode
+    cmd.view = '' // 每次打开都回首屏入口（手势起点一致）
+    cmd.status = 'ready'
+    cmd.active = 0
+    cmd.confirming = null
+    cmd.acknowledged = false
+    cmd.error = null
+    renderCmdPop()
+    // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
+    // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
+    renderTaskDock()
+    // 过滤在底栏打字（待办 20 返修）：焦点回底栏，用户继续输入列表即变；触屏不抢焦点（iOS 弹键盘，
+    // 与旧搜索框同一处置——用户自己点输入框唤起）。@ 唤起时光标本就在底栏，不重复聚焦。
+    if (!mentionMode && !isTouch()) composerFocus()
+    if (fresh) {
+      // 首次打开确保技能清单/目录层已加载（异步），加载完用当前状态重渲
+      loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
+      ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
+    }
+  }
+  function openCmdPopMention() { openCmdPop(true) }
+  function toggleCmdPop() {
+    if (cmd.open) { closeCmdPop(); return }
+    openCmdPop(false)
+  }
+  function closeCmdPop() {
+    if (!cmd.open) { cmd.mentionMode = false; return }
+    cmd.open = false
+    cmd.mentionMode = false
+    cmd.confirming = null
+    cmd.acknowledged = false
+    cmdPop.hidden = true
+    // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
+    renderTaskDock()
+    // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
+    resetMention()
+    const rm = $('risk-modal')
+    if (!rm.hidden) closeRiskModal()
+  }
+  function renderCmdPop() {
+    if (!cmd.open) return
+    // dsh confirmation gate：确认态下命令卡隐藏，改由全屏 RiskConfirmation 模态接管
+    if (cmd.confirming) { cmdPop.hidden = true; renderRiskModal(); return }
+    // 单页分组渲染（无 tab）：四组行列表；已选附件缩略图不在本浮窗重复显示（见下）。
+    // 独立搜索框已退役（2026-10-14 待办 20 返修）：过滤文本 = 底栏输入框，列表随底栏
+    // 打字自动变化（ctx-meter 在底栏 input 事件里调 renderCmdPop）。
+    cmd.items = cmdEntries()
+    // 视图切换/查询变化后条目数会变：高亮下标夹回合法区间，否则回车会选中 undefined。
+    cmd.active = Math.min(cmd.active, Math.max(0, cmd.items.length - 1))
+    // 滚动位置跨重渲保持（2026-11-05 根因）：列表在文件索引流式进度/数据落地时会整体重渲，
+    // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
+    // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
+    // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
+    const prevVp = cmdPop.querySelector('.viewport')
+    const keepTop = prevVp ? prevVp.scrollTop : 0
+    const prevActive = cmd.prevActive
+    let html = ''
+    if (cmd.error !== null) {
+      html += `<div class="error" role="alert"><span class="errorText">${esc(cmd.error)}</span>${cmd.status === 'failed' ? `<button type="button" class="retry">重试</button>` : ''}</div>`
+    } else {
+      // 待发附件的唯一可见回显 = 底栏 `#img-pills`（inputbar/images.js renderImgPills）；
+      // 本浮窗只做选择/上传入口，不再重复渲染缩略图（2026-10-22 用户实测：同一批图在浮窗与底栏各出现一次）。
+      // 搜索结果（@ 后有查询词）= 扁平时间线，不印分组标题（用户定案「不隔离」）；@ 无词/+ 模式 = 入口视图分组。
+      // 未进视图的跨类搜索才是扁平时间线；进了某类视图仍按组显示（导航行与该类标题）。
+      const flat = cmd.mentionMode && !cmd.view && !!mention.q.trim()
+      let lastGrp = ''
+      html += `<div role="listbox" class="viewport">${cmd.items.map((it, i) => {
+        const g = it.grp || groupOf(it)
+        const grp = g === '文件' ? '文件 · ' + pickLabel() : g
+        // 「返回」行不单立分组标题（2026-11-06 D）：视图内此前先印「导航」再印该类标题，
+        // 两条上箭头/分组叠在顶部像重复了一栏；返回行随该视图的标题下呈现即可。
+        const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
+        if (it.kind !== 'back') lastGrp = grp
+        const on = i === cmd.active ? ' rowActive' : ''
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const label = it.kind === 'cmd' ? `/${it.name}` : it.name
+        const detail = it.kind === 'path' ? it.path : it.desc
+        const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
+        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
+      }).join('')}</div>`
+    }
+    cmdPop.innerHTML = html
+    cmdPop.hidden = false
+    cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
+    cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
+    const vp = cmdPop.querySelector('.viewport')
+    if (vp) vp.scrollTop = keepTop
+    if (cmd.active !== prevActive) {
+      const on = cmdPop.querySelector('.row.rowActive')
+      if (on) on.scrollIntoView({ block: 'nearest' })
+    }
+    cmd.prevActive = cmd.active
+  }
+  // 风险确认门（dsh RiskConfirmation + Modal 移植）：全屏遮罩 + 居中对话框，checkbox 勾选后才可确认
+  function renderRiskModal() {
+    const o = cmd.confirming
+    if (!o) { const m = $('risk-modal'); if (!m.hidden) m.hidden = true; return }
+    const rm = $('risk-modal')
+    rm.innerHTML = `
+      <div class="mask"></div>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="执行 /${esc(o.name)}？">
+        <div class="header">
+          <h2 class="title">执行 /${esc(o.name)}？</h2>
+          <button type="button" class="close" aria-label="关闭">${I.dshClose}</button>
+        </div>
+        <div class="body">
+          <div class="warning">${I.dshWarn}<p>${esc(o.risk)}</p></div>
+          <label class="acknowledgement"><input type="checkbox" ${cmd.acknowledged ? 'checked' : ''}/><span>我已了解该操作的风险</span></label>
+        </div>
+        <div class="footer">
+          <button type="button" class="button outline">取消</button>
+          <button type="button" class="button primary" ${cmd.acknowledged ? '' : 'disabled'}>确认执行</button>
+        </div>
+      </div>`
+    rm.hidden = false
+    const cb = rm.querySelector('.acknowledgement input')
+    if (cb) cb.addEventListener('change', () => { cmdAck(cb.checked) })
+    // 无需 stopPropagation：外部关闭已改 mousedown+contains（mousedown 在重渲染前命中目标），不再误判（dsh Modal 同语义）
+    rm.querySelector('.mask')?.addEventListener('click', () => closeRiskModal())
+    rm.querySelector('.close')?.addEventListener('click', () => closeRiskModal())
+    rm.querySelector('.outline')?.addEventListener('click', () => closeRiskModal())
+    rm.querySelector('.primary')?.addEventListener('click', () => cmdConfirm())
+  }
+  // 取消确认：清除确认态、恢复命令列表（dsh cancelConfirmation：确认卡关闭、列表重显）
+  function closeRiskModal() {
+    const rm = $('risk-modal')
+    rm.hidden = true
+    rm.innerHTML = ''
+    cmd.confirming = null
+    cmd.acknowledged = false
+    renderCmdPop()
+  }
+  function cmdMove(d) {
+    const n = cmd.items.length
+    if (!n) return
+    cmd.active = (cmd.active + d + n) % n
+    renderCmdPop()
+  }
+  // 统一选择分发（2026-09-09 二轮）：图片行=选图（选完 img-file change 关浮窗）；技能/会话=chip 追加输入栏；
+  // 命令=原链（risk→确认门 / settle→写入输入栏）
+  function cmdSelect() {
+    const it = cmd.items[cmd.active]
+    if (!it || cmd.submitting) return
+    // 入口视图导航（两个模式共用，必须先于 @ 落地判：否则 @ 里点「文件」会被当成插入 [插件:文件] 胶囊）：
+    // 入口行 = 进入该类（此后查询词只在该类里搜）；返回行 = 回首屏。
+    if (it.kind === 'entry') { cmd.view = it.view; cmd.active = 0; renderCmdPop(); return }
+    if (it.kind === 'back') { cmd.view = ''; cmd.active = 0; renderCmdPop(); return }
+    // @ 模式：所有条目都落地到 @ 锚点（含上传附件写回正文、目录下钻重渲）——统一走 mention.js，
+    // 与 + 模式的「追加到输入栏末尾」刻意不同（@ 是就地替换查询）。
+    if (cmd.mentionMode) { if (it.kind !== 'pathwait') selectMentionItem(it); return }
+    if (it.kind === 'imgpick') { $('img-file').click(); return }
+    if (it.kind === 'filepick') { $('file-upload').click(); return }
+    // 已上传附件引用行（+ 模式）：引用原文追加到输入栏末尾（@ 模式走上方的 selectMentionItem 就地替换）。
+    if (it.kind === 'attref') { composerAppendText(it.md + ' '); closeCmdPop(); return }
+    if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
+    // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
+    // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。
+    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
+      pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
+      return
+    }
+    if (it.kind === 'path') { appendMentionChip('path', it.path, '', 'file'); closeCmdPop(); return }
+    if (it.kind === 'skill' || it.kind === 'plugin') { appendMentionChip('plugin', it.name); closeCmdPop(); return }
+    if (it.kind === 'session') { appendMentionChip('session', it.name, it.sid); closeCmdPop(); return }
+    const o = it.ref
+    if (o.risk) { cmd.confirming = o; cmd.acknowledged = false; renderCmdPop(); return }
+    cmdSettle(o)
+  }
+  // 浮窗直选落地（无 @ 光标锚点）：令牌追加到输入栏末尾 + 尾随空格，光标到末尾（CM6 接管后
+  // chip = doc 令牌文本的装饰视图，composerAppendToken 落 doc 即成 chip）。
+  function appendMentionChip(kind, name, sid, ptype) {
+    const token = kind === 'session'
+      ? (sid ? `[会话:${name}|${sid}]` : `[会话:${name}]`)
+      : kind === 'path'
+        ? mentionPathToken(name, ptype)
+        : `[插件:${name}]`
+    composerAppendToken(token)
+    syncGwSend()
+  }
+  function cmdAck(v) { cmd.acknowledged = v; renderCmdPop() }
+  function cmdConfirm() {
+    if (!cmd.confirming || !cmd.acknowledged) return
+    const o = cmd.confirming
+    cmd.confirming = null
+    cmd.acknowledged = false
+    cmdSettle(o)
+  }
+  // 选择落地：把命令文本写入输入栏（claim 带参数提示 / bare 直接插入），回车发送由 CLI 端执行；本地展示同闭环
+  function cmdSettle(o) {
+    setInputText(o.claim ? `/${o.name} ` : `/${o.name}`)
+    closeCmdPop()
+    composerFocus()
+    toast(`命令已写入输入栏：/${o.name}（回车发送）`)
+  }
+  // CM6 接管后 = doc 全文替换（composerSetText 内含 readOnly 阀 + 触发 updateListener → syncGwSend）
+  function setInputText(text) {
+    composerSetText(text)
+    syncGwSend()
+  }
+
+  // ---- 模型选择（dsh ModelSelect 移植：trigger 显示「模型名 · 推理等级」，root 两行 Model/Effort 各自 drill）----
+  // 当前选中模型 id：本地 MODEL_CUR 优先，未同步时回落 MODELS 的 activeModel/model（凭据池同源）
   function setConn(on, label) {
     setConnUp(!!on) // 2026-09-07 运行态计时行「连接中断」标注的数据源
     const b = $('floria-conn')

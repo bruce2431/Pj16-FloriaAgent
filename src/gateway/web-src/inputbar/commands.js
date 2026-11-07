@@ -1,18 +1,21 @@
 // 命令菜单 + 项目 seat + 风险确认门（2026-09-10 web-src 模块化切割自 app.js v287；唯一手改处，web/app.js 为生成物）
+// 2026-11-07 工具栏模块化：条目层（toolbar/entries.js）、文件层（toolbar/pick.js）、项目隔离（toolbar/scope.js）
+// 已切出；本件只留弹窗外壳（打开/关闭/渲染/导航/落地）与项目 seat。
 
 import { I } from '../core/icons.js'
-import { relTime } from '../core/markdown.js'
 import { mentionPathToken } from '../core/mention-syntax.js'
-import { findSession, hashOf } from '../engine/sessions.js'
-import { inputEl, state, ALL } from '../engine/state.js'
+import { findSession } from '../engine/sessions.js'
+import { state } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject, sessionProjLabel } from '../core/util.js'
 import { createProjectPicker } from '../feature/project-picker/project-picker.js'
-import { pendingImages, uploadedMentionItems } from './images.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, buildMentionChip, closeMentionPop, groupOf, inHomeProject, mention, mentionChipIcon, mentionItems, pick, pickAll, pickEnter, pickHome, pickItems, pickLabel, pickSearchKick, refreshPick, resetMention, selectMentionItem, serializeInput } from './mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, closeMentionPop, mention, mentionChipIcon, resetMention, selectMentionItem } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
 import { renderTaskDock } from './approval.js'
-import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../sidebar/mgr-data.js'
+import { ensureProjectSkills, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
+import { cmdEntries, groupOf, pickProgressRenders, projTag } from './toolbar/entries.js'
+import { pickEnter, pickLabel, refreshPick } from './toolbar/pick.js'
+import { pickHome } from './toolbar/scope.js'
 /* @module inputbar/commands.js */
   // ---------- 命令菜单 + 模型选择（2026-08-21 dsh 输入栏逻辑移植）----------
   // ⚠️ 数据源 = 本地内置展示数据（⚠️ 非 dsh 真实注册表、非网关接口）：
@@ -47,20 +50,6 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
   const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
-  // 「+」浮窗的入口视图（2026-10-25 用户定案：扁平分组的工具栏太乱，改为入口形式——首屏只列
-  // 上传动作 + 四类入口，点进某一类后展示该类**全部**条目，不截断；底栏有查询词时退回跨类搜索）。
-  const CMD_VIEWS = [
-    { view: 'session', name: '会话', desc: '引用一个会话', icon: MENTION_SESSION_ICON },
-    { view: 'file', name: '文件', desc: '浏览工作区文件与目录', icon: I.dshFolder },
-    { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
-    { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
-  ]
-  // 过滤查询唯一来源 = 底栏输入框文本（2026-10-14 待办 20 返修）：弃独立搜索框——旧框每次 input 都
-  // innerHTML 重渲并**重建框自身**，IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，
-  // 底栏 contenteditable 原样不动，中文 IME 正常。命令前缀 / 由 cmdEntries 剥。
-  function barQuery() {
-    return serializeInput().trim()
-  }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -133,102 +122,7 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     plugins: MENTION_PLUGIN_ICON,
   }
 
-  // ---- 命令菜单（dsh PopupSelectController 移植：open→加载一次→本地过滤→高亮→选择→确认门）----
-  // 2026-09-09 二轮：统一条目 = 图片选择行（恒首位）+ 技能（MGR.skills.personal，/gateway/plugins）
-  // + 近 48h 会话（同 @ 提及链）+ 命令（MOCK_COMMANDS）；搜索滤 name/desc（图片行恒显）。
-  // 会话行（会话入口与搜索共用）：sid = 会话间协作的寻址键，两个路口径必须一致（同 @ 提及链）。
-  function cmdSessionRows(match, grp) {
-    const out = []
-    for (const s of [...ALL].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      // 2026-11-06 A：只列当前上下文项目的会话（此前遍历 ALL 混入所有项目）；
-      // 判据与 @ 提及共用 inHomeProject（空串 = 全局，同 pickHome 口径）。
-      if (!inHomeProject(s)) continue
-      if (match && !match(s.title || '')) continue
-      out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp })
-    }
-    return out
-  }
-  // 行尾项目标记：项目 label 取编号前缀（`Pj8-工作区机械臂设计` → `Pj8`），无编号则整串。
-  function projTag(label) {
-    const m = /^((?:Sub)?Pj\d+)/i.exec(String(label || ''))
-    return m ? m[1] : String(label || '')
-  }
-  // 技能行 = 插件 + 技能（MGR 同源）+ **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
-  // 项目判定与 + 浮窗文件组同一处（pickHome：会话所属项目 / work 工作项目，空串 = 无项目上下文）。
-  function cmdSkillRows(match, grp) {
-    const out = []
-    const proj = pickHome()
-    // 2026-11-06 A：技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
-    // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
-    if (proj) {
-      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
-    } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
-    }
-    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
-    if (!MGR) return out
-    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
-    return out
-  }
-  // 全局文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
-  // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
-  // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
-  // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
-  function pickProgressRenders() {
-    return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
-  }
-  function pushSearchState(items, base) {
-    if (pickAll.err) { items.push({ kind: 'pathwait', name: '索引失败', desc: pickAll.err }); return }
-    if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引工作区' }); return }
-    if (items.length === (base || 0)) items.push({ kind: 'pathwait', name: '无匹配结果', desc: '' })
-  }
-  function cmdEntries() {
-    // 查询词：@ 模式 = @ 后到光标的文本；+ 模式 = 底栏全文（剥掉可能的前导 /）。
-    const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
-    const match = (s) => !q || String(s || '').toLowerCase().includes(q)
-    const items = []
-    // 范围判据（2026-10-25 用户定案）：**进了某一类视图 = 查询只在该类里搜**；没进视图时
-    // @ 后有查询词 = 跨类扁平全局搜索（不按类隔离、按时间混排）。只输入 @ 而无查询词 =
-    // 等价于唤出工具栏首屏（与 + 一致）。+ 模式底栏文本只过滤当前入口视图，从不触发全局搜索。
-    if (cmd.view) {
-      // 文件视图不叠「导航/返回」（2026-11-05 用户定案）：它自带「上级目录」，两行同图标上箭头 + 两个分组标题
-      // 看着像两栏叠在一起；文件视图的退出走 Esc / 点浮窗外（pathup 行同时承担层内上行）。
-      if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
-      if (cmd.view === 'session') items.push(...cmdSessionRows(match, '会话'))
-      else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
-      // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
-      else if (cmd.view === 'cmd') {
-        for (const o of MOCK_COMMANDS) if (match(o.name) || match(o.desc)) items.push({ kind: 'cmd', name: o.name, desc: o.desc, ref: o, grp: '指令' })
-      }
-      // 文件视图：有查询词 = 只搜文件（同一条全局文件清单，不含会话/技能）；空查询 = 层内浏览。
-      else if (cmd.view === 'file') {
-        if (q) {
-          const base = items.length
-          items.push(...pickItems(q))
-          pushSearchState(items, base)
-          pickSearchKick(() => { if (cmd.open) renderCmdPop() })
-        } else items.push(...pickItems('').filter((it) => it.kind === 'pathup' || match(it.name)))
-      }
-      return items
-    }
-    if (cmd.mentionMode && q) {
-      items.push(...mentionItems(q))
-      pushSearchState(items)
-      pickSearchKick(() => { if (cmd.open) renderCmdPop() }) // 清单未跑完 → 流式补渲
-      return items
-    }
-    // 首屏入口：两个上传动作 + 已上传附件的引用行 + 四类入口
-    items.push({ kind: 'imgpick', name: pendingImages.length ? '继续选择图片…' : '选择图片…', desc: pendingImages.length ? `已选 ${pendingImages.length}/9 · 自动压缩` : '一次最多 9 张，自动压缩', grp: '上传' })
-    items.push({ kind: 'filepick', name: '上传文件…', desc: '任意类型可多选 · 存入 file-cache/（按会话）', grp: '上传' })
-    // 已上传附件的引用行（2026-11-01 根因）：此前只有 @ 后**再输查询词**才经 mentionItems 列出，
-    // 首屏看不到刚传的图 → 用户实测「上传的图片 @ 这个渲染缺失」。数据源与 @ 搜索同一份
-    // （images.js uploadedMentionItems），只列行不渲缩略图（2026-10-22 定案：缩略图只在底栏胶囊）。
-    items.push(...uploadedMentionItems().map((it) => ({ ...it, desc: it.attKind === 'img' ? '插入图片引用' : '插入文件引用', grp: '上传' })))
-    // 首屏四个入口是导航不是数据：底栏有文字也不过滤（否则「有文字点 +」会只剩上传两行，像坏了）
-    for (const v of CMD_VIEWS) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
-    return items
-  }
+/* @module inputbar/commands.js #3 */
   // 弹窗的**唯一开链**（2026-10-25 用户定案：输入 @ 触发与底栏点 + 完全同一条链路，不另写）。
   // mentionMode 只决定查询词来源（@ 后文本 vs 底栏全文）；有无查询词由 cmdEntries 判：
   // 无词 = 首屏入口（与 + 一致），有词且在 @ 模式 = 扁平全局搜索。
@@ -283,7 +177,7 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
     // dsh confirmation gate：确认态下命令卡隐藏，改由全屏 RiskConfirmation 模态接管
     if (cmd.confirming) { cmdPop.hidden = true; renderRiskModal(); return }
     // 单页分组渲染（无 tab）：四组行列表；已选附件缩略图不在本浮窗重复显示（见下）。
-    // 独立搜索框已退役（2026-10-14 待办 20 返修）：过滤文本 = 底栏输入框（barQuery），列表随底栏
+    // 独立搜索框已退役（2026-10-14 待办 20 返修）：过滤文本 = 底栏输入框，列表随底栏
     // 打字自动变化（ctx-meter 在底栏 input 事件里调 renderCmdPop）。
     cmd.items = cmdEntries()
     // 视图切换/查询变化后条目数会变：高亮下标夹回合法区间，否则回车会选中 undefined。
@@ -442,7 +336,6 @@ import { MGR, ensureProjectSkills, loadMgrData, MODELS, projSkillsOf } from '../
   // ---- 模型选择（dsh ModelSelect 移植：trigger 显示「模型名 · 推理等级」，root 两行 Model/Effort 各自 drill）----
   // 当前选中模型 id：本地 MODEL_CUR 优先，未同步时回落 MODELS 的 activeModel/model（凭据池同源）
 export {
-  CMD_GROUP,
   EFFORT_LEVELS,
   MOCK_COMMANDS,
   appendMentionChip,
@@ -452,7 +345,6 @@ export {
   cmd,
   cmdAck,
   cmdConfirm,
-  cmdEntries,
   cmdMove,
   cmdPop,
   cmdSelect,

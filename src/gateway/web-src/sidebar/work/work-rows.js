@@ -82,6 +82,32 @@ import { isTempProjLabel } from '../../core/util.js'
       toast('删除失败：' + (e.message || e))
     }
   }
+  // 目录行归档（2026-11-07）：与项目行归档同语义——打成 <项目根>/.achrives/<名>-<ts>.tar.gz，
+  // 原目录移入 <项目根>/.trash/。成功后该子树整体离场，打开集与编辑区按「目录删除」同口径清理。
+  async function archiveWorkEntry(p) {
+    if (!p) return
+    try {
+      toast('正在归档「' + baseOf(p) + '」…')
+      const res = await fetch(apiUrl('/gateway/file/archive'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: state.workProj, path: p }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) throw new Error(data.error || '归档失败')
+      if (state.workFile === p || state.workFile.startsWith(p + '/')) state.workFile = ''
+      for (const k of [...wkOpen]) if (k === p || k.startsWith(p + '/')) wkOpen.delete(k)
+      saveWork()
+      wkTreeRemove(p)
+      renderWorkBody()
+      renderEditor()
+      applyPanes()
+      toast('已归档到 ' + data.path + '，原目录移入 ' + data.trash)
+      loadProjectTree(state.workProj, true)
+    } catch (e) {
+      toast('归档失败：' + (e.message || e))
+    }
+  }
   // 文件 / 目录行菜单「项 + 动作」唯一实现（2026-10-25）：侧栏文件树行 `.wk-row` 与 work 顶栏
   // 文件 pill `[data-wkftab]` 共用本 spec，禁止各写一套菜单。getEntry(el) → { path, dir }。
   // 「下载」仅文件出（2026-10-13 待办 1）：目录整棵打包无既有实现，不新造。
@@ -96,12 +122,16 @@ import { isTempProjLabel } from '../../core/util.js'
           { a: 'rename', icon: I.dshEdit, label: '重命名' },
         ]
         const del = { a: 'delete', icon: I.dshStop, label: '删除', danger: true }
-        return dir ? [...head, del] : [...head, { a: 'download', icon: I.dshDownload, label: '下载' }, del]
+        const arc = { a: 'archive', icon: I.dshCompact, label: '归档' }
+        return dir
+          ? [...head, arc, del]
+          : [...head, { a: 'download', icon: I.dshDownload, label: '下载' }, del]
       },
       pick: (a, el) => {
         const { path } = entryOf(el)
         if (a === 'reveal') revealWorkEntry(path)
         else if (a === 'rename') openFileRename(path)
+        else if (a === 'archive') archiveWorkEntry(path)
         else if (a === 'download') downloadWorkEntry(path)
         else deleteWorkEntry(path)
       },
@@ -169,19 +199,60 @@ import { isTempProjLabel } from '../../core/util.js'
       toast('删除失败：' + (e.message || e))
     }
   }
+  // 项目重命名（2026-11-07）：改的是 <工作区根>/<label> 目录名（label 即项目标识，会话转录在项目内
+  // 随目录一起走）。改名后要把「按 label 索引的本地状态」整体搬到新键：project 槽（state.workSlots）
+  // 与两个指针（workProj / workSlotKey），以及 chat 侧的 state.newProject；打开集/编辑文件是项目内
+  // 相对路径，不受影响。
+  async function renameWorkProject(label) {
+    if (!label) return
+    openRenameDialog({
+      heading: '重命名项目',
+      placeholder: '输入新项目名',
+      okText: '重命名',
+      value: label,
+      onSubmit: async (name) => {
+        if (state.workProj === label && wkEdDirty) await wkEdFlush() // 先落盘，避免丢未保存编辑
+        const res = await fetch(apiUrl('/gateway/project/rename'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, name }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.ok) throw new Error(data.error || '重命名失败')
+        const next = data.label
+        if (state.workSlots && state.workSlots[label]) {
+          state.workSlots[next] = state.workSlots[label]
+          delete state.workSlots[label]
+        }
+        if (state.workProj === label) state.workProj = next
+        if (state.workSlotKey === label) state.workSlotKey = next
+        if (state.newProject === label) state.newProject = next
+        saveWork()
+        await loadSessions() // 项目列表 / 会话归属都按新目录重扫
+        renderWorkChrome()
+        renderWorkBody()
+        renderTopbar()
+        toast('项目已重命名为「' + next + '」')
+      },
+    })
+  }
   // 项目行菜单项：归档恒有；删除只对临时项目（长期项目走归档，避免误删整棵项目）。
   function projectRowMenuSpec() {
     return {
       items: (el) => {
         const label = el.dataset.pk || ''
         if (!label) return []
-        const out = [{ a: 'archive', icon: I.dshCompact, label: '归档' }]
+        const out = [
+          { a: 'rename', icon: I.dshEdit, label: '重命名' },
+          { a: 'archive', icon: I.dshCompact, label: '归档' },
+        ]
         if (isTempProjLabel(label)) out.push({ a: 'delete', icon: I.dshTrash, label: '删除', danger: true })
         return out
       },
       pick: (a, el) => {
         const label = el.dataset.pk || ''
-        if (a === 'archive') archiveWorkProject(label)
+        if (a === 'rename') renameWorkProject(label)
+        else if (a === 'archive') archiveWorkProject(label)
         else if (a === 'delete') deleteWorkProject(label)
       },
     }

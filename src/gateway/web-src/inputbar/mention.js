@@ -1,18 +1,18 @@
 // @ 提及浮窗 + 输入变化入口（2026-09-10 web-src 模块化切割自 app.js v287；唯一手改处，web/app.js 为生成物）
+// 2026-11-07 工具栏模块化：项目隔离（toolbar/scope.js）、文件层（toolbar/pick.js）、条目层（toolbar/entries.js）
+// 已切出；本件只留 @ 的生命周期（锚点/查询词/落地）与 chip 构造/序列化。
 
-import { messagesHtml, addUser } from '../chat/messages.js'
-import { GATEWAY, gateAwait, apiUrl } from '../engine/gateway.js'
+import { GATEWAY, gateAwait } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
-import { mdInline, relTime } from '../core/markdown.js'
 import { MENTION_FILE_ICON, MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
-import { findSession, sessionCwd } from '../engine/sessions.js'
-import { inputEl, state } from '../engine/state.js'
-import { esc, newSessionProject, sessionProjLabel } from '../core/util.js'
+import { sessionCwd } from '../engine/sessions.js'
+import { state } from '../engine/state.js'
+import { esc } from '../core/util.js'
 import { syncGwSend } from './send.js'
-import { uploadedMentionItems } from './images.js'
-import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
+import { cmd, closeCmdPop, renderCmdPop } from './commands.js'
+import { pickEnter } from './toolbar/pick.js'
 /* @module inputbar/mention.js */
-  // ---------- @ 提及（2026-08-15）：输入 @ 弹出「近48h 会话 + 插件/技能」浮窗（2026-09-18 会话区提前），选中插入内联 chip ----------
+  // ---------- @ 提及（2026-08-15）：输入 @ 弹出同一工具栏（2026-09-18 会话区提前），选中插入内联 chip ----------
   // 消息文本中 chip 序列化为 [插件:名称] / [会话:名称] 令牌（CLI 终端渲染为 [名称]，遥测端渲染为 chip；
   // 令牌保留 kind 供两端差异化渲染 + 未来插件激活扩展）。
   // @ 提及 icon（2026-09-28 换 dsh v0.2.0-rc.1 产品图标集，16 描线/currentColor；旧 24 手绘那套作废）。
@@ -20,183 +20,11 @@ import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
   // ——与 + 浮窗行图标同源（同一批 I.* 常量），两处不得分叉。会话/文件两枚随 chip 构造器下移 core/mention-syntax.js。
   const MENTION_PLUGIN_ICON = I.dshPlugin
   const MENTION_SKILL_ICON = I.dshSkill
-  // ---------- 目录 / 文件引用（2026-09-26）：@ 浮窗与 + 工具栏共用的一组「逐级浏览工作区根」状态 ----------
-  // 数据源 = GET /gateway/fs?path=<相对工作区根的子路径>（只读单层；网关侧复用 listOneLevel，跳过隐藏项
-  // 与重型目录、目录在前、单层不设条数上限）。pick.path 是**相对工作区根**的当前层路径，'' = 根——与 chip 上行的
-  // 路径同基准（用户定案：相对全局根）。令牌形态 [@目录:路径] / [@文件:路径] 见 core/mention-syntax.js。
-  // 引用原文块 ⇄ 折叠令牌的解析与编码统一在 core/mention-syntax.js（唯一真源：气泡/底栏共用）。
   const MENTION_DIR_ICON = I.dshFolder
   const MENTION_UP_ICON = I.dshUp
   // CM6 接管后 sentinel（零宽 DOM 锚）退役：@ 查询锚点 = doc 位置 anchor（'@' 所在 pos）
   let mention = { open: false, anchor: 0, q: '', items: [], sel: 0 }
-  // entries: null=未加载；[]=空目录；[TreeNode…]=已加载。seq 丢弃迟到的旧响应（快速连点目录）。
-  // searchOff：搜索/浏览模式开关（2026-10-14 待办 20）——false 且查询非空 = 全局搜索模式；
-  // 下钻/返回目录后翻 true（回到层内浏览），浮窗重开（refreshPick）复位 false。
-  const pick = { path: '', entries: null, loading: false, err: '', seq: 0, searchOff: false, q: '' }
-  // 全工作区递归清单（待办 20 的数据层）：BFS 逐层 /gateway/fs（每层分批并发，层间 await）。
-  // 不设深度/目录数/条目数上限——搜索要能命中工作区任意深度的文件（2026-10-25 用户定案：
-  // 截断过于严重，应显示全部）。隐藏目录与 node_modules/dist/.git 等仍由网关侧跳过。
-  // 浮窗每次打开经 refreshPick 重置重建（目录内容是外部可变状态，不跨打开缓存）。
-  // items 是**流式**清单：BFS 每扫完一批目录就并进去（用户边打边出结果，不必等全量跑完），
-  // done=true 才表示跑完整轮。浮窗打开即预热（refreshPick），打字时通常已可用。
-  const pickAll = { items: [], done: false, busy: false, seq: 0, err: '', onProgress: null }
-  const PICK_FS_CONCURRENCY = 24
 
-  // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
-  // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
-  // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
-  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
-  function groupOf(it) {
-    return GROUP_OF[it.kind] || '指令'
-  }
-
-  // ---------- 目录 / 文件浏览（数据层；两个浮窗共用，渲染各自负责） ----------
-  // 文件组的落点 = 当前上下文项目目录（用户定案「先显示本项目的文件」）：会话态取该会话所属项目，
-  // 非会话态取目标项目（`newSessionProject()`——work 模式即工作项目）。空串 = 无项目上下文 → 从工作区根起。
-  function pickHome() {
-    const s = state.currentHash ? findSession(state.currentHash) : null
-    if (s) return sessionProjLabel(s)
-    return newSessionProject() || ''
-  }
-  // 会话是否属于当前上下文项目（@ 提及与 + 工具栏会话页的共用判据）。
-  // 会话的项目归属只有一处 = core/util.js sessionProjLabel（临时项目归一为全局 ''）。
-  function inHomeProject(s) {
-    return sessionProjLabel(s) === pickHome()
-  }
-  function pickParent() {
-    const p = pick.path
-    const i = p.lastIndexOf('/')
-    return i < 0 ? '' : p.slice(0, i)
-  }
-  function pickLabel() {
-    // 搜索模式（2026-10-14 待办 20）：文件组标题提示结果口径（层内浏览则照旧标当前层）
-    if (pick.q && !pick.searchOff) return pickAll.done ? '工作区全局搜索' : '全局搜索…'
-    if (pick.loading) return '加载中…'
-    if (pick.err) return '加载失败'
-    return pick.path || '工作区根'
-  }
-  // 构建全工作区递归清单（幂等；构建期间 busy 挡重入，seq 丢弃被 refreshPick 作废的旧轮）。
-  // 完成不自行重渲——由调用方的 after 回调负责（浮窗还开着才重渲）。
-  async function ensurePickAll() {
-    if (pickAll.done || pickAll.busy) return
-    pickAll.busy = true
-    const seq = ++pickAll.seq
-    let layer = ['']
-    const seen = new Set()
-    let rootErr = ''
-    try {
-      while (layer.length) {
-        const next = []
-        // 分批并发：整层一次打出去会在目录多的工作区形成数百并发请求（本地网关也能被拖慢）
-        for (let i = 0; i < layer.length; i += PICK_FS_CONCURRENCY) {
-          const batchItems = []
-          const batchDirs = []
-          await Promise.all(
-            layer.slice(i, i + PICK_FS_CONCURRENCY).map(async (p) => {
-              try {
-                const r = await fetch(apiUrl('/gateway/fs?path=' + encodeURIComponent(p)))
-                const data = await r.json()
-                if (!r.ok || !data || !Array.isArray(data.entries)) {
-                  // 根层失败 = 整份清单不可信（空结果会谎报「无匹配」）：记错并作废本轮，浮窗重开再试。
-                  if (!p) rootErr = (data && data.error) || '工作区索引失败'
-                  return
-                }
-                for (const e of data.entries) {
-                  const cp = p ? `${p}/${e.name}` : e.name
-                  batchItems.push({ ptype: e.type === 'dir' ? 'dir' : 'file', name: e.name, path: cp, mtime: e.mtime || 0 })
-                  if (e.type === 'dir' && !seen.has(cp)) {
-                    seen.add(cp)
-                    batchDirs.push(cp)
-                  }
-                }
-              } catch (e) {
-                /* 子层失败跳过，不拖垮整轮（根层失败另记） */
-                if (!p) rootErr = e.message || '工作区索引失败'
-              }
-            }),
-          )
-          if (seq !== pickAll.seq) return
-          // 流式并进清单：本批结果立刻可被 pickItems 检索到，并立刻重渲一次浮窗。
-          pickAll.items.push(...batchItems)
-          next.push(...batchDirs)
-          if (pickAll.onProgress) pickAll.onProgress()
-        }
-        layer = next
-      }
-    } finally {
-      if (seq === pickAll.seq) {
-        pickAll.busy = false
-        pickAll.done = !rootErr
-        if (rootErr) { pickAll.items = []; pickAll.err = rootErr }
-        else pickAll.err = ''
-        // 收尾也要重渲一次：否则尾部「搜索中…」会一直挂着（pickSearchKick 只在未开跑时挂 .then）
-        if (pickAll.onProgress) pickAll.onProgress()
-      }
-    }
-  }
-  // 搜索模式的异步补拉口（两个浮窗的渲染函数各调一次）：查询非空且处于搜索模式、清单未建 →
-  // 建清单，完成后浮窗仍开着才重渲。
-  function pickSearchKick(re) {
-    // 清单流式产出：构建期间每批都回调（有结果立刻显示）；err 非空 = 上一轮根层失败，
-    // 不随每次按键重试（会变成按键风暴），等浮窗重开 refreshPick 复位。
-    if (pick.q && !pick.searchOff && !pickAll.done && !pickAll.busy && !pickAll.err) {
-      pickAll.onProgress = re
-      ensurePickAll().then(() => { if (pickAll.onProgress) pickAll.onProgress() }).catch(() => {})
-    }
-  }
-  // 加载某一层（path 相对工作区根）。完成后由调用方重渲自己的浮窗（本函数不碰 DOM）。
-  async function loadPickPath(path) {
-    const seq = ++pick.seq
-    pick.path = String(path || '')
-    pick.loading = true
-    pick.err = ''
-    try {
-      const res = await fetch(apiUrl('/gateway/fs?path=' + encodeURIComponent(pick.path)))
-      const data = await res.json()
-      if (seq !== pick.seq) return false
-      if (!res.ok || data.error) throw new Error(data.error || '加载失败')
-      pick.entries = Array.isArray(data.entries) ? data.entries : []
-    } catch (e) {
-      if (seq !== pick.seq) return false
-      pick.entries = null
-      pick.err = e.message || String(e)
-    } finally {
-      if (seq === pick.seq) pick.loading = false
-    }
-    return seq === pick.seq
-  }
-  // 当前层的可选条目 / 全局搜索结果（2026-10-14 待办 20）。
-  // q 为空或已下钻（searchOff）= 原层内浏览：上级目录行 + 当前层全部（按 q 过滤后同样全列）。
-  // q 非空且未下钻 = 全局搜索：跨工作区递归清单（pickAll）按名称过滤，命中多少列多少（不截断）。
-  // 清单未就绪时文件组暂空（其余组照常），pickSearchKick 建完重渲补上。
-  // 「上级目录」只取决于「当前是不是工作区根」，与**这一层的内容**无关——故加载中/加载失败时它照样在，
-  // 否则某一层拉不到（目录已删/端点失败）就退不回去，整个文件组成死层。条目本身不塞假行。
-  function pickItems(q) {
-    const ql = (q || '').trim().toLowerCase()
-    pick.q = ql
-    const items = []
-    if (ql && !pick.searchOff) {
-      for (const e of pickAll.items) {
-        if (!e.name.toLowerCase().includes(ql)) continue
-        items.push({ kind: 'path', ptype: e.ptype, name: e.name, path: e.path, glob: true, t: e.mtime || 0 })
-      }
-      return items
-    }
-    if (pick.path) items.push({ kind: 'pathup', name: '上级目录', path: pickParent() })
-    if (pick.loading || !pick.entries) return items
-    for (const e of pick.entries) {
-      if (ql && !String(e.name).toLowerCase().includes(ql)) continue
-      const p = pick.path ? `${pick.path}/${e.name}` : e.name
-      items.push({ kind: 'path', ptype: e.type === 'dir' ? 'dir' : 'file', name: e.name, path: p, t: e.mtime || 0 })
-    }
-    return items
-  }
-  // 目录项进入下一层 / 上级目录返回（两个浮窗的选择入口共用同一处判定）。下钻 = 用户已明确
-  // 「要看这个位置」→ 翻回层内浏览模式（此后 q 只做层内过滤，不再全局搜）。
-  function pickEnter(it) {
-    pick.searchOff = true
-    return loadPickPath(it.path)
-  }
   function mentionChipIcon(kind, ptype) {
     if (kind === 'session') return MENTION_SESSION_ICON
     if (kind === 'path' || kind === 'filepick' || kind === 'imgpick') return ptype === 'dir' ? MENTION_DIR_ICON : MENTION_FILE_ICON
@@ -310,66 +138,6 @@ import { MGR, projSkillsOf } from '../sidebar/mgr-data.js'
     openCmdPopMention()
   }
 
-  // 浮窗打开时定位到当前上下文项目并加载该层（不缓存：目录内容是外部可变状态，缓存会让新建的文件不可见）。
-  // **每次打开都回到项目层**（同 @ 浮窗每次打开重置 q/sel）——打开是新的一轮手势，不是接着上次浏览的位置；
-  // 层内下钻/返回由 pickEnter 自己拉，走同一处 loadPickPath。
-  function refreshPick(after) {
-    pick.entries = null // 立刻清旧层：否则换项目后先闪一帧上一个项目的条目（在途请求由 loadPickPath 的 seq 作废）
-    pick.err = ''
-    pick.q = '' // 查询/层级同属上一轮手势：不复位会先渲一帧旧查询结果（两个浮窗共用本状态）
-    pick.path = ''
-    pick.searchOff = false // 浮窗重开 = 新一轮手势：回到全局搜索模式（待办 20）
-    pickAll.items = [] // 递归清单随打开重建（目录内容外部可变，不跨打开缓存；在途轮由 seq 作废）
-    pickAll.done = false
-    pickAll.err = ''
-    pickAll.seq++
-    // 作废在途轮时必须同步释放 busy：旧轮 finally 见 seq 不符只跳过写回、不会复位 busy，
-    // 否则下一次输入永远起不了新轮（文件搜索整组空白）
-    pickAll.busy = false
-    // 打开即预热全局清单（不等用户打出查询词才开始扫：全量约 1500 个目录请求，早开始早出结果）。
-    // 流式批回调与层加载共用 after（渲染点已判 cmd.open）。
-    pickAll.onProgress = after || null
-    ensurePickAll().catch(() => {})
-    loadPickPath(pickHome()).then((ok) => { if (ok && after) after() })
-  }
-
-  // 弹窗的统一条目源（@ 模式与 + 工具栏搜索共用；+ 的入口视图另走 commands.js 的 cmdEntries）。
-  // **全局搜索 = 扁平列表**（2026-10-25 用户定案：不做类别隔离），按时间倒序混排：
-  // 会话 updatedAt / 文件目录 mtime（/gateway/fs 返回）/ 本次上传（now）；无时间字段的技能与指令 t=0 稳定排末尾。
-  // **空查询 / 已下钻 = 浏览**：保留数据层既有顺序（上传 → 近 48h 会话 → 技能 → 当前层），不做时间排序。
-  function mentionItems(q) {
-    const ql = (q || '').trim().toLowerCase()
-    const match = (s) => !ql || String(s || '').toLowerCase().includes(ql)
-    const globalSearch = !!ql && !pick.searchOff
-    const now = Date.now()
-    const items = []
-    // 「上传」组（待办 6）：本次上传的附件（图片/文件），选中插回正文 md 引用。属于「刚刚发生」，时间取 now。
-    for (const u of uploadedMentionItems()) if (match(u.name)) items.push({ ...u, t: now })
-    // 会话：**空查询**只给近 48h 建议（免浮窗一开就几百条）；**有查询词**时搜全量——标题检索必须与
-    // 侧栏一致，不能因会话旧于 48h 就查不到（2026-10-17 用户实测：侧栏有「202610131215-有机随想」，
-    // 输入 @2026101312 却只剩文件命中）。
-    const cutoff = now - 48 * 3600 * 1000
-    for (const s of ALL) {
-      // 2026-11-06 A：会话只给当前上下文项目的（此前混入全部项目的会话）
-      if (!inHomeProject(s)) continue
-      if (!globalSearch && s.updatedAt < cutoff) continue
-      // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
-      if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
-    }
-    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
-    const proj = pickHome()
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
-    if (MGR) {
-      // 2026-11-06 A：技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
-      // 插件是便携根安装件、无项目归属，两种上下文都列。
-      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
-    }
-    items.push(...pickItems(q))
-    if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
-    return items
-  }
-
   // 条目落地的唯一入口（点击与回车共用）：目录/上级=下钻重渲；文件=插 chip；会话/技能=插 chip。
   function selectMentionItem(it) {
     if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
@@ -457,31 +225,19 @@ export {
   QUOTE_REF_RE,
   QUOTE_REPLY_RE,
   buildMentionChip,
-  groupOf,
-  inHomeProject,
   closeMentionPop,
   insertMention,
-  loadPickPath,
   mention,
   mentionChipHtml,
   mentionChipIcon,
-  mentionItems,
   moveMentionSel,
   onCompositionEnd,
   onInputChange,
   onInputMention,
   openMentionPopAtCaret,
-  pick,
-  pickAll,
-  pickEnter,
-  pickHome,
-  pickItems,
-  pickLabel,
-  pickSearchKick,
   quotePdfChipHtml,
   quoteRefChipHtml,
   quoteReplyChipHtml,
-  refreshPick,
   renderUserText,
   resetMention,
   selectMention,

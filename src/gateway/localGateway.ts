@@ -1167,6 +1167,44 @@ export function trashProjectEntry(projRoot: string, rel: string): EntryOpResult 
   return { ok: true, trash: `.trash/${basename(to)}` }
 }
 
+/**
+ * 项目内**目录**归档（2026-11-07 work 文件树行菜单）：打成 <项目根>/.achrives/<目录名>-<ts>.tar.gz，
+ * 原目录移入 <项目根>/.trash/。语义与项目归档完全一致（tar 顺序流 + .trash 是撤销位），只是作用对象
+ * 是项目内子树。`.achrives` / `.trash` 都以点开头，不进 /gateway/project 文件树（walkProjectTree 跳过）。
+ * 打包用系统 tar；失败清掉本次半成品，不留误导性残包。
+ */
+export async function archiveProjectEntry(projRoot: string, rel: string): Promise<EntryOpResult> {
+  const abs = resolveWithinRoot(projRoot, rel)
+  if (!abs || abs === projRoot) return { ok: false, code: 403, error: 'forbidden' }
+  if (!existsSync(abs)) return { ok: false, code: 404, error: 'not found' }
+  if (!statSync(abs).isDirectory()) return { ok: false, code: 400, error: '仅目录可归档' }
+  const relPath = rel.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  const archDir = join(projRoot, '.achrives')
+  mkdirSync(archDir, { recursive: true })
+  const base = basename(abs)
+  let dest = join(archDir, `${base}-${tsStamp()}.tar.gz`)
+  for (let i = 1; existsSync(dest); i++) dest = join(archDir, `${base}-${tsStamp()}-${i}.tar.gz`)
+  const out = await runProcessQuiet(tarBin(), ['-czf', dest, '-C', projRoot, relPath])
+  if (out.code !== 0) {
+    try {
+      if (existsSync(dest)) unlinkSync(dest) // 本次刚生成的半成品，非用户数据
+    } catch {
+      /* 忽略 */
+    }
+    const why = out.err ? `：${out.err.split('\n').slice(-2).join(' ')}` : ''
+    return { ok: false, code: 500, error: `压缩失败（tar 退出码 ${out.code}）${why}` }
+  }
+  let size = 0
+  try {
+    size = statSync(dest).size
+  } catch {
+    /* 忽略 */
+  }
+  const moved = trashProjectEntry(projRoot, relPath)
+  if (!moved.ok) return { ok: false, code: moved.code, error: `已生成 .achrives/${basename(dest)}，但${moved.error}` }
+  return { ok: true, path: `.achrives/${basename(dest)}`, trash: moved.trash, size }
+}
+
 // ---------- 项目归档 / 临时项目删除（2026-11-06 work 项目行菜单） ----------
 // 工作区根下的项目目录不是「文件树条目」，/gateway/file/* 的 resolveWithinRoot 口径管不到
 // 「整个项目消失」这件事，故单列两个接口。目录真身只有一处：<root>/<label>（findProjects 的
@@ -1344,6 +1382,40 @@ export function deleteTempProject(
   if (blocker) return { ok: false, code: 409, error: blocker }
   killBackend(label)
   return moveProjectDirToTrash(root, label)
+}
+
+/**
+ * 项目重命名（2026-11-07 work 项目行菜单）：把 <root>/<label> 整目录改名为 <root>/<name>。
+ * label 即项目标识（findProjects 的目录名），会话转录随目录一起走，故不需要迁移任何数据。
+ * 与归档/删除同口径：项目内有在线会话 → 409（改父目录名会让运行中的会话瞬间失根）；
+ * 改名后旧目录的 SSE watcher 已失效（Windows 上还阻着 rename），先 close 再改，由调用方重扫补齐。
+ * 名称走 sanitizeEntryName；点开头一律拒（.trash/.achrives 之类会被项目扫描跳过）。
+ */
+export function renameProjectDir(
+  root: string,
+  label: string,
+  rawName: string,
+): { ok: true; label: string } | { ok: false; code: number; error: string } {
+  const projRoot = resolve(root, label)
+  if (!label || label !== basename(label) || label === '.' || label === '..' || dirname(projRoot) !== resolve(root)) {
+    return { ok: false, code: 400, error: 'invalid label' }
+  }
+  if (!existsSync(projRoot) || !statSync(projRoot).isDirectory()) return { ok: false, code: 404, error: 'not found' }
+  const name = sanitizeEntryName(rawName)
+  if (!name || name.startsWith('.')) return { ok: false, code: 400, error: '名称不合法' }
+  if (name === label) return { ok: true, label }
+  const to = resolve(root, name)
+  if (existsSync(to)) return { ok: false, code: 409, error: '同名项目已存在' }
+  const blocker = projectUseBlocker(root, projRoot)
+  if (blocker) return { ok: false, code: 409, error: blocker }
+  killBackend(label) // 预览后端按 label 注册，改名后旧键失效
+  closeSseWatchesUnder(projRoot)
+  try {
+    renameSync(projRoot, to)
+  } catch (e) {
+    return { ok: false, code: 500, error: `重命名失败：${(e as Error).message}` }
+  }
+  return { ok: true, label: name }
 }
 
 /**
@@ -3404,6 +3476,45 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       const dOut = deleteTempProject(root, dLabel)
       if (!dOut.ok) sendJson(res, dOut.code, { error: dOut.error })
       else sendJson(res, 200, dOut)
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 项目重命名：POST /gateway/project/rename {label, name} → <root>/<label> 整目录改名（2026-11-07）
+  if (req.method === 'POST' && url.pathname === '/gateway/project/rename') {
+    try {
+      const rpj = await readReportBody(req)
+      const rLabel = typeof rpj.label === 'string' ? rpj.label : ''
+      const rName = typeof rpj.name === 'string' ? rpj.name : ''
+      if (!findProjects(root).some((g) => g.scope === 'project' && g.label === rLabel)) {
+        sendJson(res, 404, { error: 'project not found' })
+        return
+      }
+      const rOut = renameProjectDir(root, rLabel, rName)
+      if (!rOut.ok) sendJson(res, rOut.code, { error: rOut.error })
+      else {
+        ensureSseWatches(root) // 旧 watcher 已随改名关闭，按新目录布局补齐
+        sendJson(res, 200, rOut)
+      }
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 项目内目录归档：POST /gateway/file/archive {label, path} → <项目根>/.achrives/<名>-<ts>.tar.gz
+  // + 原目录移入 <项目根>/.trash/（2026-11-07 work 文件树目录行菜单）。语义同项目归档，作用对象是子树。
+  if (req.method === 'POST' && url.pathname === '/gateway/file/archive') {
+    try {
+      const ap2 = await readReportBody(req)
+      const aProj = findProjects(root).find((g) => g.label === (typeof ap2.label === 'string' ? ap2.label : ''))
+      if (!aProj) {
+        sendJson(res, 404, { error: 'project not found' })
+        return
+      }
+      const aOut2 = await archiveProjectEntry(resolve(aProj.dir, '..', '..'), typeof ap2.path === 'string' ? ap2.path : '')
+      if (!aOut2.ok) sendJson(res, aOut2.code, { error: aOut2.error })
+      else sendJson(res, 200, aOut2)
     } catch (e) {
       sendError(res, e)
     }
