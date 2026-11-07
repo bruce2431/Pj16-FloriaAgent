@@ -1,6 +1,6 @@
 {
   "name": "claude-code-source-snapshot",
-  "version": "3.58.0",
+  "version": "3.58.1",
   "private": true,
   "description": "Reconstructed Bun CLI workspace for the Claude Code source snapshot.",
   "type": "module",

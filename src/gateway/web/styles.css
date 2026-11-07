@@ -109,8 +109,12 @@ a { text-decoration: none; color: inherit; }
 .view-card[hidden] { display: none; }
 /* 常驻预热卡（registry 的 standby）：应用/外部卡启用即建卡加载 iframe，切换只做显隐、不重建 DOM。
    绝对定位到槽内同尺寸（保留布局宽高让应用按真实尺寸排版）→ 不参与 flex 布局、不挡当前卡；
-   透明 + 不可交互，离场后留在原地等下次切换。 */
-.view-card.view-standby { position: absolute; inset: 0; margin: 2px; opacity: 0; pointer-events: none; z-index: 0; }
+   离场后留在原地等下次切换。
+   **必须用 visibility:hidden，不得用 opacity:0 + pointer-events:none**：后者只退出点击命中，
+   合成器滚动命中仍把覆盖区判给该层，触屏（iOS WebKit）滚动手势被吃掉 → 其下的会话消息流与
+   work 预览 iframe 全部滑不动（点击却正常，因为点击会穿透 pointer-events:none）。
+   visibility:hidden 彻底退出命中测试与绘制，iframe 文档与布局尺寸仍保留 ⇒ 切回零白屏不倒退。 */
+.view-card.view-standby { position: absolute; inset: 0; margin: 2px; visibility: hidden; z-index: 0; }
 /* 管理/预览卡的滚动层与内容列：几何镜像会话卡的 #chat-scroll（24/20/8 内边距）+ .mgr-on 时代的
    920px 内容宽（会话卡的 #messages 保持 760px，两者各自独立） */
 .view-scroll { flex: 1; min-height: 0; overflow-y: auto; scroll-behavior: smooth; scrollbar-gutter: stable; overflow-anchor: none; padding: 24px 20px 8px; }
