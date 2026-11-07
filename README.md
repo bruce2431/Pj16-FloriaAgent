@@ -27,7 +27,7 @@
 - **远程审批**：CLI 权限弹窗实时中继为 web 审批卡，iPad/手机可远程批准/拒绝，双端竞速先操作者生效。
 - **会话间协作**：输入栏 `@` 浮窗或「+」菜单「引用会话」选定目标会话（目录寻址，无授权门），agent 可用 `session_send` 跨会话投递消息（含 `new_session` 拉起新会话）；接收侧与本地 user 消息同构落盘、同路入队，气泡外带一行来源灰字。
 - **项目个性化预览（多卡片）**：项目产物（架构图/可视化页）落 `<项目>/.claude/preview/`，由网关静态托管，web 项目预览页内直接查看；`preview.json` 可申报外部卡片（`cards`）与浮窗动作（`quoteActions`），preview 目录下的 `<id>/card.json` 则把预览拆成**多张独立卡**（各自 `title`/`entry`/`order`/`default`，宿主顶栏一卡一枚 tab，卡间经 `floria-wk-card-switch` 跳转）；无卡表项目沿用单页，传统 `index.html` 单页同样作为一枚应用纳入管理。**卡级服务器**：每卡可在 `card.json` 声明自己的 `backend`（进程键 `label::<id>`，`/gateway/backend?card=` 拉起，`/backend/<label>/<首段>/` 反代），打开工具栏即按**已启用卡**逐张预热；启用态载体 = 卡目录 `.disabled`（传统页 = preview 根 `.disabled`），停用卡不出页签、不预热也不拉起。
-- **插件 / 技能 / 应用启停**：管理页（chat 侧栏插件 tab；work 侧栏「插件」第三态，内容仍在下沉区）对已安装插件、技能与预览应用提供真开关，状态 = 目录内 `.disabled`——加载侧整条跳过、watcher 热生效，不写 settings.json 也不改 plugin.json/SKILL.md；work 插件页复用 `@floria/web` 的 `mgr` 组件族，只列项目已安装个人项。网关启动时自动拉起全局根中已启用的服务器；work 右侧工具栏的开合状态只在同一网关进程运行期内保持（重启后默认折叠）。
+- **插件 / 技能 / 应用启停**：管理页（chat 侧栏插件 tab；work 侧栏「插件」第三态，内容仍在下沉区）对已安装插件、技能与预览应用提供真开关，状态 = 目录内 `.disabled`——加载侧整条跳过、watcher 热生效，不写 settings.json 也不改 plugin.json/SKILL.md；work 插件页复用 `@floria/web` 的 `mgr` 组件族，只列项目已安装个人项。网关启动时自动拉起全局根中已启用的服务器；应用与外部卡启用后即在后台常驻预载（隐藏待命），切换只做显隐、不重载 iframe；work 右侧工具栏的开合状态只在同一网关进程运行期内保持（重启后默认折叠）。
 - **WebSearch 本地多后端**：纯客户端四后端（searxng / brave / tavily / exa），密钥走凭据池 `webSearch` 段（Anthropic server-tool 链已退役）。
 - **神经元知识库（NEURON_RAG，默认 feature）**：BGE 本地嵌入 + `recall`/`remember` 内置工具 + leiden 社群认知形成链，全链 TS 化进 exe，无 python 子进程；全项目 `Neuron-PjN` 三层库 + 认知管线（mem→cog→社群命名）。
 - **web 前端分层治理**：`web-src/` 模块源码经拼接器生成单文件 `web/app.js`；`scripts/check-layering.ts` 校验依赖方向（core/engine/feature 分层），`--strict` 只对真违规非零。
