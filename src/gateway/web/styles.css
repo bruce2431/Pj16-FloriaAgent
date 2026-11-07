@@ -1935,7 +1935,10 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
 /* 手机（≤720px）：全屏无缝 + 侧栏抽屉 */
 @media (max-width: 720px) {
   body { padding: 0; }
-  #app { border-radius: 0; box-shadow: none; position: relative; }
+  /* position 必须沿用基线 sticky（键盘节的壳体钉顶）：本条曾写 relative，会把 sticky 覆盖掉，
+     手机下滑文档（触屏滚余量 body::after）时整个壳体跟着滚走、底部露黑。sticky 同样是绝对定位
+     后代的包含块，抽屉/遮罩的定位不受影响。 */
+  #app { border-radius: 0; box-shadow: none; }
 
   /* 侧栏 = 从左侧滑入的抽屉（宽度 = 84vw 帽 300px）。选择器必须带 `.open`：桌面那条
      `#sidebar.open { width: var(--panel-w) }` 特指度 (1,1,0) 高于本条 (1,0,0)，展开态会被它
