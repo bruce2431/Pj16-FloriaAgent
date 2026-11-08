@@ -1,12 +1,7 @@
 import type { UUID } from 'crypto'
 import { logEvent } from 'src/services/analytics/index.js'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 'src/services/analytics/metadata.js'
-import {
-  type Command,
-  clearCommandMemoizationCaches,
-  getCommandName,
-  isCommandEnabled,
-} from '../commands.js'
+import { type Command, getCommandName, isCommandEnabled } from '../commands.js'
 import { selectableUserMessagesFilter } from '../components/MessageSelector.js'
 import type { SpinnerMode } from '../components/Spinner/types.js'
 import type { QuerySource } from '../constants/querySource.js'
@@ -36,30 +31,13 @@ import { processUserInput } from './processUserInput/processUserInput.js'
 import type { QueryGuard } from './QueryGuard.js'
 import { queryCheckpoint, startQueryProfile } from './queryProfiler.js'
 import { runWithWorkload } from './workloadContext.js'
-import { clearPluginCache } from './plugins/pluginLoader.js'
-import {
-  clearPluginCommandCache,
-  clearPluginSkillsCache,
-} from './plugins/loadPluginCommands.js'
+import { isCustomizationDirEnabled } from './customizationToggle.js'
+import { refreshActivePlugins } from './plugins/refresh.js'
 import {
   clearTurnExposedPaths,
   resolveTurnExposedPaths,
   setTurnExposedPaths,
 } from './plugins/turnPlugins.js'
-import { clearPromptCache } from '../tools/SkillTool/prompt.js'
-
-/**
- * 回合内热启用开关变化后，必须让技能清单/Skill 工具重新取数：
- * 插件装载 memo → 插件技能/命令 memo → 命令聚合 memo（含技能索引）→ Skill 工具提示 memo。
- * 不在这里做（清缓存只在真有 @ 点名时发生），避免每回合无谓重扫磁盘。
- */
-function invalidateTurnExposureCaches(): void {
-  clearPluginCache()
-  clearPluginSkillsCache()
-  clearPluginCommandCache()
-  clearCommandMemoizationCaches()
-  clearPromptCache()
-}
 
 function exit(): void {
   gracefulShutdownSync(0)
@@ -483,18 +461,20 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
     // it (IDE selection, todos, diffs). pastedContents 逐条自带（见下方循环内注释）。
     const commands = queuedCommands ?? []
 
-    // 回合内热启用：本条输入里的 `[插件:名称]` / `[技能:名称]` 令牌若指向当前停用
-    // （目录带 .disabled）的插件/技能，则在本回合把它视作已启用——两个加载侧
-    // （pluginLoader / loadSkillsDir）经 isTurnExposedPath 放行，清单缓存当场失效，
-    // 回合结束（下方 finally）清除并再次失效，回到停用态。
-    const turnDirs = await resolveTurnExposedPaths(
+    // 回合内热启用：本条输入里 @ 点名的插件/技能目录登记进回合覆盖，`@` 了停用项
+    // 时其启用判据短路为真（utils/customizationToggle.ts），随后走与 `/reload-plugins`
+    // 同一条装配链 refreshActivePlugins —— 命令/技能/agents/hooks/MCP/LSP 一并进
+    // enabled 集，而不是只清命令缓存。回合结束（下方 finally）撤销登记再装配一次。
+    const turnCandidates = await resolveTurnExposedPaths(
       commands
         .map(c => (typeof c.value === 'string' ? c.value : ''))
         .join('\n'),
     )
+    // 只在真的点到停用项时重装配——@ 已启用插件/技能本来就在暴露面内，走原路即可。
+    const turnDirs = turnCandidates.filter(dir => !isCustomizationDirEnabled(dir))
     if (turnDirs.length) {
       setTurnExposedPaths(turnDirs)
-      invalidateTurnExposureCaches()
+      await refreshActivePlugins(makeContext().setAppState)
       turnExposureApplied = true
     }
 
@@ -661,11 +641,17 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
     // turn's resetLoadingState. Harmless when onQuery ran: setMessages grew
     // displayedMessages past the baseline, so REPL.tsx already hid it.
     setUserInputOnProcessing(undefined)
-    // 回合内热启用复位：本回合加载的插件/技能回到停用态，缓存一并失效，
-    // 令下一回合的技能清单与 Skill 工具重新按目录启用态计算。
+    // 回合内热启用复位：撤销登记后重新装配，本回合临时启用的插件/技能
+    // （命令/技能/agents/hooks/MCP）回到停用态；复位失败只记日志，不掩盖原错误。
     if (turnExposureApplied) {
       clearTurnExposedPaths()
-      invalidateTurnExposureCaches()
+      try {
+        await refreshActivePlugins(makeContext().setAppState)
+      } catch (e) {
+        logForDebugging(
+          `turnPlugins: reset refreshActivePlugins failed: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
     }
   }
 }

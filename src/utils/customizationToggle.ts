@@ -14,13 +14,24 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { isTurnExposedPath } from './plugins/turnPlugins.js'
 
 /** 停用标记文件名（放在自定义件目录根部）。 */
 export const CUSTOMIZATION_DISABLED_MARKER = '.disabled'
 
-/** 目录是否处于启用态（无停用标记）。 */
+/**
+ * 目录是否处于启用态（无停用标记）。
+ *
+ * 唯一例外：本回合被用户 `@` 点名的停用项（`turnPlugins` 的回合内热启用）短路为启用。
+ * 装配侧（`loadAllPlugins` 的 `createPluginFromPath` enabled 参数）与技能目录扫描共用
+ * 这一个判据，故回合内的 `refreshActivePlugins` 能把它的命令/技能/agents/hooks/MCP
+ * 一并装进 enabled 集；回合结束登记清除后自然回到停用态，不改磁盘。
+ */
 export function isCustomizationDirEnabled(dir: string): boolean {
-  return !existsSync(join(dir, CUSTOMIZATION_DISABLED_MARKER))
+  return (
+    isTurnExposedPath(dir) ||
+    !existsSync(join(dir, CUSTOMIZATION_DISABLED_MARKER))
+  )
 }
 
 /** 停用标记路径。 */

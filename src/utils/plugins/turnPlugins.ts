@@ -3,12 +3,13 @@
  *
  * 启用态（目录内 `.disabled`）只控制会话启动时的默认暴露面；消息里的
  * `[插件:名称]` 令牌（web 的 @ 提及序列化，技能同用该前缀）是显式点名，
- * 本模块把对应目录登记为「本回合启用」，两个加载侧把它当作已启用：
- * - `skills/loadSkillsDir.ts`（.claude/skills/<name>）
- * - `utils/plugins/pluginLoader.ts`（.claude/plugins/<name> 就地插件）
+ * 本模块只维护「本回合点名的目录」这一份登记；启用判据的唯一消费点是
+ * `utils/customizationToggle.ts` 的 `isCustomizationDirEnabled`（登记命中即短路为启用），
+ * 插件装配与技能目录扫描都走它。
  *
- * 生命周期 = `executeUserInput` 的 try/finally：回合开始前解析并 set、
- * 回合结束 clear，并清除插件/命令 memo，令技能清单与 Skill 工具在下一回合复位。
+ * 生命周期 = `executeUserInput` 的 try/finally：回合开始解析并 set，随后调
+ * `refreshActivePlugins` 重装配（与 `/reload-plugins` 同链：命令/技能/agents/hooks/MCP/LSP）；
+ * 回合结束 clear 后再装配一次，回到停用态。
  */
 
 import { readdir, readFile } from 'fs/promises'
@@ -17,18 +18,13 @@ import { getOriginalCwd } from '../../bootstrap/state.js'
 import { getClaudeConfigHomeDir } from '../envUtils.js'
 import { parseFrontmatter } from '../frontmatterParser.js'
 import { getProjectDirsUpToHome } from '../markdownConfigLoader.js'
-import { isCustomizationDirEnabled } from '../customizationToggle.js'
 import { getPluginsDirectory } from './pluginDirectories.js'
 
 const exposedPaths = new Set<string>()
 
-/** 该目录是否被本回合 @ 点名热启用（加载侧与 isCustomizationDirEnabled 取或）。 */
+/** 该目录是否被本回合 @ 点名热启用（`isCustomizationDirEnabled` 的短路判据）。 */
 export function isTurnExposedPath(dir: string): boolean {
   return exposedPaths.size > 0 && exposedPaths.has(resolve(dir))
-}
-
-export function hasTurnExposure(): boolean {
-  return exposedPaths.size > 0
 }
 
 export function setTurnExposedPaths(dirs: readonly string[]): void {
@@ -73,8 +69,9 @@ async function readSkillName(dir: string): Promise<string | null> {
 }
 
 /**
- * 从一条用户输入解析出台词里点名的、当前停用的插件/技能目录。
- * 已启用的不返回（本来就在暴露面内，无需额外动作）。
+ * 从一条用户输入解析出台词里点名的插件/技能目录（名称匹配清单名或目录名）。
+ * 已启用的目录也照常返回：调用方先按启用判据筛掉它们，只有停用项才需要登记 +
+ * 重装配（避免每条 @ 插件消息都触发一次全量 reload）。
  */
 export async function resolveTurnExposedPaths(text: string): Promise<string[]> {
   const names = new Set(parseTurnExposedNames(text))
@@ -97,7 +94,6 @@ export async function resolveTurnExposedPaths(text: string): Promise<string[]> {
     const manifestName = await readManifestName(dir)
     if (!manifestName) continue
     if (!names.has(manifestName) && !names.has(entry.name)) continue
-    if (isCustomizationDirEnabled(dir)) continue
     found.add(dir)
   }
 
@@ -120,7 +116,6 @@ export async function resolveTurnExposedPaths(text: string): Promise<string[]> {
       const skillName = await readSkillName(dir)
       if (!skillName) continue
       if (!names.has(skillName) && !names.has(entry.name)) continue
-      if (isCustomizationDirEnabled(dir)) continue
       found.add(dir)
     }
   }

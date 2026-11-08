@@ -2726,6 +2726,9 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 /* 链接（含 wikilink / 悬浮卡）：库用 --primary 回落（蓝），改项目蓝令牌，与整体配色一致 */
 #work-editor .cm-link, #work-editor .cm-wikilink,
 #work-editor .cm-link-widget, #work-editor .cm-wikilink-widget { color: var(--blue); }
+/* 相对文件链接 chip（包内 edFileLinkPlugin 产出 = 同一 fileChipDom）：锚点只作点击载体，
+   文本样式与底栏 @ 文件 chip 一致（无下划线，悬停才下划线）。 */
+#work-editor .cm-file-link { color: inherit; text-decoration: none; }
 /* 格式化标记（** ` # 等）与围栏标记：库用 --muted-foreground 回落 */
 #work-editor .cm-formatting-inline, #work-editor .cm-formatting-block,
 #work-editor .cm-codeblock-fence { color: var(--text-3); }
