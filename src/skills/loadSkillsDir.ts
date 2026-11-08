@@ -24,6 +24,7 @@ import {
   substituteArguments,
 } from '../utils/argumentSubstitution.js'
 import { isCustomizationDirEnabled } from '../utils/customizationToggle.js'
+import { isTurnExposedPath } from '../utils/plugins/turnPlugins.js'
 import { logForDebugging } from '../utils/debug.js'
 import {
   EFFORT_LEVELS,
@@ -433,7 +434,8 @@ async function loadSkillsFromSkillsDir(
 
         // 管理页「技能」开关：目录内存在 .disabled 标记即停用，整个目录不加载。
         // 用户/项目/附加/managed 目录同一判据（判据来源见 utils/customizationToggle）。
-        if (!isCustomizationDirEnabled(skillDirPath)) return null
+        // 例外：本回合被用户 @ 点名的目录由 turnPlugins 临时放行。
+        if (!isCustomizationDirEnabled(skillDirPath) && !isTurnExposedPath(skillDirPath)) return null
 
         // Skip @skills-dir in-place plugin directories (those containing a
         // .claude-plugin/ manifest) — they are loaded as plugins by the

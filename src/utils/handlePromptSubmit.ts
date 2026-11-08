@@ -1,7 +1,12 @@
 import type { UUID } from 'crypto'
 import { logEvent } from 'src/services/analytics/index.js'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from 'src/services/analytics/metadata.js'
-import { type Command, getCommandName, isCommandEnabled } from '../commands.js'
+import {
+  type Command,
+  clearCommandMemoizationCaches,
+  getCommandName,
+  isCommandEnabled,
+} from '../commands.js'
 import { selectableUserMessagesFilter } from '../components/MessageSelector.js'
 import type { SpinnerMode } from '../components/Spinner/types.js'
 import type { QuerySource } from '../constants/querySource.js'
@@ -31,6 +36,30 @@ import { processUserInput } from './processUserInput/processUserInput.js'
 import type { QueryGuard } from './QueryGuard.js'
 import { queryCheckpoint, startQueryProfile } from './queryProfiler.js'
 import { runWithWorkload } from './workloadContext.js'
+import { clearPluginCache } from './plugins/pluginLoader.js'
+import {
+  clearPluginCommandCache,
+  clearPluginSkillsCache,
+} from './plugins/loadPluginCommands.js'
+import {
+  clearTurnExposedPaths,
+  resolveTurnExposedPaths,
+  setTurnExposedPaths,
+} from './plugins/turnPlugins.js'
+import { clearPromptCache } from '../tools/SkillTool/prompt.js'
+
+/**
+ * 回合内热启用开关变化后，必须让技能清单/Skill 工具重新取数：
+ * 插件装载 memo → 插件技能/命令 memo → 命令聚合 memo（含技能索引）→ Skill 工具提示 memo。
+ * 不在这里做（清缓存只在真有 @ 点名时发生），避免每回合无谓重扫磁盘。
+ */
+function invalidateTurnExposureCaches(): void {
+  clearPluginCache()
+  clearPluginSkillsCache()
+  clearPluginCommandCache()
+  clearCommandMemoizationCaches()
+  clearPromptCache()
+}
 
 function exit(): void {
   gracefulShutdownSync(0)
@@ -424,6 +453,9 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
     return getToolUseContext(messages, [], abortController, mainLoopModel)
   }
 
+  // 本回合 @ 点名的停用插件/技能是否已热启用（见 utils/plugins/turnPlugins.ts）。
+  let turnExposureApplied = false
+
   // Wrap in try-finally so the guard is released even if processUserInput
   // throws or onQuery is skipped. onQuery's finally calls queryGuard.end(),
   // which transitions running→idle; cancelReservation() below is a no-op in
@@ -450,6 +482,21 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
     // (attachments + ideSelection), rest skip attachments to avoid duplicating
     // it (IDE selection, todos, diffs). pastedContents 逐条自带（见下方循环内注释）。
     const commands = queuedCommands ?? []
+
+    // 回合内热启用：本条输入里的 `[插件:名称]` / `[技能:名称]` 令牌若指向当前停用
+    // （目录带 .disabled）的插件/技能，则在本回合把它视作已启用——两个加载侧
+    // （pluginLoader / loadSkillsDir）经 isTurnExposedPath 放行，清单缓存当场失效，
+    // 回合结束（下方 finally）清除并再次失效，回到停用态。
+    const turnDirs = await resolveTurnExposedPaths(
+      commands
+        .map(c => (typeof c.value === 'string' ? c.value : ''))
+        .join('\n'),
+    )
+    if (turnDirs.length) {
+      setTurnExposedPaths(turnDirs)
+      invalidateTurnExposureCaches()
+      turnExposureApplied = true
+    }
 
     // Compute the workload tag for this turn. queueProcessor can batch a
     // cron prompt with a same-tick human prompt; only tag when EVERY
@@ -614,5 +661,11 @@ async function executeUserInput(params: ExecuteUserInputParams): Promise<void> {
     // turn's resetLoadingState. Harmless when onQuery ran: setMessages grew
     // displayedMessages past the baseline, so REPL.tsx already hid it.
     setUserInputOnProcessing(undefined)
+    // 回合内热启用复位：本回合加载的插件/技能回到停用态，缓存一并失效，
+    // 令下一回合的技能清单与 Skill 工具重新按目录启用态计算。
+    if (turnExposureApplied) {
+      clearTurnExposedPaths()
+      invalidateTurnExposureCaches()
+    }
   }
 }

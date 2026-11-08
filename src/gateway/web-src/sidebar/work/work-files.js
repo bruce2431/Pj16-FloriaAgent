@@ -284,6 +284,47 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
     await loadProjectTree(label)
   }
 
+  // 目录定位（@ 目录 chip 的跳转落点，经 work 卡 reveal 命令调用）：逐段展开祖先、切到文件 tab 渲染，
+  // 再按 data-wkdir 精确比较定位行（不拼 CSS 选择器，路径里的引号/方括号不参与解析）。
+  // 目录不在树中 → 抛错（卡回 ok:false，派发器 toast），不静默停在别处。
+  async function revealWorkDir(rel) {
+    const label = state.workProj
+    if (!label) throw new Error('没有工作项目')
+    const dir = String(rel || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+    if (!wkTree) await loadProjectTree(label, true)
+    if (!wkTree) throw new Error('文件树尚未加载')
+    if (dir) {
+      const parts = dir.split('/')
+      let nodes = wkTree
+      let prefix = ''
+      for (const seg of parts) {
+        const hit = (nodes || []).find((n) => n && n.type === 'dir' && n.name === seg)
+        if (!hit) throw new Error('目录不在项目树中：' + dir)
+        prefix = prefix ? prefix + '/' + seg : seg
+        wkOpen.add(prefix) // 祖先与目标自身一起展开
+        nodes = hit.children
+      }
+    } else {
+      wkOpen.clear() // 项目根：收起全部，回到树的根视图
+    }
+    state.wkTab = 'files'
+    renderWorkBody()
+    applyPanes()
+    const body = $('wk-body')
+    let row = null
+    if (body) {
+      for (const el of body.querySelectorAll('[data-wkdir]')) {
+        if (el.dataset.wkdir === dir) { row = el; break }
+      }
+    }
+    if (row) {
+      row.scrollIntoView({ block: 'center' })
+      row.classList.add('wk-hit')
+      setTimeout(() => { if (row.isConnected) row.classList.remove('wk-hit') }, 1400)
+    }
+    return { path: dir, found: !!row }
+  }
+
   // silent = 自动对账（见 workAutoTick）：不收起浮层、不动滚动位置、失败静默
   async function refreshWork(silent) {
     if (!silent) hideWkPops()

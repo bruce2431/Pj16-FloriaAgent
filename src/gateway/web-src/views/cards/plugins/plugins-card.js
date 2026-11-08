@@ -11,6 +11,8 @@ import { toast } from '../../../core/util.js'
 import { saveMgrView } from '../../../core/storage.js'
 import { MGR, MGR_ERR, MGR_LOADING, loadMgrData } from '../../../sidebar/mgr-data.js'
 import { registerCard } from '../../../engine/registry.js'
+import { cardBus } from '../../../engine/card-bus.js'
+import { navigate } from '../../../chat/route.js'
 import { appCatalog, isAppEnabled, setAppEnabled } from '../../../engine/ext-runtime.js'
 import { apiUrl } from '../../../engine/gateway.js'
 import {
@@ -38,6 +40,47 @@ import {
     refresh() { renderMgrGrid() },
   }
   registerCard(pluginsCardDef)
+
+  // 卡公开 API（@ 插件/技能 chip 的跳转落点）：openDetail{name} = 打开该条目的详情页。
+  // 名字命中顺序固定（插件先于技能、个人先于公开）——令牌不区分插件与技能，顺序即语义。
+  // 全局清单里没有 → 抛错（调用方据此回落到当前项目的 work 插件页）。
+  cardBus.registerInlineCard({
+    instanceId: 'floria-plugins',
+    ns: 'floria-plugins',
+    cmds: ['openDetail'],
+    handlers: { openDetail: (a) => openPluginDetailByName(a && a.name) },
+  })
+
+  function findMgrEntry(name) {
+    for (const kind of ['plugins', 'skills']) {
+      const groups = (MGR && MGR[kind]) || {}
+      for (const cat of ['personal', 'public']) {
+        const arr = groups[cat]
+        if (!Array.isArray(arr)) continue
+        const row = arr.find((x) => x && x.n === name)
+        if (row) return { kind, cat }
+      }
+    }
+    return null
+  }
+
+  // 完成信号 = loadMgrData 返回；先落视图态（kind/cat）再导航——route 的 loadMgrView 会按持久化态重建，
+  // 故 saveMgrView 必须先于 navigate。已在该页时只重渲（不重建壳）。
+  async function openPluginDetailByName(name) {
+    const n = String(name || '').trim()
+    if (!n) throw new Error('缺少插件名称')
+    await loadMgrData(false)
+    const hit = findMgrEntry(n)
+    if (!hit) throw new Error('未找到插件/技能：' + n)
+    state.mgrView.kind = hit.kind
+    state.mgrView.cat = hit.cat
+    state.mgrView.q = ''
+    saveMgrView()
+    MGR_DETAIL = { kind: hit.kind, key: n }
+    if (state.mgr !== 'plugins') navigate('#mgr/plugins')
+    if (PLUGINS_CTX) PLUGINS_CTX.rerender()
+    return { kind: hit.kind, name: n }
+  }
 
   // 「插件/技能/应用」卡体（id='plugins' 的默认形态，即侧栏第一 tab）
   function renderMgrPlugins(body, ctx) {

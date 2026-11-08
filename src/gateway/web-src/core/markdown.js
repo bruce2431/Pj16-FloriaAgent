@@ -270,7 +270,12 @@ import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_RE, QUOTE_PDF_RE, Q
       }
       if (/^\d+[.)]\s+/.test(t)) {
         flushPara()
-        if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>' }
+        if (list !== 'ol') {
+          closeList(); list = 'ol'
+          // 起始序号随源码：空行/子列表会把列表拆成多个 <ol>，不带 start 时每组都从 1 重排
+          const n = parseInt(t, 10) || 1
+          html += n > 1 ? `<ol start="${n}">` : '<ol>'
+        }
         const body = t.replace(/^\d+[.)]\s+/, '')
         const tk = TASK_RE.exec(body)
         html += `<li${mdAttr(t)}>${tk ? taskBox(i + 1, tk[1]) : ''}${mdInline(tk ? tk[2] : body)}</li>`

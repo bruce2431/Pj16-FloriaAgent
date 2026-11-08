@@ -521,13 +521,15 @@ function setConnUp(v) { connUp = v }
       // @ 只是输入侧唤出提及的手势字符，落地文本里它既不参与令牌解析也不属文件名。
       const label = base
       const icon = ptype === 'dir' ? I.dshFolder : fileIcon(full)
-      return `<span class="mention-chip m-path" title="${full}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
+      // data-m* = 链接凭据（2026-11-08 单击跳转）：path/name 为令牌原文（name 已 esc），
+      // 派发器 feature/mention-nav.js 据此解析项目与相对路径，不在渲染层做业务判断。
+      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
     }
     if (kind === 'session') {
       const title = splitSessionToken(name).title
-      return `<span class="mention-chip m-session"><span class="mc-ic">${MENTION_SESSION_ICON}</span><span class="mc-t">${title}</span></span>`
+      return `<span class="mention-chip m-session" data-mjump="session" data-mname="${name}"><span class="mc-ic">${MENTION_SESSION_ICON}</span><span class="mc-t">${title}</span></span>`
     }
-    return `<span class="mention-chip m-plugin"><span class="mc-ic">${I.dshPlugin}</span><span class="mc-t">${name}</span></span>`
+    return `<span class="mention-chip m-plugin" data-mjump="plugin" data-mname="${name}"><span class="mc-ic">${I.dshPlugin}</span><span class="mc-t">${name}</span></span>`
   }
 
   // 引用原文编码（2026-10-21）：原文要挤进令牌的一行字段，必须先抹掉会被 mdInline 预处理的记号
@@ -886,7 +888,12 @@ function setConnUp(v) { connUp = v }
       }
       if (/^\d+[.)]\s+/.test(t)) {
         flushPara()
-        if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>' }
+        if (list !== 'ol') {
+          closeList(); list = 'ol'
+          // 起始序号随源码：空行/子列表会把列表拆成多个 <ol>，不带 start 时每组都从 1 重排
+          const n = parseInt(t, 10) || 1
+          html += n > 1 ? `<ol start="${n}">` : '<ol>'
+        }
         const body = t.replace(/^\d+[.)]\s+/, '')
         const tk = TASK_RE.exec(body)
         html += `<li${mdAttr(t)}>${tk ? taskBox(i + 1, tk[1]) : ''}${mdInline(tk ? tk[2] : body)}</li>`
@@ -3120,22 +3127,21 @@ function setLastNavHash(v) { lastNavHash = v }
     })
   })
 
-  // 引用胶囊点击跳转（2026-10-21）：一律经**卡片公开 API**（engine/card-bus.js）驱动目标卡，不直取他模块内部状态——
-  //   · 回复引用 → chat 卡 `scroll{line}`（第 N 条 = .msg 文档序，与引用令牌「第 N 条回复」同源）
-  //   · 文件引用 → work 卡 `scroll{path,line}`（卡内自带「仅 work 模式」门禁；非 work 回 ok:false → toast）
-  // 目标卡不在场（如 work 卡尚未初始化）时总线显式报错，这里同样走 toast，不静默。
+  // 提及 / 引用 chip 点击跳转（2026-11-08 统一）：chip 自带链接凭据（data-mjump = 会话/文件/目录/插件，
+  // data-qjump = 回复/文件引用），业务落点全部收口到 feature/mention-nav.js；本处只做「消息区内」委托与
+  // 拖选误触守卫。目标卡不在场/门禁不过时由派发器 toast，不静默。
   document.addEventListener('click', (e) => {
-    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip[data-qjump]') : null
+    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip') : null
     if (!chip || !messagesEl.contains(chip)) return
-    const kind = chip.dataset.qjump
-    const p = kind === 'reply'
-      ? cardBus.callCard({ instanceId: 'floria-chat' }, 'scroll', { line: Number(chip.dataset.qidx) || 0 })
-      : kind === 'file'
-        ? cardBus.callCard({ instanceId: 'floria-work' }, 'scroll', { path: chip.dataset.qpath || '', line: Number(chip.dataset.ql0) || 0 }, { timeoutMs: 15000 })
-        : null
-    if (!p) return
+    if (!chip.dataset.qjump && !chip.dataset.mjump) return
+    // 拖选文本的收尾 click 落在 chip 上不算「点链接」——用户是在选字，不是在跳转
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && String(sel).trim()) return
+    const target = mentionTargetFromChip(chip)
+    if (!target) return
+    e.preventDefault()
     e.stopPropagation()
-    p.then((ack) => { if (ack && ack.ok === false) toast(ack.error || '跳转失败') }).catch(() => {})
+    activateMention(target)
   })
 
   // 围栏代码块头栏按钮（2026-10-10；同 msg-copy 的委托+反馈模式）：复制 = 读本块 pre>code.textContent
@@ -3389,7 +3395,7 @@ function setLastNavHash(v) { lastNavHash = v }
 
   // 思考/旁白文本：无气泡框，浅灰小字（收在「已处理」折叠区内）
   function processTextHtml(text) {
-    return `<div class="done-think">${mdHtml(text)}</div>`
+    return `<div class="done-think md-scope">${mdHtml(text)}</div>`
   }
 
   // ---- 思考折叠行（2026-08-22 移植 deepseek-harness ReasoningRow / DisclosureRow）----
@@ -3506,7 +3512,7 @@ function setLastNavHash(v) { lastNavHash = v }
     // 2026-08-26 任务 D 定案：思考块收起时**不显示思考正文摘要**（用户「思考过程未折叠」反馈——
     // 摘要「思考 先说明：触发。」直接暴露内部推理）。summary 只留「思考」标题 + 运行态扫光，
     // 点开才看全文。删除 thinkSummary 摘要（运行中 latestLine / 完成后 firstLine 语义一并废弃）。
-    return `<details class="think-row" data-state="${running ? 'running' : 'ok'}"><summary><span class="tr-leading" aria-hidden="true"><span class="tr-ico">${THINK_ICON}</span><span class="tr-chev">${THINK_CHEV}</span></span><span class="tr-title">思考</span></summary><div class="tr-body">${mdHtml(t)}</div></details>`
+    return `<details class="think-row" data-state="${running ? 'running' : 'ok'}"><summary><span class="tr-leading" aria-hidden="true"><span class="tr-ico">${THINK_ICON}</span><span class="tr-chev">${THINK_CHEV}</span></span><span class="tr-title">思考</span></summary><div class="tr-body md-scope">${mdHtml(t)}</div></details>`
   }
 
   // 入场动画标记：对比刷新前的顶层消息 key 集合，只给「本次新增」的块加 .msg-in，
@@ -3564,7 +3570,7 @@ function setLastNavHash(v) { lastNavHash = v }
         const gbody = userBodyHtml(g.m)
         out.splice(Math.min(g.pos, out.length), 0, {
           kind: 'guide', gi,
-          html: `<div class="msg user" data-m="${s.key}" data-t="g${gi}"${g.i != null ? ` data-g="${g.i}"` : ''}>${whoHtml(g.m)}${gbody ? `<div class="body">${gbody}</div>` : ''}${userImgsHtml(g.m)}${userFilesHtml(g.m)}</div>`, // 引导气泡不带复制按钮（用户 2026-08-30 定案）；纯图无文本不出空气泡（2026-09-07 空气炮根修）
+          html: `<div class="msg user" data-m="${s.key}" data-t="g${gi}"${g.i != null ? ` data-g="${g.i}"` : ''}>${whoHtml(g.m)}${gbody ? `<div class="body md-scope">${gbody}</div>` : ''}${userImgsHtml(g.m)}${userFilesHtml(g.m)}</div>`, // 引导气泡不带复制按钮（用户 2026-08-30 定案）；纯图无文本不出空气泡（2026-09-07 空气炮根修）
         })
       }
       return out
@@ -3576,7 +3582,7 @@ function setLastNavHash(v) { lastNavHash = v }
       const clock = fmtClock(ts)
       const useBtn = usage ? usageButtonHtml(usage, model) : ''
       const meta = `${useBtn}${clock ? `<span class="msg-time">${clock}</span>` : ''}`
-      return `<div class="msg assistant" data-m="${key}" data-t="a"><div class="body"><div class="blocks">${mdHtml(text)}</div><div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">${ICON_COPY}</button>${meta}</div></div></div>`
+      return `<div class="msg assistant" data-m="${key}" data-t="a"><div class="body md-scope"><div class="blocks">${mdHtml(text)}</div><div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">${ICON_COPY}</button>${meta}</div></div></div>`
     }
     function closeSeg(isFinal) {
       if (!seg) return
@@ -3636,7 +3642,7 @@ function setLastNavHash(v) { lastNavHash = v }
         // 纯图消息（文本剥 [Image #N] 占位后为空）不出 .body 空气泡，复制按钮同去（无文本可复制；
         // 乐观气泡同构同去防接管帧形态跳变）——2026-09-07 空气炮根修
         const ubody = userBodyHtml(m)
-        segHtml += `<div class="msg user" data-m="${s.key}" data-t="u">${whoHtml(m)}${ubody ? `<div class="body">${ubody}</div>` : ''}${userImgsHtml(m)}${userFilesHtml(m)}${ubody ? `<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">${ICON_COPY}</button></div>` : ''}</div>`
+        segHtml += `<div class="msg user" data-m="${s.key}" data-t="u">${whoHtml(m)}${ubody ? `<div class="body md-scope">${ubody}</div>` : ''}${userImgsHtml(m)}${userFilesHtml(m)}${ubody ? `<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">${ICON_COPY}</button></div>` : ''}</div>`
         lastNode = { key: s.key, type: 'u' }
       }
 
@@ -5492,6 +5498,47 @@ function setFirstSendHash(v) { firstSendHash = v }
     refresh() { renderMgrGrid() },
   }
   registerCard(pluginsCardDef)
+
+  // 卡公开 API（@ 插件/技能 chip 的跳转落点）：openDetail{name} = 打开该条目的详情页。
+  // 名字命中顺序固定（插件先于技能、个人先于公开）——令牌不区分插件与技能，顺序即语义。
+  // 全局清单里没有 → 抛错（调用方据此回落到当前项目的 work 插件页）。
+  cardBus.registerInlineCard({
+    instanceId: 'floria-plugins',
+    ns: 'floria-plugins',
+    cmds: ['openDetail'],
+    handlers: { openDetail: (a) => openPluginDetailByName(a && a.name) },
+  })
+
+  function findMgrEntry(name) {
+    for (const kind of ['plugins', 'skills']) {
+      const groups = (MGR && MGR[kind]) || {}
+      for (const cat of ['personal', 'public']) {
+        const arr = groups[cat]
+        if (!Array.isArray(arr)) continue
+        const row = arr.find((x) => x && x.n === name)
+        if (row) return { kind, cat }
+      }
+    }
+    return null
+  }
+
+  // 完成信号 = loadMgrData 返回；先落视图态（kind/cat）再导航——route 的 loadMgrView 会按持久化态重建，
+  // 故 saveMgrView 必须先于 navigate。已在该页时只重渲（不重建壳）。
+  async function openPluginDetailByName(name) {
+    const n = String(name || '').trim()
+    if (!n) throw new Error('缺少插件名称')
+    await loadMgrData(false)
+    const hit = findMgrEntry(n)
+    if (!hit) throw new Error('未找到插件/技能：' + n)
+    state.mgrView.kind = hit.kind
+    state.mgrView.cat = hit.cat
+    state.mgrView.q = ''
+    saveMgrView()
+    MGR_DETAIL = { kind: hit.kind, key: n }
+    if (state.mgr !== 'plugins') navigate('#mgr/plugins')
+    if (PLUGINS_CTX) PLUGINS_CTX.rerender()
+    return { kind: hit.kind, name: n }
+  }
 
   // 「插件/技能/应用」卡体（id='plugins' 的默认形态，即侧栏第一 tab）
   function renderMgrPlugins(body, ctx) {
@@ -7824,6 +7871,47 @@ function setFirstSendHash(v) { firstSendHash = v }
     await loadProjectTree(label)
   }
 
+  // 目录定位（@ 目录 chip 的跳转落点，经 work 卡 reveal 命令调用）：逐段展开祖先、切到文件 tab 渲染，
+  // 再按 data-wkdir 精确比较定位行（不拼 CSS 选择器，路径里的引号/方括号不参与解析）。
+  // 目录不在树中 → 抛错（卡回 ok:false，派发器 toast），不静默停在别处。
+  async function revealWorkDir(rel) {
+    const label = state.workProj
+    if (!label) throw new Error('没有工作项目')
+    const dir = String(rel || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+    if (!wkTree) await loadProjectTree(label, true)
+    if (!wkTree) throw new Error('文件树尚未加载')
+    if (dir) {
+      const parts = dir.split('/')
+      let nodes = wkTree
+      let prefix = ''
+      for (const seg of parts) {
+        const hit = (nodes || []).find((n) => n && n.type === 'dir' && n.name === seg)
+        if (!hit) throw new Error('目录不在项目树中：' + dir)
+        prefix = prefix ? prefix + '/' + seg : seg
+        wkOpen.add(prefix) // 祖先与目标自身一起展开
+        nodes = hit.children
+      }
+    } else {
+      wkOpen.clear() // 项目根：收起全部，回到树的根视图
+    }
+    state.wkTab = 'files'
+    renderWorkBody()
+    applyPanes()
+    const body = $('wk-body')
+    let row = null
+    if (body) {
+      for (const el of body.querySelectorAll('[data-wkdir]')) {
+        if (el.dataset.wkdir === dir) { row = el; break }
+      }
+    }
+    if (row) {
+      row.scrollIntoView({ block: 'center' })
+      row.classList.add('wk-hit')
+      setTimeout(() => { if (row.isConnected) row.classList.remove('wk-hit') }, 1400)
+    }
+    return { path: dir, found: !!row }
+  }
+
   // silent = 自动对账（见 workAutoTick）：不收起浮层、不动滚动位置、失败静默
   async function refreshWork(silent) {
     if (!silent) hideWkPops()
@@ -7905,7 +7993,39 @@ function setFirstSendHash(v) { firstSendHash = v }
   let WPL_LABEL = '' // WPL_DATA 所属项目
   let WPL_DATA = { plugins: [], skills: [], loaded: false, loading: false, err: '' }
   let WPL_LOADING = false
+  let WPL_PROMISE = null // 在途加载（ensureWplData 返回它：调用方可等清单落地再查条目）
   let WPL_APPS_WAIT = '' // 已发起卡表申报请求的 label（只防重复挂 then 链）
+
+  // 卡公开 API（@ 插件/技能 chip 的项目侧兜底落点）：openDetail{name} = 切到插件页并打开该条目详情。
+  cardBus.registerInlineCard({
+    instanceId: 'floria-work-plugins',
+    ns: 'floria-work-plugins',
+    cmds: ['openDetail'],
+    handlers: { openDetail: (a) => openWorkPluginDetail(a && a.name) },
+  })
+
+  async function openWorkPluginDetail(name) {
+    const n = String(name || '').trim()
+    if (!n) throw new Error('缺少插件名称')
+    const label = state.workProj
+    if (!label) throw new Error('没有工作项目')
+    // 先让插件页挂进下沉区（applyPanes → mountWorkPlugins 设 WPL_LABEL 并起加载），再等清单落地查条目。
+    state.wkMainTab = 'plugins'
+    state.wkAssist = true
+    state.wkAssistMode = 'side'
+    applyPanes()
+    await ensureWplData(label)
+    for (const kind of ['plugins', 'skills']) {
+      const hit = wplRows(kind).find((r) => r && r.n === n)
+      if (!hit) continue
+      WPL_VIEW.kind = kind
+      WPL_VIEW.q = ''
+      WPL_DETAIL = { kind, key: n }
+      renderWpl()
+      return { kind, name: n }
+    }
+    throw new Error('项目里没有该插件/技能：' + n)
+  }
 
   // 进入/回到插件页（applyPanes 在下沉区显示插件态时调用）：换项目重置详情与清单；DOM 元素换了才
   // 整页重渲，否则保持现状（搜索焦点 / 滚动位置不因周期对账被重建）。
@@ -7932,15 +8052,15 @@ function setFirstSendHash(v) { firstSendHash = v }
     ensureWplApps(label)
   }
 
-  // 插件/技能清单（项目维度）
+  // 插件/技能清单（项目维度）：返回 Promise（在途复用同一份）——openWorkPluginDetail 要等清单落地才能查条目。
   function ensureWplData(label, force) {
-    if (WPL_LOADING) return
-    if (!force && WPL_DATA.loaded) return
+    if (WPL_LOADING) return WPL_PROMISE || Promise.resolve(WPL_DATA)
+    if (!force && WPL_DATA.loaded) return Promise.resolve(WPL_DATA)
     WPL_LOADING = true
     WPL_DATA.loading = true
     WPL_DATA.err = ''
     renderWplGrid()
-    loadProjectPlugins(label)
+    WPL_PROMISE = loadProjectPlugins(label)
       .then((d) => {
         if (WPL_LABEL !== label) return
         WPL_DATA = { plugins: d.plugins, skills: d.skills, loaded: true, loading: false, err: '' }
@@ -7952,8 +8072,10 @@ function setFirstSendHash(v) { firstSendHash = v }
       })
       .finally(() => {
         WPL_LOADING = false
+        WPL_PROMISE = null
         if (WPL_LABEL === label) renderWpl()
       })
+    return WPL_PROMISE
   }
 
   // 应用清单 = 预览卡申报（与右栏工具栏同一份卡表，含停用卡）；未就绪先取一次申报
@@ -12370,8 +12492,16 @@ function setFirstSendHash(v) { firstSendHash = v }
     cardBus.registerInlineCard({
       instanceId: 'floria-work',
       ns: 'floria-work',
-      cmds: ['scroll', 'locate', 'state'],
+      cmds: ['scroll', 'reveal', 'locate', 'state'],
       handlers: {
+        // reveal{path} = 文件树展开到该目录并定位（@ 目录 chip 的跳转落点）；门禁与 scroll 同口径。
+        reveal: async (a) => {
+          if (state.sbMode !== 'work' || !state.workProj) throw new Error('仅在 work 模式下可定位目录')
+          const raw = String((a && a.path) || '').replace(/\\/g, '/')
+          const pre = state.workProj + '/'
+          const path = raw === state.workProj ? '' : raw.startsWith(pre) ? raw.slice(pre.length) : raw
+          return revealWorkDir(path)
+        },
         scroll: async (a) => {
           if (state.sbMode !== 'work' || !state.workProj) throw new Error('仅在 work 模式下可跳转到文件')
           const raw = String((a && a.path) || '').replace(/\\/g, '/')
@@ -12676,6 +12806,150 @@ function setFirstSendHash(v) { firstSendHash = v }
     applySbMode()
   }
 
+
+  const MENTION_NAV_CARD_TIMEOUT = 15000
+
+  // ---------- chip / CM6 spec → target ----------
+  function mentionTargetFromChip(el) {
+    if (!el || !el.dataset) return null
+    const q = el.dataset.qjump
+    if (q === 'reply') return { kind: 'reply', idx: Number(el.dataset.qidx) || 0 }
+    if (q === 'file') return { kind: 'ref', path: el.dataset.qpath || '', line: Number(el.dataset.ql0) || 0 }
+    const m = el.dataset.mjump
+    if (m === 'session') {
+      const t = splitSessionToken(el.dataset.mname || '')
+      return { kind: 'session', title: t.title, sid: t.sid }
+    }
+    if (m === 'path') {
+      return { kind: 'path', ptype: el.dataset.mptype === 'dir' ? 'dir' : 'file', path: el.dataset.mname || '' }
+    }
+    if (m === 'plugin') return { kind: 'plugin', name: el.dataset.mname || '' }
+    return null
+  }
+
+  // CM6 token spec（SubPj4 composer 的 CM_TOKENS 产物）：session{name='标题|sid'}、path{ptype,name}、
+  // plugin{name}、ref{rkind,file,l0,idx}。att（上传附件）不是链接，调用方已排除。
+  function mentionTargetFromSpec(spec) {
+    if (!spec || typeof spec !== 'object') return null
+    if (spec.kind === 'session') {
+      const t = splitSessionToken(spec.name || '')
+      return { kind: 'session', title: t.title, sid: t.sid }
+    }
+    if (spec.kind === 'path') {
+      return { kind: 'path', ptype: spec.ptype === 'dir' ? 'dir' : 'file', path: spec.name || '' }
+    }
+    if (spec.kind === 'plugin') return { kind: 'plugin', name: spec.name || '' }
+    if (spec.kind === 'ref') {
+      if (spec.rkind === 'reply') return { kind: 'reply', idx: Number(spec.idx) || 0 }
+      return { kind: 'ref', path: spec.file || '', line: Number(spec.l0) || 0 }
+    }
+    return null
+  }
+
+  // ---------- 路径 → 项目 + 项目内相对路径 ----------
+  function mentionProjectLabels() {
+    const out = []
+    for (const g of state.projects || []) if (g && g.label && g.scope === 'project') out.push(g.label)
+    return out
+  }
+
+  // 当前会话所属项目（chat 侧判据 = sessionProjLabel；work 侧回落工作项目）。
+  function mentionCurrentProject() {
+    const s = findSession(state.currentHash)
+    const lab = s ? sessionProjLabel(s) : ''
+    return lab || state.workProj || ''
+  }
+
+  // 路径口径与 @ 提及一致（inputbar/mention.js refPath）：会话 cwd 就是项目本身时是项目内相对路径，
+  // 跨项目时带 `<项目 label>/` 前缀。解析 = 归一分隔符 + 剥工作区根 + 按**最长项目 label 前缀**匹配
+  // （避免 Pj1 误命中 Pj10-*）；无项目前缀时归到当前会话项目。
+  function resolveMentionPath(raw) {
+    let full = unescapeMentionPath(raw).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+    if (!full) throw new Error('缺少路径')
+    const ws = String(state.workspace || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    if (ws && full.startsWith(ws + '/')) full = full.slice(ws.length + 1)
+    let best = ''
+    for (const l of mentionProjectLabels()) {
+      if ((full === l || full.startsWith(l + '/')) && l.length > best.length) best = l
+    }
+    if (best) return { project: best, rel: full === best ? '' : full.slice(best.length + 1) }
+    const cur = mentionCurrentProject()
+    if (!cur) throw new Error('无法确定该路径所属项目：' + full)
+    return { project: cur, rel: full }
+  }
+
+  // 切到 work 模式并选中目标项目（树/预览等补拉由 selectProject 自己完成；同项目时保持现状）。
+  async function ensureMentionWork(project) {
+    if (!project) throw new Error('无法确定目标项目')
+    if (!state.projects.length) {
+      try { await loadSessions() } catch { /* 拉取失败仍可试切（selectProject 会导航） */ }
+    }
+    if (state.sbMode !== 'work') setSbMode('work')
+    if (state.workProj !== project) await selectProject(project)
+    if (state.workProj !== project) throw new Error('切换到项目失败：' + project)
+  }
+
+  // ---------- 卡片调用 ----------
+  async function callMentionCard(target, cmd, args, timeoutMs) {
+    const ack = await cardBus.callCard(target, cmd, args, { timeoutMs: timeoutMs || MENTION_NAV_CARD_TIMEOUT })
+    if (ack && ack.ok === false) throw new Error(ack.error || '跳转失败')
+    return ack ? ack.result : null
+  }
+
+  // 会话寻址：优先令牌自带的 sid；旧消息（无 sid）按标题精确匹配列表，重名则显式报错不猜。
+  function resolveSessionSid(t) {
+    if (t.sid) return t.sid
+    const title = String(t.title || '').trim()
+    if (!title) return ''
+    const hits = ALL.filter((s) => String(s.title || '') === title)
+    if (hits.length === 1) return hashOf(hits[0])
+    if (hits.length > 1) throw new Error('存在多个同名会话，无法定位：' + title)
+    return ''
+  }
+
+  async function activateSessionChip(t) {
+    const sid = resolveSessionSid(t)
+    if (!sid) throw new Error('找不到会话：' + (t.title || t.sid || ''))
+    await callMentionCard({ instanceId: 'floria-chat' }, 'open', { sid })
+  }
+
+  // 插件/技能：先查全局（工作区根）管理卡；没有再看当前项目的插件页（项目自带插件/技能）。
+  async function activatePluginChip(name) {
+    const n = String(name || '').trim()
+    if (!n) throw new Error('缺少插件名称')
+    const ack = await cardBus.callCard({ instanceId: 'floria-plugins' }, 'openDetail', { name: n }, { timeoutMs: 20000 })
+    if (ack && ack.ok) return ack.result
+    const project = state.workProj || mentionCurrentProject()
+    if (!project) throw new Error((ack && ack.error) || ('未找到插件/技能：' + n))
+    await ensureMentionWork(project)
+    await callMentionCard({ instanceId: 'floria-work-plugins' }, 'openDetail', { name: n }, 20000)
+  }
+
+  // ---------- 唯一入口 ----------
+  async function runMentionTarget(t) {
+    if (t.kind === 'session') return activateSessionChip(t)
+    if (t.kind === 'reply') return callMentionCard({ instanceId: 'floria-chat' }, 'scroll', { line: t.idx })
+    if (t.kind === 'plugin') return activatePluginChip(t.name)
+    if (t.kind === 'ref') {
+      // 引用 chip 保持原行为：不自动切模式/项目，卡内门禁失败由 toast 呈现
+      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: t.path, line: t.line || 0 })
+    }
+    if (t.kind === 'path') {
+      const r = resolveMentionPath(t.path)
+      await ensureMentionWork(r.project)
+      if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
+      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 })
+    }
+  }
+
+  async function activateMention(target) {
+    if (!target) return
+    try {
+      await runMentionTarget(target)
+    } catch (e) {
+      toast((e && e.message) || String(e))
+    }
+  }
   // ---------- 事件绑定 ----------
   // 侧栏开合（2026-09-25 定案：折叠态宽度归 0，64px rail 折叠带撤除；2026-10-14 待办#19 定案：
   // **左缘悬停唤出整条触发链移除**——work 编辑时误触屏幕边界即弹侧栏打断操作，干扰大于收益；
@@ -12833,6 +13107,14 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
   function closeCtxMeter() { if (ctx.open) setCtxOpen(false) }
 
+  // 「点是否落在底栏（#input-wrap = 输入栏 + 命令浮窗）」——底栏是过滤文本的唯一输入面，
+  // 在底栏内点击/聚焦/拖选不得收起 @ 浮窗（2026-11-08 用户实报「@ 时点底栏工具栏就消失」）。
+  // 用 composedPath：行内点击会先重渲 innerHTML，冒泡到这里时 e.target 可能已脱离 DOM。
+  function inBottomBar(e) {
+    const bar = $('input-wrap')
+    const path = e.composedPath ? e.composedPath() : null
+    return path ? path.includes(bar) : !!bar && bar.contains(e.target)
+  }
   // 浮窗外部关闭（对齐 dsh 语义：mousedown 时机 + contains 判断——mousedown 在 DOM 变更前命中目标，
   // 天然免疫 innerHTML 重渲染把被点元素摘除后 e.target.closest() 返回 null 误判「点外关闭」的浮窗闪关/复开）
   document.addEventListener('mousedown', (e) => {
@@ -12845,8 +13127,9 @@ function setFirstSendHash(v) { firstSendHash = v }
       if (dlg && !dlg.contains(e.target)) { closeRiskModal(); return }
     }
     // 命令菜单：点卡片外（+ 按钮除外，其 click toggle 接管开合）= 关闭（dsh PopupSelectView pointerdown capture）。
-    // 底栏输入框不算外（2026-10-14 待办 20 返修）：过滤文本就在底栏，点击聚焦/打字不得关掉浮窗
-    if (cmd.open && !cmdPop.contains(e.target) && !$('cmd-btn').contains(e.target) && !inputEl.contains(e.target)) closeCmdPop()
+    // 底栏整体不算外（2026-10-14 待办 20 / 2026-11-08）：过滤文本就在底栏，底栏内任何点击
+    // （输入区、附件胶囊、工具行空白）都不得关掉工具栏；各按钮自己的开关语义不变。
+    if (cmd.open && !inBottomBar(e)) closeCmdPop()
     // 模型菜单：点 root 外（模型 trigger 除外，其 click toggle 接管开合）= 关闭（dsh ModelSelect mousedown + rootRef.contains）
     if (msel.open && !modelPop.contains(e.target) && !modelSeatEl.contains(e.target)) closeModelPop()
     // 项目选择器：点 root 外（seat 除外，其 click toggle 接管开合）= 关闭
@@ -12861,7 +13144,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 冒泡到这里时 e.target 已脱离 DOM，closest('#cmd-pop') 恒为 null ⇒ 误判点外、@ 浮窗刚进视图
     // 就被关掉（2026-10-25 根因）。composedPath 在派发时固定，重渲后仍含原祖先链。
     const inCmdPop = e.composedPath ? e.composedPath().includes(cmdPop) : (e.target.closest && !!e.target.closest('#cmd-pop'))
-    if (!inCmdPop) closeMentionPop()
+    // 底栏内点击不关 @ 浮窗（2026-11-08 用户定案）：点在底栏外（侧栏/消息流/浮层外）才收。
+    if (!inCmdPop && !inBottomBar(e)) closeMentionPop()
     if (!$('organize-pop').contains(e.target) && !e.target.closest('#recent-more')) $('organize-pop').classList.remove('show')
     if (!bubblePop.contains(e.target)) bubblePop.classList.remove('show')
   })
@@ -13120,17 +13404,15 @@ function setFirstSendHash(v) { firstSendHash = v }
       .appr-md{color:var(--text);font-size:13px;line-height:20px;word-break:break-word}
       .appr-md p{margin:4px 0}
       .appr-md h1,.appr-md h2,.appr-md h3,.appr-md h4{margin:12px 0 4px;font-weight:700;color:var(--text);line-height:1.4}
-      .appr-md h1{font-size:16px}.appr-md h2{font-size:15px}.appr-md h3{font-size:14px}.appr-md h4{font-size:13px}
       .appr-md ul,.appr-md ol{margin:4px 0;padding-left:20px}
       .appr-md li{margin:2px 0}
       .appr-md blockquote{border-left:3px solid var(--border);margin:4px 0;padding:2px 10px;color:var(--text-2)}
       .appr-md hr{border:none;border-top:1px solid var(--border);margin:8px 0}
       .appr-md a{color:var(--text);text-decoration:underline;text-underline-offset:2px}
-      .appr-md code{background:var(--border-soft);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px}
       /* .code-block 系列（2026-10-10）已收口到 styles.css 的「.appr-md .code-block」作用域（含头栏/换行/hljs），
          此处不再重复——注入样式晚于 <link> 会盖掉新设计（旧绝对定位 .code-lang 等）。 */
       .appr-md .md-table{margin:6px 0;overflow-x:auto}
-      .appr-md .md-table table{border-collapse:collapse;font-size:12.5px;width:100%}
+      .appr-md .md-table table{border-collapse:collapse;width:100%}
       .appr-md .md-table th,.appr-md .md-table td{border:1px solid var(--border);padding:5px 9px;text-align:left;white-space:normal;word-break:break-word}
       .appr-md .md-table th{background:var(--rail-bg);font-weight:600}
       .appr-diff{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden}
@@ -13224,20 +13506,42 @@ function setFirstSendHash(v) { firstSendHash = v }
     document.head.appendChild(s)
   }
 
-  // ---------- 上下文项目（工具栏项目隔离的唯一来源）----------
+  // ---------- 上下文项目（技能/文件范围的唯一来源）----------
   // 会话态 = 该会话所属项目；非会话态 = 目标项目（`newSessionProject()`，work 模式即工作项目）。
-  // 空串 = 全局上下文（无项目归属）→ 文件从工作区根起、技能取便携根全局、会话不设隔离。
+  // 空串 = 全局上下文（无项目归属）→ 文件从工作区根起、技能取便携根全局。
   function pickHome() {
     const s = state.currentHash ? findSession(state.currentHash) : null
     if (s) return sessionProjLabel(s)
     return newSessionProject() || ''
   }
-  // 会话隔离判据（2026-11-07 用户定案）：home = 调用方算好的 `pickHome()`（列表循环里只算一次）。
-  //  - 有项目上下文 → **严格**只给该项目的会话（sessionProjLabel 是项目归属的唯一真源）；
-  //  - 全局上下文（home 为空）→ **不设隔离**，所有项目的会话都可被引用/搜索（用户明确的例外）。
-  function sessionInScope(s, home) {
-    if (!home) return true
-    return sessionProjLabel(s) === home
+  // ---------- 匹配度（排序唯一判据）----------
+  // 档位：精确 > 前缀 > 词边界（空格/连字符/下划线/斜杠/点/中英括号之后）> 子串；
+  // 同档内命中位置越靠前分越高。0 = 不匹配（调用方已过滤）。
+  function matchScore(text, q) {
+    const t = String(text || '').toLowerCase()
+    const ql = String(q || '').trim().toLowerCase()
+    if (!ql) return 0
+    const i = t.indexOf(ql)
+    if (i < 0) return 0
+    const tier = t === ql ? 4 : i === 0 ? 3 : /[\s\-_/.·|[\]()（）【】]/.test(t[i - 1]) ? 2 : 1
+    return tier * 100000 - Math.min(i, 99999)
+  }
+  // 会话是否属当前上下文项目（同分排序用）。
+  function sessionOwn(s, home) {
+    return home && sessionProjLabel(s) === home ? 1 : 0
+  }
+  // 会话排序：匹配度 → 本项目优先 → 更新时间倒序。q 为空 = 无匹配度，仅「本项目优先 + 时间」。
+  function sortSessions(list, q, home) {
+    const ql = String(q || '').trim().toLowerCase()
+    const key = new Map()
+    for (const s of list) {
+      key.set(s, { score: ql ? matchScore(s.title, ql) : 0, own: sessionOwn(s, home), t: s.updatedAt || 0 })
+    }
+    return list.slice().sort((a, b) => {
+      const ka = key.get(a)
+      const kb = key.get(b)
+      return kb.score - ka.score || kb.own - ka.own || kb.t - ka.t
+    })
   }
   // ---------- 目录 / 文件引用（2026-09-26）：@ 浮窗与 + 工具栏共用的一组「逐级浏览」状态 ----------
   // 数据源 = GET /gateway/fs?path=<相对工作区根的子路径>（只读单层；网关侧复用 listOneLevel，跳过隐藏项
@@ -13384,7 +13688,12 @@ function setFirstSendHash(v) { firstSendHash = v }
       }
       return items
     }
-    if (pick.path) items.push({ kind: 'pathup', name: '上级目录', path: pickParent() })
+    if (pick.path) {
+      items.push({ kind: 'pathup', name: '上级目录', path: pickParent() })
+      // 目录引用（2026-11-08 用户定案）：层内浏览时目录行仍下钻，目录本身要能引用 ⇒ 固定一行
+      // 「引用此目录」插当前层（ptype=dir，令牌 [@目录:path]）；搜索命中里的目录行直接插入引用。
+      items.push({ kind: 'pathref', name: '引用此目录', path: pick.path, ptype: 'dir' })
+    }
     if (pick.loading || !pick.entries) return items
     for (const e of pick.entries) {
       if (ql && !String(e.name).toLowerCase().includes(ql)) continue
@@ -13519,6 +13828,23 @@ function setFirstSendHash(v) { firstSendHash = v }
     return unfoldQuoteBodies(composerDocText())
   }
 
+  // 工具栏查询词 = 底栏文本 **减去已落地的 chip 令牌**。令牌只是引用件的序列化形态（`[@文件:…]` /
+  // `[会话:…]` / `![名](uploads/x)` 等），不是用户输入的检索词；不剥离时底栏只要存在一枚引用件，
+  // 整串（含令牌）都进了 `match` 过滤 ⇒ 任何搜索一律零命中（用户实报「底栏存在一个链接的时候，
+  // 再次搜索则什么都搜索不出来」）。剥离后连续空白压成一个，避免残留分隔影响匹配。
+  const CHIP_STRIP_RES = [
+    MENTION_SESSION_RE, MENTION_PLUGIN_RE, MENTION_PATH_RE,
+    QUOTE_REF_RE, QUOTE_REPLY_RE, QUOTE_PDF_RE,
+    /\[[^\]\n]*\]\(uploads\/[^)\s]+\)/g, // 上传附件正文引用（CM6 CM_ATT_LINK 同文法）
+    /\s*\[文件:[^\]]*\]/g,               // 上传文件占位（发送期拼入）
+  ]
+  function stripChipTokens(text) {
+    let s = String(text == null ? '' : text)
+    for (const re of CHIP_STRIP_RES) s = s.replace(re, ' ')
+    return s.replace(/\s+/g, ' ').trim()
+  }
+  function toolbarQueryText() { return stripChipTokens(serializeInput()) }
+
   // 复位 @ 数据态（不碰 DOM、不开关工具栏）：@ 关闭链与工具栏关闭链共用同一处，避免两套状态漂移。
   function resetMention() {
     mention.open = false
@@ -13552,7 +13878,10 @@ function setFirstSendHash(v) { firstSendHash = v }
 
   // 条目落地的唯一入口（点击与回车共用）：目录/上级=下钻重渲；文件=插 chip；会话/技能=插 chip。
   function selectMentionItem(it) {
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
+    // 目录引用（2026-11-08 用户定案）：层内固定行「引用此目录」直接插 chip；搜索命中的目录行
+    // 也直接插引用（glob=true，搜到即想要引用，不再下钻）；层内点目录仍下钻。
+    if (it.kind === 'pathref') { insertMention('path', it.path, '', 'dir'); return }
+    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
       pickEnter(it).then(() => { if (cmd.open && cmd.mentionMode) renderCmdPop() })
       return
     }
@@ -13565,7 +13894,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       syncGwSend()
       return
     }
-    if (it.kind === 'path') insertMention('path', it.path, '', 'file')
+    if (it.kind === 'path') insertMention('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file')
     else insertMention(it.kind, it.name, it.sid)
   }
 
@@ -13611,7 +13940,8 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (mention.open) {
       const between = st.doc.sliceString(mention.anchor, pos)
       if (pos <= mention.anchor || /[\n\r]/.test(between)) { closeMentionPop(); return }
-      const q = between.slice(1)
+      // 选区扩展越过已落地的 chip 时，between 会夹进令牌文本 ⇒ 同样剥离，否则查询词恒零命中。
+      const q = stripChipTokens(between.slice(1))
       if (q !== mention.q) { mention.q = q; if (cmd.open) renderCmdPop() }
       return
     }
@@ -13665,6 +13995,8 @@ function setFirstSendHash(v) { firstSendHash = v }
       esc: (s) => esc(s),
       decodeQuoteBody: (s) => decodeQuoteBody(s),
       foldQuoteBodies: (t) => foldQuoteBodies(t),
+      // chip 点击 → 统一派发器（会话/文件/目录/插件/引用各自的跳转落点只由 feature/mention-nav.js 决定）
+      activate: (spec) => activateMention(mentionTargetFromSpec(spec)),
     },
     paste: {
       clipboardFiles: (cd) => clipboardFiles(cd),
@@ -13800,7 +14132,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -13875,7 +14207,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
   // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
   // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
-  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
+  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathref: '文件', pathwait: '文件' }
   function groupOf(it) {
     return GROUP_OF[it.kind] || '指令'
   }
@@ -13891,7 +14223,8 @@ function setFirstSendHash(v) { firstSendHash = v }
   // innerHTML 重渲并**重建框自身**，IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，
   // 底栏 contenteditable 原样不动，中文 IME 正常。命令前缀 / 由 cmdEntries 剥。
   function barQuery() {
-    return serializeInput().trim()
+    // 剥离已落地的 chip 令牌：令牌不是检索词，夹在 q 里会让「底栏有引用件时」所有搜索零命中。
+    return toolbarQueryText()
   }
 
   // 弹窗的统一条目源（@ 模式与 + 工具栏搜索共用；+ 的入口视图另走 cmdEntries）。
@@ -13906,43 +14239,53 @@ function setFirstSendHash(v) { firstSendHash = v }
     const items = []
     // 「上传」组（待办 6）：本次上传的附件（图片/文件），选中插回正文 md 引用。属于「刚刚发生」，时间取 now。
     for (const u of uploadedMentionItems()) if (match(u.name)) items.push({ ...u, t: now })
-    // 会话：**空查询**只给近 48h 建议（免浮窗一开就几百条）；**有查询词**时搜全量——标题检索必须与
+    // 会话：**空查询/层内**只给近 48h 建议（免浮窗一开就几百条）；**有查询词**时搜全量——标题检索必须与
     // 侧栏一致，不能因会话旧于 48h 就查不到（2026-10-17 用户实测：侧栏有「202610131215-有机随想」，
     // 输入 @2026101312 却只剩文件命中）。
-    // 项目隔离 = sessionInScope：有项目上下文只给该项目的会话；全局上下文不设隔离（2026-11-07 定案）。
-    // home 只算一次（每条会话都重算 pickHome 会做 N 次 findSession）。
+    // **不按项目隔离**（2026-11-08 用户定案）：全项目会话都可被 @ 引用；排序 = 匹配度优先、
+    // 同分本项目会话在前、再按更新时间倒序（scope.js 的 sortSessions）。跨项目结果行尾标项目编号。
     const home = pickHome()
     const cutoff = now - 48 * 3600 * 1000
+    const sessions = []
     for (const s of ALL) {
-      if (!sessionInScope(s, home)) continue
       if (!globalSearch && s.updatedAt < cutoff) continue
+      if (match(s.title || '')) sessions.push(s)
+    }
+    for (const s of sortSessions(sessions, globalSearch ? q : '', home)) {
+      const own = sessionOwn(s, home)
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
-      if (match(s.title || '')) items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt })
+      items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt, own, proj: own ? '' : sessionProjLabel(s) })
     }
     // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
     const proj = home
-    // 已停用（en === 0）的自定义件不进 @ 提及：停用后 agent 侧也不暴露，入口需一致。
-    for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (match(s.n) || match(s.d))) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    // 启用态只控制会话启动时是否加载（agent 可见面）；@ 入口不受它约束——停用件照常可搜可插，
+    // 用户主动 @ 即视为显式指定该项（用户定案）。
+    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
     if (MGR) {
       // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
       // 插件是便携根安装件、无项目归属，两种上下文都列。
-      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
+      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
     }
     items.push(...pickItems(q))
-    if (globalSearch) items.sort((a, b) => (b.t || 0) - (a.t || 0))
+    // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
+    if (globalSearch) {
+      for (const it of items) it.ms = matchScore(it.name, ql)
+      items.sort((a, b) => (b.ms || 0) - (a.ms || 0) || (b.own || 0) - (a.own || 0) || (b.t || 0) - (a.t || 0))
+    }
     return items
   }
 
   // 会话行（会话入口与搜索共用）：sid = 会话间协作的寻址键，两个路口径必须一致（同 @ 提及链）。
-  function cmdSessionRows(match, grp) {
+  // 不按项目隔离（2026-11-08 用户定案）：匹配度优先 → 本项目在前 → 时间倒序，均走 scope.js 的 sortSessions。
+  function cmdSessionRows(q, grp) {
     const out = []
     const home = pickHome()
-    for (const s of [...ALL].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      // 项目隔离与 @ 提及共用 sessionInScope（有项目只给本项目；全局不设限制）。
-      if (!sessionInScope(s, home)) continue
-      if (match && !match(s.title || '')) continue
-      out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp })
+    const ql = String(q || '').trim().toLowerCase()
+    const rows = ALL.filter((s) => !ql || String(s.title || '').toLowerCase().includes(ql))
+    for (const s of sortSessions(rows, ql, home)) {
+      const own = sessionOwn(s, home)
+      out.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), grp, own, proj: own ? '' : sessionProjLabel(s) })
     }
     return out
   }
@@ -13958,15 +14301,15 @@ function setFirstSendHash(v) { firstSendHash = v }
     const proj = pickHome()
     // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
     // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
-    // 已停用（en === 0）的自定义件不列：停用即不暴露给 agent，入口同步收口。
+    // 启用态只控制会话加载，不约束入口：停用件照常列（用户可主动选用，见 mentionItems 同条）。
     if (proj) {
-      for (const s of projSkillsOf(proj).list) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
     } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (s.en !== 0 && (!match || match(s.n) || match(s.d))) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
     }
     // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
-    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (p.en !== 0 && (!match || match(p.n) || match(p.d))) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
+    for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
@@ -13981,6 +14324,12 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!pickAll.done) { items.push({ kind: 'pathwait', name: '搜索中…', desc: '正在索引 ' + (pickAll.root || '工作区根') }); return }
     if (items.length === (base || 0)) items.push({ kind: 'pathwait', name: '无匹配结果', desc: '' })
   }
+  // 浮窗滚动量保持的「同一屏」判据：模式 / 视图 / 查询词 / 当前浏览层任一变化 = 换了一屏，
+  // 旧 scrollTop 必须作废（否则新屏带着上一屏的滚动量，分组标题被顶上裁掉半截）。
+  function cmdViewKey() {
+    const q = (cmd.mentionMode ? mention.q : toolbarQueryText()).toLowerCase()
+    return `${cmd.mentionMode ? '@' : '+'}|${cmd.view || ''}|${q}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
+  }
   function cmdEntries() {
     // 查询词：@ 模式 = @ 后到光标的文本；+ 模式 = 底栏全文（剥掉可能的前导 /）。
     const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
@@ -13993,7 +14342,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       // 文件视图不叠「导航/返回」（2026-11-05 用户定案）：它自带「上级目录」，两行同图标上箭头 + 两个分组标题
       // 看着像两栏叠在一起；文件视图的退出走 Esc / 点浮窗外（pathup 行同时承担层内上行）。
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
-      if (cmd.view === 'session') items.push(...cmdSessionRows(match, '会话'))
+      if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
@@ -14318,6 +14667,10 @@ function setModelUserPicked(v) { modelUserPicked = v }
     cmd.confirming = null
     cmd.acknowledged = false
     cmdPop.hidden = true
+    // 收起即清内容：`.viewport` 连同其 scrollTop 一起消失，下次开窗从顶部起（不把上一轮的
+    // 滚动量搬进新一屏——那会让首个分组标题被裁掉半截，用户实报「工具栏又有重叠」）。
+    cmdPop.innerHTML = ''
+    cmd.vpKey = ''
     // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
     renderTaskDock()
     // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
@@ -14339,8 +14692,10 @@ function setModelUserPicked(v) { modelUserPicked = v }
     // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
     // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
     // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
+    // 只在「同一屏」内搬运滚动量：视图/查询/浏览层变了就归零（见 cmdViewKey）。
+    const vpKey = cmdViewKey()
     const prevVp = cmdPop.querySelector('.viewport')
-    const keepTop = prevVp ? prevVp.scrollTop : 0
+    const keepTop = prevVp && cmd.vpKey === vpKey ? prevVp.scrollTop : 0
     const prevActive = cmd.prevActive
     let html = ''
     if (cmd.error !== null) {
@@ -14360,19 +14715,38 @@ function setModelUserPicked(v) { modelUserPicked = v }
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' || it.kind === 'pathref' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
-        const detail = it.kind === 'path' ? it.path : it.desc
+        const detail = it.kind === 'path' || it.kind === 'pathref' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
         return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
       }).join('')}</div>`
     }
     cmdPop.innerHTML = html
     cmdPop.hidden = false
-    cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
+    // 行选中：鼠标走 pointerdown（按下即选），触摸/键盘仍走 click。
+    // 文件搜索是流式索引，进度批次会整块重渲 `.viewport`（行 DOM 全部替换）；若重渲恰好落在
+    // 按下与抬起之间，浏览器把 click 派发给两元素的**共同祖先**，行监听收不到 ⇒ 第一下白点，
+    // 用户只能再点一次（实报「文件艾特时候需要双击」）。按下态命中当前元素，免疫重渲。
+    // 触摸不提前选：手指按下可能是在滑列表，抬手才该定格。pressed 吃掉同一手势随后的 click
+    // （行未被替换时），键盘 click（detail=0，无 pointerdown）照常生效。
+    cmdPop.querySelectorAll('.row').forEach((b) => {
+      let pressed = false
+      const choose = () => { cmd.active = +b.dataset.idx; cmdSelect() }
+      b.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return
+        pressed = true
+        choose()
+      })
+      b.addEventListener('click', () => {
+        if (pressed) { pressed = false; return }
+        choose()
+      })
+    })
     cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
     const vp = cmdPop.querySelector('.viewport')
     if (vp) vp.scrollTop = keepTop
+    cmd.vpKey = vpKey
     if (cmd.active !== prevActive) {
       const on = cmdPop.querySelector('.row.rowActive')
       if (on) on.scrollIntoView({ block: 'nearest' })
@@ -14443,11 +14817,14 @@ function setModelUserPicked(v) { modelUserPicked = v }
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
     // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
     // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
+    // 目录引用（2026-11-08 用户定案）：层内「引用此目录」行 / 搜索命中的目录行直接插 dir chip；
+    // 层内点目录（非 glob）仍下钻。
+    if (it.kind === 'pathref') { appendMentionChip('path', it.path, '', 'dir'); closeCmdPop(); return }
+    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
       pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
       return
     }
-    if (it.kind === 'path') { appendMentionChip('path', it.path, '', 'file'); closeCmdPop(); return }
+    if (it.kind === 'path') { appendMentionChip('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file'); closeCmdPop(); return }
     if (it.kind === 'skill' || it.kind === 'plugin') { appendMentionChip('plugin', it.name); closeCmdPop(); return }
     if (it.kind === 'session') { appendMentionChip('session', it.name, it.sid); closeCmdPop(); return }
     const o = it.ref
@@ -14563,8 +14940,15 @@ function setModelUserPicked(v) { modelUserPicked = v }
   cardBus.registerInlineCard({
     instanceId: 'floria-chat',
     ns: 'floria-chat',
-    cmds: ['scroll', 'locate', 'state'],
+    cmds: ['open', 'scroll', 'locate', 'state'],
     handlers: {
+      // open{sid} = 切到该会话（@ 会话 chip 的跳转落点）；sid = 转录文件名主干，与路由 hash 同源。
+      open: async (a) => {
+        const sid = String((a && a.sid) || '')
+        if (!sid) throw new Error('缺少会话 id')
+        activateSession(sid)
+        return { sid }
+      },
       scroll: (a) => scrollToMsgLine(a && a.line),
       locate: () => ({ messages: messagesEl.querySelectorAll('.msg').length }),
       state: () => ({ mode: state.sbMode || 'chat', messages: messagesEl.querySelectorAll('.msg').length }),
@@ -14879,7 +15263,7 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
         // 同构不变量见下（乐观开启气泡与落盘气泡同构，2026-09-07 定案）——body 渲染是它此前漏网的一环。
         const bodyInner = mdHtml(bodyText)
         // 纯图/纯文件消息：无 .body 空气泡、无复制按钮（落盘接管帧同构同去，2026-09-07 空气炮根修）
-        return '<div class="msg user msg-in" data-t="u">' + (bodyInner ? '<div class="body">' + bodyInner + '</div>' : '') + imgsHtml + filesHtml + (bodyInner ? '<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">' + ICON_COPY + '</button></div>' : '') + '</div>'
+        return '<div class="msg user msg-in" data-t="u">' + (bodyInner ? '<div class="body md-scope">' + bodyInner + '</div>' : '') + imgsHtml + filesHtml + (bodyInner ? '<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">' + ICON_COPY + '</button></div>' : '') + '</div>'
       }).join('') +
       (bubble.length
         ? '<details class="done-fold done-live msg-in" id="claim-fold" open><summary>' + procLabel('正在处理', '0s') + '</summary><div class="done-body"></div></details>'
@@ -15166,7 +15550,7 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
       const plan = str(o.plan)
       const rest = Object.keys(o).filter((k) => k !== 'plan' && present(k))
       const restHtml = rest.length ? `<div class="appr-kvs">${rest.map((k) => fieldRow(k, o[k], desc)).join('')}</div>` : ''
-      return (plan.trim() ? `<div class="appr-md">${mdHtml(plan)}</div>` : '') + restHtml
+      return (plan.trim() ? `<div class="appr-md md-scope">${mdHtml(plan)}</div>` : '') + restHtml
     }
     const order = TOOL_FIELD_ORDER[toolName] || []
     const keys = order.filter(present).concat(Object.keys(o).filter((k) => !order.includes(k) && present(k)))

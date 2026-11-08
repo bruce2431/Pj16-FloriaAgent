@@ -94,7 +94,7 @@ import { firstSendHash } from '../sidebar/recent.js'
         // 同构不变量见下（乐观开启气泡与落盘气泡同构，2026-09-07 定案）——body 渲染是它此前漏网的一环。
         const bodyInner = mdHtml(bodyText)
         // 纯图/纯文件消息：无 .body 空气泡、无复制按钮（落盘接管帧同构同去，2026-09-07 空气炮根修）
-        return '<div class="msg user msg-in" data-t="u">' + (bodyInner ? '<div class="body">' + bodyInner + '</div>' : '') + imgsHtml + filesHtml + (bodyInner ? '<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">' + ICON_COPY + '</button></div>' : '') + '</div>'
+        return '<div class="msg user msg-in" data-t="u">' + (bodyInner ? '<div class="body md-scope">' + bodyInner + '</div>' : '') + imgsHtml + filesHtml + (bodyInner ? '<div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">' + ICON_COPY + '</button></div>' : '') + '</div>'
       }).join('') +
       (bubble.length
         ? '<details class="done-fold done-live msg-in" id="claim-fold" open><summary>' + procLabel('正在处理', '0s') + '</summary><div class="done-body"></div></details>'
@@ -381,7 +381,7 @@ import { firstSendHash } from '../sidebar/recent.js'
       const plan = str(o.plan)
       const rest = Object.keys(o).filter((k) => k !== 'plan' && present(k))
       const restHtml = rest.length ? `<div class="appr-kvs">${rest.map((k) => fieldRow(k, o[k], desc)).join('')}</div>` : ''
-      return (plan.trim() ? `<div class="appr-md">${mdHtml(plan)}</div>` : '') + restHtml
+      return (plan.trim() ? `<div class="appr-md md-scope">${mdHtml(plan)}</div>` : '') + restHtml
     }
     const order = TOOL_FIELD_ORDER[toolName] || []
     const keys = order.filter(present).concat(Object.keys(o).filter((k) => !order.includes(k) && present(k)))

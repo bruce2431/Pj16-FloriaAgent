@@ -60,6 +60,7 @@ import type {
 } from '../../types/plugin.js'
 import { isCustomizationDirEnabled } from '../customizationToggle.js'
 import { logForDebugging } from '../debug.js'
+import { isTurnExposedPath } from './turnPlugins.js'
 import { isBareMode, isEnvTruthy } from '../envUtils.js'
 import {
   errorMessage,
@@ -3056,7 +3057,8 @@ async function loadSkillsDirPlugins(): Promise<{
           `${entry.name}@${sourceSuffix}`,
           // 默认启用；目录内 .disabled 标记（管理页开关）→ 停用，
           // 其命令/技能/agents/hooks/MCP 全不进 enabled 集（见 assemblePluginLoadResult）。
-          isCustomizationDirEnabled(pluginPath),
+          // 例外：本回合被用户 @ 点名的目录由 turnPlugins 临时放行。
+          isCustomizationDirEnabled(pluginPath) || isTurnExposedPath(pluginPath),
           entry.name,
         )
         plugin.source = `${plugin.name}@${sourceSuffix}`

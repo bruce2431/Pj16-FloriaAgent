@@ -5,6 +5,7 @@ import { renderHome, renderSession } from './route.js'
 import { messagesEl, live, state } from '../engine/state.js'
 import { cardBus } from '../engine/card-bus.js'
 import { renderTransient } from '../inputbar/approval.js'
+import { activateSession } from '../sidebar/recent.js'
 /* @module chat/stage.js */
   function scrollBottom() {
     // 占位在场（回合展示期）→ 两层跟随接管（让位/手势中由 stageFollow 自判）；否则普通吸底
@@ -73,8 +74,15 @@ import { renderTransient } from '../inputbar/approval.js'
   cardBus.registerInlineCard({
     instanceId: 'floria-chat',
     ns: 'floria-chat',
-    cmds: ['scroll', 'locate', 'state'],
+    cmds: ['open', 'scroll', 'locate', 'state'],
     handlers: {
+      // open{sid} = 切到该会话（@ 会话 chip 的跳转落点）；sid = 转录文件名主干，与路由 hash 同源。
+      open: async (a) => {
+        const sid = String((a && a.sid) || '')
+        if (!sid) throw new Error('缺少会话 id')
+        activateSession(sid)
+        return { sid }
+      },
       scroll: (a) => scrollToMsgLine(a && a.line),
       locate: () => ({ messages: messagesEl.querySelectorAll('.msg').length }),
       state: () => ({ mode: state.sbMode || 'chat', messages: messagesEl.querySelectorAll('.msg').length }),

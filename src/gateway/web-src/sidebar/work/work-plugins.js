@@ -14,6 +14,7 @@ import { state } from '../../engine/state.js'
 import { loadProjectPlugins } from '../mgr-data.js'
 import { ensurePreviewDecls, previewCardsFor, previewCardsReadyFor, previewLegacyIndexCard } from '../../feature/preview-frame.js'
 import { renderWkToolTabs } from '../work-tools.js'
+import { cardBus } from '../../engine/card-bus.js'
 import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, repoRowHtml } from '../../feature/card-repo.js'
 
 /* @module sidebar/work/work-plugins.js */
@@ -29,7 +30,39 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
   let WPL_LABEL = '' // WPL_DATA 所属项目
   let WPL_DATA = { plugins: [], skills: [], loaded: false, loading: false, err: '' }
   let WPL_LOADING = false
+  let WPL_PROMISE = null // 在途加载（ensureWplData 返回它：调用方可等清单落地再查条目）
   let WPL_APPS_WAIT = '' // 已发起卡表申报请求的 label（只防重复挂 then 链）
+
+  // 卡公开 API（@ 插件/技能 chip 的项目侧兜底落点）：openDetail{name} = 切到插件页并打开该条目详情。
+  cardBus.registerInlineCard({
+    instanceId: 'floria-work-plugins',
+    ns: 'floria-work-plugins',
+    cmds: ['openDetail'],
+    handlers: { openDetail: (a) => openWorkPluginDetail(a && a.name) },
+  })
+
+  async function openWorkPluginDetail(name) {
+    const n = String(name || '').trim()
+    if (!n) throw new Error('缺少插件名称')
+    const label = state.workProj
+    if (!label) throw new Error('没有工作项目')
+    // 先让插件页挂进下沉区（applyPanes → mountWorkPlugins 设 WPL_LABEL 并起加载），再等清单落地查条目。
+    state.wkMainTab = 'plugins'
+    state.wkAssist = true
+    state.wkAssistMode = 'side'
+    applyPanes()
+    await ensureWplData(label)
+    for (const kind of ['plugins', 'skills']) {
+      const hit = wplRows(kind).find((r) => r && r.n === n)
+      if (!hit) continue
+      WPL_VIEW.kind = kind
+      WPL_VIEW.q = ''
+      WPL_DETAIL = { kind, key: n }
+      renderWpl()
+      return { kind, name: n }
+    }
+    throw new Error('项目里没有该插件/技能：' + n)
+  }
 
   // 进入/回到插件页（applyPanes 在下沉区显示插件态时调用）：换项目重置详情与清单；DOM 元素换了才
   // 整页重渲，否则保持现状（搜索焦点 / 滚动位置不因周期对账被重建）。
@@ -56,15 +89,15 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
     ensureWplApps(label)
   }
 
-  // 插件/技能清单（项目维度）
+  // 插件/技能清单（项目维度）：返回 Promise（在途复用同一份）——openWorkPluginDetail 要等清单落地才能查条目。
   function ensureWplData(label, force) {
-    if (WPL_LOADING) return
-    if (!force && WPL_DATA.loaded) return
+    if (WPL_LOADING) return WPL_PROMISE || Promise.resolve(WPL_DATA)
+    if (!force && WPL_DATA.loaded) return Promise.resolve(WPL_DATA)
     WPL_LOADING = true
     WPL_DATA.loading = true
     WPL_DATA.err = ''
     renderWplGrid()
-    loadProjectPlugins(label)
+    WPL_PROMISE = loadProjectPlugins(label)
       .then((d) => {
         if (WPL_LABEL !== label) return
         WPL_DATA = { plugins: d.plugins, skills: d.skills, loaded: true, loading: false, err: '' }
@@ -76,8 +109,10 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
       })
       .finally(() => {
         WPL_LOADING = false
+        WPL_PROMISE = null
         if (WPL_LABEL === label) renderWpl()
       })
+    return WPL_PROMISE
   }
 
   // 应用清单 = 预览卡申报（与右栏工具栏同一份卡表，含停用卡）；未就绪先取一次申报

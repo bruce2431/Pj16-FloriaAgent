@@ -73,13 +73,15 @@ import { esc } from './util.js'
       // @ 只是输入侧唤出提及的手势字符，落地文本里它既不参与令牌解析也不属文件名。
       const label = base
       const icon = ptype === 'dir' ? I.dshFolder : fileIcon(full)
-      return `<span class="mention-chip m-path" title="${full}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
+      // data-m* = 链接凭据（2026-11-08 单击跳转）：path/name 为令牌原文（name 已 esc），
+      // 派发器 feature/mention-nav.js 据此解析项目与相对路径，不在渲染层做业务判断。
+      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
     }
     if (kind === 'session') {
       const title = splitSessionToken(name).title
-      return `<span class="mention-chip m-session"><span class="mc-ic">${MENTION_SESSION_ICON}</span><span class="mc-t">${title}</span></span>`
+      return `<span class="mention-chip m-session" data-mjump="session" data-mname="${name}"><span class="mc-ic">${MENTION_SESSION_ICON}</span><span class="mc-t">${title}</span></span>`
     }
-    return `<span class="mention-chip m-plugin"><span class="mc-ic">${I.dshPlugin}</span><span class="mc-t">${name}</span></span>`
+    return `<span class="mention-chip m-plugin" data-mjump="plugin" data-mname="${name}"><span class="mc-ic">${I.dshPlugin}</span><span class="mc-t">${name}</span></span>`
   }
 
   // 引用原文编码（2026-10-21）：原文要挤进令牌的一行字段，必须先抹掉会被 mdInline 预处理的记号

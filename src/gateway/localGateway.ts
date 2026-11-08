@@ -1589,6 +1589,70 @@ export function writeProjectComments(
 }
 
 
+// 「在资源管理器中打开」并置顶（POST /gateway/file/reveal）。
+// explorer 由后台网关进程拉起，Windows 前台锁不会把新窗口的前台权交给调用方 ⇒ 窗口常落在浏览器后面。
+// 做法：先拉起 explorer，再用 Shell.Application.Windows 按**文件夹真实路径**（不是标题，标题可重名；
+// 也不用 PID，explorer 复用一个进程）找回该窗口的 HWND，最后 AttachThreadInput 借前台线程的权限
+// SetForegroundWindow。全部在独立 powershell 里跑（detached，不等结果），网关请求立即返回。
+const REVEAL_FOREGROUND_PS = String.raw`
+$ErrorActionPreference = 'SilentlyContinue'
+$target = $env:FLORIA_REVEAL_PATH
+$select = $env:FLORIA_REVEAL_SELECT -eq '1'
+if ($select) {
+  Start-Process explorer.exe -ArgumentList ('/select,"' + $target + '"') -WindowStyle Normal
+} else {
+  Start-Process explorer.exe -ArgumentList ('"' + $target + '"') -WindowStyle Normal
+}
+$folder = if ($select) { [System.IO.Path]::GetDirectoryName($target) } else { $target }
+if (-not $folder) { return }
+$folder = $folder.TrimEnd('\')
+$app = New-Object -ComObject Shell.Application
+$hwnd = [int64]0
+for ($i = 0; $i -lt 25 -and $hwnd -eq 0; $i++) {
+  Start-Sleep -Milliseconds 120
+  foreach ($w in $app.Windows()) {
+    try {
+      $p = $w.Document.Folder.Self.Path
+      if ($p -and $p.TrimEnd('\') -ieq $folder) { $hwnd = [int64]$w.HWND; break }
+    } catch { }
+  }
+}
+if ($hwnd -eq 0) { return }
+Add-Type -Namespace FloriaFg -Name Native -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+'@
+$h = [IntPtr]$hwnd
+[FloriaFg.Native]::ShowWindow($h, 9) | Out-Null
+$fg = [FloriaFg.Native]::GetForegroundWindow()
+$fgPid = [uint32]0
+$fgThread = [FloriaFg.Native]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+$myThread = [FloriaFg.Native]::GetCurrentThreadId()
+[FloriaFg.Native]::AttachThreadInput($myThread, $fgThread, $true) | Out-Null
+[FloriaFg.Native]::BringWindowToTop($h) | Out-Null
+[FloriaFg.Native]::SetForegroundWindow($h) | Out-Null
+[FloriaFg.Native]::AttachThreadInput($myThread, $fgThread, $false) | Out-Null
+`
+
+/** 在系统资源管理器中定位并置顶（仅 win32；调用方已判平台）。失败只记日志，不影响接口返回。 */
+function revealInExplorer(abs: string, isDir: boolean): void {
+  const encoded = Buffer.from(REVEAL_FOREGROUND_PS, 'utf16le').toString('base64')
+  // **禁传 detached**：Bun 运行时下 `detached:true` 的 powershell 无法把 explorer 拉起来
+  // （实测 node:child_process / Bun.spawn 均如此，窗口一个不出）；去掉 detached 正常，
+  // stdio ignore + unref 已足够让接口立即返回。同样禁传 windowsHide（见 docs/gateway.md §16）。
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded], {
+    stdio: 'ignore',
+    env: { ...process.env, FLORIA_REVEAL_PATH: abs, FLORIA_REVEAL_SELECT: isDir ? '0' : '1' },
+  })
+  child.on('error', (e) => console.log(`[gateway] 资源管理器定位失败：${(e as Error).message}`))
+  child.unref()
+}
+
 function findProjects(root: string): ProjectInfo[] {
   const groups: ProjectInfo[] = []
   const global = join(root, '.claude', 'projects')
@@ -2400,9 +2464,10 @@ function mergeDisplayMessages(
 // 项目元信息（GET /gateway/project）：work 侧栏文件树消费其中的 files；响应同时带 README /
 // 会话元信息（/gateway/project 的既有形状，不随宿主内置预览页下线而改变）。
 //  - 文件树：递归扫项目根，跳过重型/隐藏目录（.git/node_modules/.claude/.trash/dist 等），
-//    目录在前、名称字典序；不设深度上限、不设每层 cap——单层条目全部返回，唯一约束是
-//    TREE_BUDGET=8000 全局预算，预算耗尽才退化为 listOneLevel 的单层浅节点
-//    （node_modules 等被跳过，常规项目完整覆盖）。
+//    目录在前、按自然序（SubPj2 在 SubPj10 之前）；不设深度上限、不设每层 cap——单层条目
+//    全部返回，唯一约束是 TREE_BUDGET=8000 全局预算。遍历为**广度优先**：先给每一层的所有
+//    目录铺开直接子项，再下钻下一层，所以某个大目录（venv、抓取数据等）吃尽预算时，只牺牲
+//    最深处的尾部，不会让同级其它目录变成空壳。
 //  - README：项目根 README*（.md/.markdown/.txt）优先，内容截断防超大 payload。
 //  - 描述：从 README 首行标题推断，兜底项目名。
 // ============================================================================
@@ -2412,7 +2477,13 @@ const SKIP_TREE_DIRS = new Set(['.git', 'node_modules', '.claude', '.trash', '.c
 const TREE_BUDGET = 8000
 type TreeNode = { name: string; type: 'file' | 'dir'; children?: TreeNode[] }
 
-/** 轻量列出一层直接子项（不递归），供预算耗尽时保证目录至少可展开一层。 */
+/** 自然序：数字段按数值比（SubPj2 < SubPj10），目录恒在文件前。 */
+function cmpTreeEntry(a: { name: string; isDirectory(): boolean }, b: { name: string; isDirectory(): boolean }): number {
+  if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+  return a.name.localeCompare(b.name, undefined, { numeric: true })
+}
+
+/** 轻量列出一层直接子项（不递归，不扣预算），供 /gateway/fs 单层浏览使用。 */
 function listOneLevel(dir: string): TreeNode[] {
   let entries
   try {
@@ -2420,10 +2491,7 @@ function listOneLevel(dir: string): TreeNode[] {
   } catch {
     return []
   }
-  entries.sort((a, b) => {
-    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
-    return a.name.localeCompare(b.name)
-  })
+  entries.sort(cmpTreeEntry)
   const out: TreeNode[] = []
   for (const e of entries) {
     if (e.name.startsWith('.')) continue
@@ -2433,23 +2501,15 @@ function listOneLevel(dir: string): TreeNode[] {
   return out
 }
 
-// 不设固定深度上限：唯一约束是条目预算（同一 budget 对象全局共享、沿树递减）。此前 `depth > 3`
-// 会把第 5 层起的目录截成 listOneLevel 的浅节点（无 children）——文件树「展开四次后再无内容」的根因。
-function walkProjectTree(dir: string, budget: { n: number }): TreeNode[] | null {
+/** 列出一层直接子项（不递归），每收一个节点扣一次全局预算；预算耗尽即停。 */
+function listTreeLevel(dir: string, budget: { n: number }): TreeNode[] {
   let entries
   try {
     entries = readdirSync(dir, { withFileTypes: true })
   } catch {
     return []
   }
-  entries.sort((a, b) => {
-    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
-    return a.name.localeCompare(b.name)
-  })
-  // 单层不设 cap（2026-10-25 去掉 TREE_PER_LEVEL=200：349 项的目录只显示前 200 = 用户实报的「截断」）。
-  // 预算**全局共享**（同一对象沿整棵树递减）：此前按同级目录数平均分摊，每深一层 sub.n 就再除以该层
-  // 目录数，四五层后必然归零——文件树「展开四次后再无内容」的第二重根因。共享后只要总量未耗尽，
-  // 任意深的目录都能继续向下展开；预算耗尽用 listOneLevel 兜底，保证边界目录至少可展开看到下一级。
+  entries.sort(cmpTreeEntry)
   const out: TreeNode[] = []
   for (const e of entries) {
     if (budget.n <= 0) break
@@ -2458,17 +2518,27 @@ function walkProjectTree(dir: string, budget: { n: number }): TreeNode[] | null 
     budget.n--
     out.push(e.isDirectory() ? { name: e.name, type: 'dir' } : { name: e.name, type: 'file' })
   }
-  for (const it of out) {
-    if (it.type !== 'dir') continue
-    if (budget.n <= 0) break
-    const children = walkProjectTree(join(dir, it.name), budget)
-    if (children && children.length) it.children = children
-    else {
-      const shallow = listOneLevel(join(dir, it.name))
-      if (shallow.length) it.children = shallow
-    }
-  }
   return out
+}
+
+// 不设固定深度上限：唯一约束是条目预算（同一 budget 对象全局共享、沿树递减）。此前 `depth > 3`
+// 会把第 5 层起的目录截成浅节点（无 children）——文件树「展开四次后再无内容」的根因。
+// 单层不设 cap（2026-10-25 去掉 TREE_PER_LEVEL=200：349 项的目录只显示前 200 = 用户实报的「截断」）。
+// 遍历取**广度优先**：DFS 下第一棵大树（如 backend/_venv_excluded 的 5585 项）会把预算吃光，
+// 后续同级目录连一层都拿不到（SubPj10 展开空白即此）。BFS 先铺满当前层再下钻，任何目录都在
+// 同深度上先拿到自己的直接子项，预算只可能耗尽在最深的尾部。
+function walkProjectTree(dir: string, budget: { n: number }): TreeNode[] {
+  const roots = listTreeLevel(dir, budget)
+  const queue: Array<{ path: string; node: TreeNode }> = []
+  for (const n of roots) if (n.type === 'dir') queue.push({ path: join(dir, n.name), node: n })
+  while (queue.length && budget.n > 0) {
+    const cur = queue.shift()!
+    const kids = listTreeLevel(cur.path, budget)
+    if (!kids.length) continue
+    cur.node.children = kids
+    for (const k of kids) if (k.type === 'dir') queue.push({ path: join(cur.path, k.name), node: k })
+  }
+  return roots
 }
 
 function findProjectReadme(dir: string): string | null {
@@ -4088,15 +4158,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       }
       const isDir = statSync(vAbs).isDirectory()
       console.log(`[gateway] 资源管理器定位 ${vProj.label} → ${vAbs}（${isDir ? '目录' : '文件'}）`)
-      // `explorer.exe` 的 `/select,` 必须与路径整体拼接（逗号后不能有空格）。
-      // **禁传 windowsHide**：该标志在 Windows 上是 CREATE_NO_WINDOW，explorer 会把 STARTUPINFO 的
-      // SW_HIDE 一路带给它新建的文件夹窗口 ⇒ 窗口被隐藏（IsWindowVisible=false，用户看到「点了没反应」）。
-      const child = spawn('explorer.exe', isDir ? [vAbs] : ['/select,' + vAbs], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      child.on('error', (e) => console.log(`[gateway] 资源管理器定位失败：${(e as Error).message}`))
-      child.unref()
+      revealInExplorer(vAbs, isDir)
       sendJson(res, 200, { ok: true })
     } catch (e) {
       sendError(res, e)

@@ -107,6 +107,23 @@ import { pickEnter } from './toolbar/pick.js'
     return unfoldQuoteBodies(composerDocText())
   }
 
+  // 工具栏查询词 = 底栏文本 **减去已落地的 chip 令牌**。令牌只是引用件的序列化形态（`[@文件:…]` /
+  // `[会话:…]` / `![名](uploads/x)` 等），不是用户输入的检索词；不剥离时底栏只要存在一枚引用件，
+  // 整串（含令牌）都进了 `match` 过滤 ⇒ 任何搜索一律零命中（用户实报「底栏存在一个链接的时候，
+  // 再次搜索则什么都搜索不出来」）。剥离后连续空白压成一个，避免残留分隔影响匹配。
+  const CHIP_STRIP_RES = [
+    MENTION_SESSION_RE, MENTION_PLUGIN_RE, MENTION_PATH_RE,
+    QUOTE_REF_RE, QUOTE_REPLY_RE, QUOTE_PDF_RE,
+    /\[[^\]\n]*\]\(uploads\/[^)\s]+\)/g, // 上传附件正文引用（CM6 CM_ATT_LINK 同文法）
+    /\s*\[文件:[^\]]*\]/g,               // 上传文件占位（发送期拼入）
+  ]
+  function stripChipTokens(text) {
+    let s = String(text == null ? '' : text)
+    for (const re of CHIP_STRIP_RES) s = s.replace(re, ' ')
+    return s.replace(/\s+/g, ' ').trim()
+  }
+  function toolbarQueryText() { return stripChipTokens(serializeInput()) }
+
   // 复位 @ 数据态（不碰 DOM、不开关工具栏）：@ 关闭链与工具栏关闭链共用同一处，避免两套状态漂移。
   function resetMention() {
     mention.open = false
@@ -140,7 +157,10 @@ import { pickEnter } from './toolbar/pick.js'
 
   // 条目落地的唯一入口（点击与回车共用）：目录/上级=下钻重渲；文件=插 chip；会话/技能=插 chip。
   function selectMentionItem(it) {
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
+    // 目录引用（2026-11-08 用户定案）：层内固定行「引用此目录」直接插 chip；搜索命中的目录行
+    // 也直接插引用（glob=true，搜到即想要引用，不再下钻）；层内点目录仍下钻。
+    if (it.kind === 'pathref') { insertMention('path', it.path, '', 'dir'); return }
+    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
       pickEnter(it).then(() => { if (cmd.open && cmd.mentionMode) renderCmdPop() })
       return
     }
@@ -153,7 +173,7 @@ import { pickEnter } from './toolbar/pick.js'
       syncGwSend()
       return
     }
-    if (it.kind === 'path') insertMention('path', it.path, '', 'file')
+    if (it.kind === 'path') insertMention('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file')
     else insertMention(it.kind, it.name, it.sid)
   }
 
@@ -199,7 +219,8 @@ import { pickEnter } from './toolbar/pick.js'
     if (mention.open) {
       const between = st.doc.sliceString(mention.anchor, pos)
       if (pos <= mention.anchor || /[\n\r]/.test(between)) { closeMentionPop(); return }
-      const q = between.slice(1)
+      // 选区扩展越过已落地的 chip 时，between 会夹进令牌文本 ⇒ 同样剥离，否则查询词恒零命中。
+      const q = stripChipTokens(between.slice(1))
       if (q !== mention.q) { mention.q = q; if (cmd.open) renderCmdPop() }
       return
     }
@@ -237,6 +258,8 @@ export {
   openMentionPopAtCaret,
   quotePdfChipHtml,
   quoteRefChipHtml,
+  stripChipTokens,
+  toolbarQueryText,
   quoteReplyChipHtml,
   renderUserText,
   resetMention,

@@ -15,6 +15,10 @@
    滚动口顶部：浏览器滚多少，粘附就抵消多少，画面纹丝不动。overscroll-behavior:none 关掉橡皮筋回弹。 */
 html { height: 100%; height: 100dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: none; }
 
+/* 正文字体令牌：Markdown 视觉契约（@floria/cm6 包内 .md-scope）读它，正文/消息/编辑器 Markdown
+   共用同一套字体栈。改字体只改这里。 */
+:root { --text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+
 /* 壳体（键盘节）：普通文档流里的 sticky 卡，不再 fixed。盒模型恒定（键盘不参与盒高/位置）。
    唯一的键盘期几何量 = 输入栏的 --kb-lift（见 engine/viewport.js），壳体自身不读任何键盘量。 */
 body {
@@ -23,7 +27,7 @@ body {
      2026-09-23 卡化：body 底色即底板色（与 #app 同源），页面读作「一块底板 + 上面的悬浮卡」 */
   background: var(--plane);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--text-font);
   font-size: 14px;
   line-height: 1.6;
   /* 文档容器（不是壳体本身）：min-height 撑满一屏，用于给 #app 提供 sticky 的包含块。
@@ -761,20 +765,17 @@ body.touch .change-card .ch-toggle { opacity: 1; } /* 真触屏恒显（iPad 伪
    这套只服务会话消息/旁白/思考正文；编辑区排版由 .wk-ed-cm + 库 editorTheme 负责） ── */
 .msg .body .p { margin: 0; }
 .msg .body p { margin: 3px 0; }
+/* 标题字号 / 行内代码 / 围栏代码字体字号 / 表格文字尺寸 = Markdown 视觉契约（@floria/cm6 的 .md-scope），
+   宿主这里只留间距、颜色与容器样式。 */
 .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4 { margin: 14px 0 4px; font-weight: 700; color: var(--text); line-height: 1.4; }
-.msg .body h1 { font-size: 17px; }
-.msg .body h2 { font-size: 16px; }
-.msg .body h3 { font-size: 15px; }
-.msg .body h4 { font-size: 14px; }
-.msg .body ul, .msg .body ol { margin: 4px 0; padding-left: 20px; }
+/* 标记随文本流（list-style-position: inside）：序号/圆点与正文同列，不另占左侧栏位。 */
+.msg .body ul, .msg .body ol { margin: 4px 0; padding-left: 0; list-style-position: inside; }
 .msg .body li { margin: 2px 0; }
 .msg .body blockquote { border-left: 3px solid var(--border); margin: 4px 0; padding: 2px 10px; color: var(--text-2); }
 .msg .body hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
 .msg .body a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 .msg .body a:hover { color: var(--text-2); }
-/* 2026-08-31：旁白（.done-think）/思考正文（.tr-body）也走 mdHtml，inline code/围栏代码块样式一并对齐
-   （此前只挂 .msg .body，旁白里 `feedConfigs.tsx` 等只有 UA 默认等宽、无灰底） */
-.msg .body code, .done-think code, .tr-body code { background: var(--border-soft); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+/* 行内代码（背景/内距/圆角/等宽/字号）由 Markdown 视觉契约统一给出，见 @floria/cm6 的 .md-scope code。 */
 /* 2026-10-10 codex 化：围栏代码块 = 头栏（语言名 + 换行/复制按钮）+ 高亮正文；默认软换行。
    高亮由 core/markdown.js 调 vendored codemirror-live-markdown.highlightCode（lowlight）产出 hljs-* span，
    令牌映射到项目 --hl-*（与 work 编辑区同一套色，日夜随动，见文件头 :root / html[data-theme=dark]）。
@@ -787,11 +788,10 @@ body.touch .change-card .ch-toggle { opacity: 1; } /* 真触屏恒显（iPad 伪
 .msg .body .code-btn, .done-think .code-btn, .tr-body .code-btn, .appr-md .code-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; color: var(--text-3); background: transparent; cursor: pointer; }
 .msg .body .code-btn:hover, .done-think .code-btn:hover, .tr-body .code-btn:hover, .appr-md .code-btn:hover { background: var(--hover); color: var(--text); }
 .msg .body .code-btn.copied, .done-think .code-btn.copied, .tr-body .code-btn.copied, .appr-md .code-btn.copied { color: var(--ok-fg); }
-.msg .body .code-block pre, .done-think .code-block pre, .tr-body .code-block pre, .appr-md .code-block pre { margin: 0; padding: 11px 13px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--text); }
+.msg .body .code-block pre, .done-think .code-block pre, .tr-body .code-block pre, .appr-md .code-block pre { margin: 0; padding: 11px 13px; overflow-x: auto; line-height: 1.6; color: var(--text); }
 /* 换行态（默认 .wrap）：pre-wrap + anywhere 断超长 token；去掉 .wrap = 横向滚动（white-space:pre）。 */
 .msg .body .code-block.wrap pre, .done-think .code-block.wrap pre, .tr-body .code-block.wrap pre, .appr-md .code-block.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg .body .code-block:not(.wrap) pre, .done-think .code-block:not(.wrap) pre, .tr-body .code-block:not(.wrap) pre, .appr-md .code-block:not(.wrap) pre { white-space: pre; }
-.msg .body .code-block code, .done-think .code-block code, .tr-body .code-block code, .appr-md .code-block code { background: transparent; padding: 0; font-size: inherit; font-family: inherit; }
 /* hljs 令牌 → --hl-*（全局一份；同一套色贯穿三处代码高亮：会话代码块 / work 编辑区代码块 / 底栏 CM6）。
    作用域键 = :is(.code-block code, #work-editor, #cm-host)：前者的 hljs span 由 core/markdown.js 调
    vendored highlightCode 产出；后两者由 CodeMirror live-markdown 自带高亮产出（该库硬编码浅色，暗色
@@ -824,7 +824,7 @@ body.touch .change-card .ch-toggle { opacity: 1; } /* 真触屏恒显（iPad 伪
 /* 2026-09-04：md-table 作用域同步扩展到 .done-think/.tr-body（08-31 code 对齐漏了表格，
    旁白/思考正文里的表格此前以裸 table 渲染=无边框无内距，视觉等同未渲染） */
 .msg .body .md-table, .done-think .md-table, .tr-body .md-table { margin: 6px 0; overflow-x: auto; }
-.msg .body .md-table table, .done-think .md-table table, .tr-body .md-table table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.msg .body .md-table table, .done-think .md-table table, .tr-body .md-table table { border-collapse: collapse; width: 100%; }
 .msg .body .md-table th, .msg .body .md-table td, .done-think .md-table th, .done-think .md-table td, .tr-body .md-table th, .tr-body .md-table td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; white-space: normal; word-break: break-word; }
 .msg .body .md-table th, .done-think .md-table th, .tr-body .md-table th { background: var(--rail-bg); font-weight: 600; }
 
@@ -1191,18 +1191,27 @@ body.kb-open #input-wrap { transition: none; }
   font-size: inherit; line-height: inherit; color: var(--blue); white-space: nowrap;
   user-select: none; cursor: default;
 }
+/* 图标与文本同基线（2026-11-08）：原先 align-self:center 按 24px 行盒居中，图标盒底落在文本基线
+   下方约 3px（用户实报「行对齐还是有问题」）。改为 align-self:baseline ⇒ 图标盒底恰好坐在文本基线上，
+   与旁字同基线；盒宽高取 1em 随字号，svg 0.95em（文档页轮廓的视觉高 ≈ 中文字块）。 */
 .mention .m-ic {
-  width: 16px; height: 16px; border-radius: 50%; flex: none; align-self: center;
+  width: 1em; height: 1em; border-radius: 50%; flex: none; align-self: baseline;
   display: flex; align-items: center; justify-content: center;
-  color: var(--blue); font-size: 0;
+  /* font-size 必须随 chip 文本：盒宽高与 svg 均按 em 取，font-size:0 会把图标算成 0×0
+     （2026-11-08 用户实报「引用的目录前面加一个文件夹的 icon」——目录图标早已接，是尺寸被压没）。 */
+  color: var(--blue); font-size: inherit;
 }
-.mention .m-ic svg { width: 16px; height: 16px; }
+.mention .m-ic svg { width: .95em; height: .95em; }
 .mention .m-nm { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 /* 2026-10-24 定案：引用件不再有 ×（删除统一走原子跳过 + 退格整块删）——.m-x 样式随之退役。 */
 /* 附件文件引用 chip（2026-10-22）：消息气泡内 `.mention-chip.m-att`、编辑器内 `.cm-att-file.mention`
    —— 形 = 类型徽标 + 文件名（与 @ 文件 chip 同族），文件名用正文字体（覆盖 .m-path 的等宽）。 */
 .mention-chip .mc-ic { display: inline-flex; align-items: center; flex: none; margin-right: 5px; }
 .mention-chip .mc-ic svg { width: 13px; height: 13px; display: block; }
+/* chip 内文件图标一律随 chip 蓝：`fileIcon()` 给 svg 挂内联类型色（xlsx/csv 绿、pdf 红、代码紫…），
+   chip 属正文/输入栏文本流，不按类型上色（用户定案「全部都是蓝色」）。内联 style 需 !important 覆盖。 */
+.mention-chip .mc-ic .file-ic,
+.mention .m-ic .file-ic { color: inherit !important; }
 .mention-chip.m-att { font-family: inherit; }
 
 /* 选中引用 chip（2026-09-28）：输入栏内 .mention.ref 与消息内 .mention-chip.m-ref 同族观感——
@@ -1226,6 +1235,7 @@ body.kb-open #input-wrap { transition: none; }
   background: transparent; border: none; padding: 0; border-radius: 0;
   font-size: inherit; line-height: inherit; color: var(--blue);
   gap: 4px; max-width: min(100%, 320px);
+  align-items: baseline; vertical-align: baseline;
 }
 .mention-chip.m-ref .mc-ic { display: flex; align-items: center; flex: none; color: var(--blue); }
 .mention-chip.m-ref .mc-ic svg { width: 1em; height: 1em; }
@@ -1244,8 +1254,16 @@ body.kb-open #input-wrap { transition: none; }
 }
 /* 引用胶囊可点击跳转（回复 → chat 卡片 scroll{line}；文件 → work 卡片 scroll{path,line}，仅 work 模式）。
    可点性给一条 hover 下划线，不另加按钮/图标。 */
-.mention-chip[data-qjump] { cursor: pointer; }
-.mention-chip[data-qjump]:hover .mc-t { text-decoration: underline; text-underline-offset: 2px; }
+.mention-chip[data-qjump],
+.mention-chip[data-mjump] { cursor: pointer; }
+.mention-chip[data-qjump]:hover .mc-t,
+.mention-chip[data-mjump]:hover .mc-t { text-decoration: underline; text-underline-offset: 2px; }
+/* 输入栏 CM6 chip 的超链接外观（包在 chips.activate 在场时给 .m-link）：与消息区同一 hover 反馈；
+   user-select:none 防拖选把 chip 当文本选中（点击落点由包内 mousedown/click 接管）。 */
+.mention.m-link { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.mention.m-link:hover .m-nm { text-decoration: underline; text-underline-offset: 2px; }
+/* @ 目录 chip 跳转定位：命中行短暂高亮，说明「跳到了这里」 */
+.wk-row.wk-hit { background: var(--active); transition: background .2s ease; }
 
 /* 消息气泡里渲染的 @ chip（2026-08-15 19:2x 透明胶囊：去图标/背景/阴影，仅细边圆角轮廓 + 名称文本） */
 .mention-chip {
@@ -1261,9 +1279,10 @@ body.kb-open #input-wrap { transition: none; }
   background: transparent; border: none; padding: 0;
   font-size: inherit; line-height: inherit;
   color: var(--blue); gap: 4px; max-width: min(100%, 320px);
+  align-items: baseline; vertical-align: baseline;
 }
 .mention-chip.m-session .mc-ic { color: var(--blue); }
-.mention-chip.m-session .mc-ic svg { width: 1em; height: 1em; }
+.mention-chip.m-session .mc-ic svg { width: .95em; height: .95em; }
 .mention-chip.m-session .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 路径 / 插件 chip 同步（2026-10-24）：与底栏 `.mention` 完全同口径 = 图标 + 蓝字、无边框、
    字号随正文（此前气泡侧是等宽灰字裸文本，发送前后 UI 不一致）。 */
@@ -1272,11 +1291,19 @@ body.kb-open #input-wrap { transition: none; }
   background: transparent; border: none; padding: 0;
   font-family: inherit; font-size: inherit; line-height: inherit;
   color: var(--blue); gap: 4px; max-width: min(100%, 320px);
+  /* 图标与正文同基线（同 .mention 底栏口径）：容器与图标都按 baseline 排，图标盒底坐文本基线 */
+  align-items: baseline; vertical-align: baseline;
 }
 .mention-chip.m-path .mc-ic,
 .mention-chip.m-plugin .mc-ic { color: var(--blue); }
+/* 间距单一来源：这几族 chip 用 gap:4px 排版，.mc-ic 的基础 margin-right:5px 会叠加成 9px
+   （图标与文件名之间空出一大截）；m-att 无 gap，仍由基础 margin-right 供间距。 */
+.mention-chip.m-path .mc-ic,
+.mention-chip.m-plugin .mc-ic,
+.mention-chip.m-ref .mc-ic,
+.mention-chip.m-session .mc-ic { margin-right: 0; }
 .mention-chip.m-path .mc-ic svg,
-.mention-chip.m-plugin .mc-ic svg { width: 1em; height: 1em; }
+.mention-chip.m-plugin .mc-ic svg { width: .95em; height: .95em; }
 .mention-chip.m-path .mc-t,
 .mention-chip.m-plugin .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
@@ -2639,10 +2666,9 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 .wk-ed-cm .cm-scroller { font-family: var(--mono); }
 /* 标题/加粗/斜体：库内主题给的是 hsl(var(--foreground, 220 9% 9%))——本项目不定义 --foreground ⇒ 回落近黑，
    暗色下不可读。统一回到正文色，只留字重/字形区分（见下方「Live Preview 主题兜底」）。 */
-#work-editor .cm-header-1 { font-size: 17px; color: var(--text); }
-#work-editor .cm-header-2 { font-size: 16px; color: var(--text); }
-#work-editor .cm-header-3 { font-size: 15px; color: var(--text); }
-#work-editor .cm-header-4, #work-editor .cm-header-5, #work-editor .cm-header-6 { font-size: 14px; color: var(--text); }
+/* 标题字号归 Markdown 视觉契约（@floria/cm6 的 .md-scope .cm-header-*），这里只补项目正文色。 */
+#work-editor .cm-header-1, #work-editor .cm-header-2, #work-editor .cm-header-3,
+#work-editor .cm-header-4, #work-editor .cm-header-5, #work-editor .cm-header-6 { color: var(--text); }
 /* 水平分隔线（web-src/sidebar/work.js wkEdHrPlugin）：未落光标 = 该行画一条横线 + 藏掉 `---` 字符；
    光标进入该行/拖选中 = 不加装饰、`---` 原样可编辑。横线绝对定位在该行竖直中线，行高不变。 */
 #work-editor .cm-line.wk-ed-hr { position: relative; }
@@ -2672,8 +2698,9 @@ body.wk-assist-dragging iframe { pointer-events: none; }
   background: var(--field-2); overflow: hidden;
 }
 #work-editor .cm-codeblock-widget pre { padding: 28px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 字体/字号归 Markdown 视觉契约；这里的 padding / line-height 是 widget 几何（进 CM 高度图），留在宿主。 */
 #work-editor .cm-codeblock-line {
-  padding: 0 16px; min-height: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; color: var(--text);
+  padding: 0 16px; min-height: 0; line-height: 1.65; color: var(--text);
 }
 /* 左上角语言标签（`cm-codeblock-lang`，点击复制整块）：平时隐去底色只留小字，悬停才浮出可点反馈 */
 #work-editor .cm-codeblock-copy {
@@ -2695,8 +2722,7 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 #work-editor .cm-placeholder { color: var(--text-3); }
 #work-editor .cm-strong, #work-editor .cm-emphasis { color: var(--text); }
 #work-editor .cm-strikethrough { color: var(--text-3); }
-/* 行内代码：库底 hsl(--muted 回落 220 14% 96%)=浅灰 ⇒ 白底白字。改与聊天区行内代码同源（--border-soft）。 */
-#work-editor .cm-code { background: var(--border-soft); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); }
+/* 行内代码的底色/内距/等宽/字号归 Markdown 视觉契约（.md-scope code, .md-scope .cm-code）。 */
 /* 链接（含 wikilink / 悬浮卡）：库用 --primary 回落（蓝），改项目蓝令牌，与整体配色一致 */
 #work-editor .cm-link, #work-editor .cm-wikilink,
 #work-editor .cm-link-widget, #work-editor .cm-wikilink-widget { color: var(--blue); }

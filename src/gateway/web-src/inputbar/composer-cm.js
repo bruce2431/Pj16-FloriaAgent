@@ -3,6 +3,7 @@
 // 装饰渲成 chip。接缝签名与语义冻结：composerDocText = doc.toString()、composerSetText = 全文替换——
 // 消费链（send/mention/quote/commands/ctx-meter/live）只认这两口。
 // 包产物 /cm6/floria-cm6.iife.js 先于 app.js 同步加载（window.FloriaCM6），编辑器逻辑零复制。
+import { activateMention, mentionTargetFromSpec } from '../feature/mention-nav.js'
 /* @module inputbar/composer-cm.js */
   // cmView = 包内 composer 视图的共享镜像：mention.js 等模块直接读它（旧实现由本件声明）。
   // 包实例在 mount() 建视图，之后只有 ensure()；此处保持同步，勿改成局部变量。
@@ -44,6 +45,8 @@
       esc: (s) => esc(s),
       decodeQuoteBody: (s) => decodeQuoteBody(s),
       foldQuoteBodies: (t) => foldQuoteBodies(t),
+      // chip 点击 → 统一派发器（会话/文件/目录/插件/引用各自的跳转落点只由 feature/mention-nav.js 决定）
+      activate: (spec) => activateMention(mentionTargetFromSpec(spec)),
     },
     paste: {
       clipboardFiles: (cd) => clipboardFiles(cd),

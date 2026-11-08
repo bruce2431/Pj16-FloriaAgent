@@ -94,17 +94,15 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       .appr-md{color:var(--text);font-size:13px;line-height:20px;word-break:break-word}
       .appr-md p{margin:4px 0}
       .appr-md h1,.appr-md h2,.appr-md h3,.appr-md h4{margin:12px 0 4px;font-weight:700;color:var(--text);line-height:1.4}
-      .appr-md h1{font-size:16px}.appr-md h2{font-size:15px}.appr-md h3{font-size:14px}.appr-md h4{font-size:13px}
       .appr-md ul,.appr-md ol{margin:4px 0;padding-left:20px}
       .appr-md li{margin:2px 0}
       .appr-md blockquote{border-left:3px solid var(--border);margin:4px 0;padding:2px 10px;color:var(--text-2)}
       .appr-md hr{border:none;border-top:1px solid var(--border);margin:8px 0}
       .appr-md a{color:var(--text);text-decoration:underline;text-underline-offset:2px}
-      .appr-md code{background:var(--border-soft);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px}
       /* .code-block 系列（2026-10-10）已收口到 styles.css 的「.appr-md .code-block」作用域（含头栏/换行/hljs），
          此处不再重复——注入样式晚于 <link> 会盖掉新设计（旧绝对定位 .code-lang 等）。 */
       .appr-md .md-table{margin:6px 0;overflow-x:auto}
-      .appr-md .md-table table{border-collapse:collapse;font-size:12.5px;width:100%}
+      .appr-md .md-table table{border-collapse:collapse;width:100%}
       .appr-md .md-table th,.appr-md .md-table td{border:1px solid var(--border);padding:5px 9px;text-align:left;white-space:normal;word-break:break-word}
       .appr-md .md-table th{background:var(--rail-bg);font-weight:600}
       .appr-diff{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden}

@@ -13,7 +13,7 @@ import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
 import { renderTaskDock } from './approval.js'
 import { ensureProjectSkills, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
-import { cmdEntries, groupOf, pickProgressRenders, projTag } from './toolbar/entries.js'
+import { cmdEntries, cmdViewKey, groupOf, pickProgressRenders, projTag } from './toolbar/entries.js'
 import { pickEnter, pickLabel, refreshPick } from './toolbar/pick.js'
 import { pickHome } from './toolbar/scope.js'
 /* @module inputbar/commands.js */
@@ -49,7 +49,7 @@ import { pickHome } from './toolbar/scope.js'
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -165,6 +165,10 @@ import { pickHome } from './toolbar/scope.js'
     cmd.confirming = null
     cmd.acknowledged = false
     cmdPop.hidden = true
+    // 收起即清内容：`.viewport` 连同其 scrollTop 一起消失，下次开窗从顶部起（不把上一轮的
+    // 滚动量搬进新一屏——那会让首个分组标题被裁掉半截，用户实报「工具栏又有重叠」）。
+    cmdPop.innerHTML = ''
+    cmd.vpKey = ''
     // 2026-11-06 D：工具栏收起 → 任务浮窗重新按本会话清单渲染（互斥解除，恢复收敛/展开态）
     renderTaskDock()
     // @ 锚点/查询词随弹窗一起复位（resetMention 只碰数据，不回调本函数，无环）
@@ -186,8 +190,10 @@ import { pickHome } from './toolbar/scope.js'
     // 旧实现每次 innerHTML 重建 .viewport（scrollTop 归零）+ 无条件 scrollIntoView 高亮行（多为第 0 行）
     // ⇒ 用户拖条/滚轮后立刻被打回顶部，表现为「根本划不动」。现在搬运旧滚动量，
     // 且只有**高亮行真的变了**（键盘/点击导航）才把它滚进视野。
+    // 只在「同一屏」内搬运滚动量：视图/查询/浏览层变了就归零（见 cmdViewKey）。
+    const vpKey = cmdViewKey()
     const prevVp = cmdPop.querySelector('.viewport')
-    const keepTop = prevVp ? prevVp.scrollTop : 0
+    const keepTop = prevVp && cmd.vpKey === vpKey ? prevVp.scrollTop : 0
     const prevActive = cmd.prevActive
     let html = ''
     if (cmd.error !== null) {
@@ -207,19 +213,38 @@ import { pickHome } from './toolbar/scope.js'
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' || it.kind === 'pathref' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
-        const detail = it.kind === 'path' ? it.path : it.desc
+        const detail = it.kind === 'path' || it.kind === 'pathref' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
         return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
       }).join('')}</div>`
     }
     cmdPop.innerHTML = html
     cmdPop.hidden = false
-    cmdPop.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { cmd.active = +b.dataset.idx; cmdSelect() }))
+    // 行选中：鼠标走 pointerdown（按下即选），触摸/键盘仍走 click。
+    // 文件搜索是流式索引，进度批次会整块重渲 `.viewport`（行 DOM 全部替换）；若重渲恰好落在
+    // 按下与抬起之间，浏览器把 click 派发给两元素的**共同祖先**，行监听收不到 ⇒ 第一下白点，
+    // 用户只能再点一次（实报「文件艾特时候需要双击」）。按下态命中当前元素，免疫重渲。
+    // 触摸不提前选：手指按下可能是在滑列表，抬手才该定格。pressed 吃掉同一手势随后的 click
+    // （行未被替换时），键盘 click（detail=0，无 pointerdown）照常生效。
+    cmdPop.querySelectorAll('.row').forEach((b) => {
+      let pressed = false
+      const choose = () => { cmd.active = +b.dataset.idx; cmdSelect() }
+      b.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return
+        pressed = true
+        choose()
+      })
+      b.addEventListener('click', () => {
+        if (pressed) { pressed = false; return }
+        choose()
+      })
+    })
     cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
     const vp = cmdPop.querySelector('.viewport')
     if (vp) vp.scrollTop = keepTop
+    cmd.vpKey = vpKey
     if (cmd.active !== prevActive) {
       const on = cmdPop.querySelector('.row.rowActive')
       if (on) on.scrollIntoView({ block: 'nearest' })
@@ -290,11 +315,14 @@ import { pickHome } from './toolbar/scope.js'
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
     // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
     // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir')) {
+    // 目录引用（2026-11-08 用户定案）：层内「引用此目录」行 / 搜索命中的目录行直接插 dir chip；
+    // 层内点目录（非 glob）仍下钻。
+    if (it.kind === 'pathref') { appendMentionChip('path', it.path, '', 'dir'); closeCmdPop(); return }
+    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
       pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
       return
     }
-    if (it.kind === 'path') { appendMentionChip('path', it.path, '', 'file'); closeCmdPop(); return }
+    if (it.kind === 'path') { appendMentionChip('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file'); closeCmdPop(); return }
     if (it.kind === 'skill' || it.kind === 'plugin') { appendMentionChip('plugin', it.name); closeCmdPop(); return }
     if (it.kind === 'session') { appendMentionChip('session', it.name, it.sid); closeCmdPop(); return }
     const o = it.ref

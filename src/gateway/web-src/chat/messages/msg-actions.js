@@ -4,8 +4,8 @@ import { I, fileIcon } from '../../core/icons.js'
 import { esc, toast } from '../../core/util.js'
 import { messagesEl, live, state } from '../../engine/state.js'
 import { findSession } from '../../engine/sessions.js'
-import { cardBus } from '../../engine/card-bus.js'
 import { quoteBodiesAsMarkdown } from '../../inputbar/mention.js'
+import { activateMention, mentionTargetFromChip } from '../../feature/mention-nav.js'
 import { ICON_COPY, writeClipboard } from './usage.js'
 /* @module chat/messages/msg-actions.js */
   // 消息复制（2026-10-09 定案：复制「原始 markdown 源码」，非渲染文本）：data-md 的生产与消费同处
@@ -38,22 +38,21 @@ import { ICON_COPY, writeClipboard } from './usage.js'
     })
   })
 
-  // 引用胶囊点击跳转（2026-10-21）：一律经**卡片公开 API**（engine/card-bus.js）驱动目标卡，不直取他模块内部状态——
-  //   · 回复引用 → chat 卡 `scroll{line}`（第 N 条 = .msg 文档序，与引用令牌「第 N 条回复」同源）
-  //   · 文件引用 → work 卡 `scroll{path,line}`（卡内自带「仅 work 模式」门禁；非 work 回 ok:false → toast）
-  // 目标卡不在场（如 work 卡尚未初始化）时总线显式报错，这里同样走 toast，不静默。
+  // 提及 / 引用 chip 点击跳转（2026-11-08 统一）：chip 自带链接凭据（data-mjump = 会话/文件/目录/插件，
+  // data-qjump = 回复/文件引用），业务落点全部收口到 feature/mention-nav.js；本处只做「消息区内」委托与
+  // 拖选误触守卫。目标卡不在场/门禁不过时由派发器 toast，不静默。
   document.addEventListener('click', (e) => {
-    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip[data-qjump]') : null
+    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip') : null
     if (!chip || !messagesEl.contains(chip)) return
-    const kind = chip.dataset.qjump
-    const p = kind === 'reply'
-      ? cardBus.callCard({ instanceId: 'floria-chat' }, 'scroll', { line: Number(chip.dataset.qidx) || 0 })
-      : kind === 'file'
-        ? cardBus.callCard({ instanceId: 'floria-work' }, 'scroll', { path: chip.dataset.qpath || '', line: Number(chip.dataset.ql0) || 0 }, { timeoutMs: 15000 })
-        : null
-    if (!p) return
+    if (!chip.dataset.qjump && !chip.dataset.mjump) return
+    // 拖选文本的收尾 click 落在 chip 上不算「点链接」——用户是在选字，不是在跳转
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && String(sel).trim()) return
+    const target = mentionTargetFromChip(chip)
+    if (!target) return
+    e.preventDefault()
     e.stopPropagation()
-    p.then((ack) => { if (ack && ack.ok === false) toast(ack.error || '跳转失败') }).catch(() => {})
+    activateMention(target)
   })
 
   // 围栏代码块头栏按钮（2026-10-10；同 msg-copy 的委托+反馈模式）：复制 = 读本块 pre>code.textContent
@@ -307,6 +306,6 @@ import { ICON_COPY, writeClipboard } from './usage.js'
 
   // 思考/旁白文本：无气泡框，浅灰小字（收在「已处理」折叠区内）
   function processTextHtml(text) {
-    return `<div class="done-think">${mdHtml(text)}</div>`
+    return `<div class="done-think md-scope">${mdHtml(text)}</div>`
   }
 

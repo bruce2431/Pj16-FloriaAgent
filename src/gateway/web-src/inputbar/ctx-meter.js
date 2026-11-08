@@ -5,7 +5,7 @@ import { stage, progScrollUntil, stageRelease, stageFollow, stageSync } from '..
 import { gateSubmit } from '../engine/auth.js'
 import { gateAwait, gws } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
-import { inputEl, sendBtn, ctxMeterEl, ctxBtnEl, ctxPanelEl, bubblePop, overlay, state } from '../engine/state.js'
+import { sendBtn, ctxMeterEl, ctxBtnEl, ctxPanelEl, bubblePop, overlay, state } from '../engine/state.js'
 import { toast, isMobile } from '../core/util.js'
 import { renderSettle, btnMode } from './approval.js'
 import { cmd, msel, cmdPop, modelPop, modelSeatEl, psel, projPop, projSeatEl, closeProjPop, toggleCmdPop, closeCmdPop, closeRiskModal, cmdMove, cmdSelect, renderCmdPop } from './commands.js'
@@ -79,6 +79,14 @@ import { setPanel } from '../sidebar/recent.js'
   }
   function closeCtxMeter() { if (ctx.open) setCtxOpen(false) }
 
+  // 「点是否落在底栏（#input-wrap = 输入栏 + 命令浮窗）」——底栏是过滤文本的唯一输入面，
+  // 在底栏内点击/聚焦/拖选不得收起 @ 浮窗（2026-11-08 用户实报「@ 时点底栏工具栏就消失」）。
+  // 用 composedPath：行内点击会先重渲 innerHTML，冒泡到这里时 e.target 可能已脱离 DOM。
+  function inBottomBar(e) {
+    const bar = $('input-wrap')
+    const path = e.composedPath ? e.composedPath() : null
+    return path ? path.includes(bar) : !!bar && bar.contains(e.target)
+  }
   // 浮窗外部关闭（对齐 dsh 语义：mousedown 时机 + contains 判断——mousedown 在 DOM 变更前命中目标，
   // 天然免疫 innerHTML 重渲染把被点元素摘除后 e.target.closest() 返回 null 误判「点外关闭」的浮窗闪关/复开）
   document.addEventListener('mousedown', (e) => {
@@ -91,8 +99,9 @@ import { setPanel } from '../sidebar/recent.js'
       if (dlg && !dlg.contains(e.target)) { closeRiskModal(); return }
     }
     // 命令菜单：点卡片外（+ 按钮除外，其 click toggle 接管开合）= 关闭（dsh PopupSelectView pointerdown capture）。
-    // 底栏输入框不算外（2026-10-14 待办 20 返修）：过滤文本就在底栏，点击聚焦/打字不得关掉浮窗
-    if (cmd.open && !cmdPop.contains(e.target) && !$('cmd-btn').contains(e.target) && !inputEl.contains(e.target)) closeCmdPop()
+    // 底栏整体不算外（2026-10-14 待办 20 / 2026-11-08）：过滤文本就在底栏，底栏内任何点击
+    // （输入区、附件胶囊、工具行空白）都不得关掉工具栏；各按钮自己的开关语义不变。
+    if (cmd.open && !inBottomBar(e)) closeCmdPop()
     // 模型菜单：点 root 外（模型 trigger 除外，其 click toggle 接管开合）= 关闭（dsh ModelSelect mousedown + rootRef.contains）
     if (msel.open && !modelPop.contains(e.target) && !modelSeatEl.contains(e.target)) closeModelPop()
     // 项目选择器：点 root 外（seat 除外，其 click toggle 接管开合）= 关闭
@@ -107,7 +116,8 @@ import { setPanel } from '../sidebar/recent.js'
     // 冒泡到这里时 e.target 已脱离 DOM，closest('#cmd-pop') 恒为 null ⇒ 误判点外、@ 浮窗刚进视图
     // 就被关掉（2026-10-25 根因）。composedPath 在派发时固定，重渲后仍含原祖先链。
     const inCmdPop = e.composedPath ? e.composedPath().includes(cmdPop) : (e.target.closest && !!e.target.closest('#cmd-pop'))
-    if (!inCmdPop) closeMentionPop()
+    // 底栏内点击不关 @ 浮窗（2026-11-08 用户定案）：点在底栏外（侧栏/消息流/浮层外）才收。
+    if (!inCmdPop && !inBottomBar(e)) closeMentionPop()
     if (!$('organize-pop').contains(e.target) && !e.target.closest('#recent-more')) $('organize-pop').classList.remove('show')
     if (!bubblePop.contains(e.target)) bubblePop.classList.remove('show')
   })

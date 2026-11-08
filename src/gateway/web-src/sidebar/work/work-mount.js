@@ -25,8 +25,16 @@ import { resetWorkPreviewOnBoot } from '../../core/storage.js'
     cardBus.registerInlineCard({
       instanceId: 'floria-work',
       ns: 'floria-work',
-      cmds: ['scroll', 'locate', 'state'],
+      cmds: ['scroll', 'reveal', 'locate', 'state'],
       handlers: {
+        // reveal{path} = 文件树展开到该目录并定位（@ 目录 chip 的跳转落点）；门禁与 scroll 同口径。
+        reveal: async (a) => {
+          if (state.sbMode !== 'work' || !state.workProj) throw new Error('仅在 work 模式下可定位目录')
+          const raw = String((a && a.path) || '').replace(/\\/g, '/')
+          const pre = state.workProj + '/'
+          const path = raw === state.workProj ? '' : raw.startsWith(pre) ? raw.slice(pre.length) : raw
+          return revealWorkDir(path)
+        },
         scroll: async (a) => {
           if (state.sbMode !== 'work' || !state.workProj) throw new Error('仅在 work 模式下可跳转到文件')
           const raw = String((a && a.path) || '').replace(/\\/g, '/')

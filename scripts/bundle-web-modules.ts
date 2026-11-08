@@ -137,6 +137,10 @@ const PIECES: { file: string; part: number }[] = [
   // （拼接后单 IIFE 函数声明提升，序位按语义就近）。
   { file: 'sidebar/work/work-tabmenu.js', part: 1 },
   { file: 'sidebar/work/work-mount.js', part: 1 },
+  // @ 提及 / 引用 chip 的点击派发器（2026-11-08）：唯一业务落点，经 cardBus 调各卡公开命令。
+  // 顶层只有函数声明（消费方 msg-actions / composer-cm 早于本行也只按运行时调用），
+  // 须排在 work 各件之后（其解析路径/切项目依赖 setSbMode / selectProject）。
+  { file: 'feature/mention-nav.js', part: 1 },
   // 入口（web-src/app.js）：事件绑定段（同区段原含会话壳）与启动序列段。
   { file: '__app__', part: 1 },
   { file: 'inputbar/ctx-meter.js', part: 1 },
