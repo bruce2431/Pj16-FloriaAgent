@@ -14132,7 +14132,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '', q0: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -14315,7 +14315,10 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
   // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
   function pickProgressRenders() {
-    return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
+    if (cmd.view === 'file') return true
+    if (cmd.view) return false
+    const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
+    return !!q && (!cmd.mentionMode ? q !== cmd.q0 : true)
   }
   // 文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
   // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
@@ -14364,6 +14367,14 @@ function setFirstSendHash(v) { firstSendHash = v }
       items.push(...mentionItems(q))
       pushSearchState(items)
       pickSearchKick(() => { if (cmd.open) renderCmdPop() }) // 清单未跑完 → 流式补渲
+      return items
+    }
+    // + 模式检索：开窗后才输入的词 = 跨类全局搜索（与 @ 同源，选中追加到输入栏末尾）。
+    // 开窗时底栏已有的文本（cmd.q0）当正文不当查询——否则「写了一半点 +」会被筛成空壳。
+    if (q && q !== cmd.q0) {
+      items.push(...mentionItems(q))
+      pushSearchState(items)
+      pickSearchKick(() => { if (cmd.open) renderCmdPop() })
       return items
     }
     // 首屏入口：两个上传动作 + 已上传附件的引用行 + 四类入口
@@ -14640,6 +14651,9 @@ function setModelUserPicked(v) { modelUserPicked = v }
     cmd.confirming = null
     cmd.acknowledged = false
     cmd.error = null
+    // 开窗时的底栏查询基线：+ 模式下「打开后才输入」的词才当检索词（已写的正文不算，
+    // 否则带正文点 + 会被筛成空壳）；@ 模式由 mention.q 独立驱动，此值不参与。
+    cmd.q0 = toolbarQueryText().toLowerCase().replace(/^\//, '')
     renderCmdPop()
     // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
     // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。

@@ -124,7 +124,10 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
   // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
   function pickProgressRenders() {
-    return cmd.view === 'file' || (cmd.mentionMode && !cmd.view && !!mention.q.trim())
+    if (cmd.view === 'file') return true
+    if (cmd.view) return false
+    const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
+    return !!q && (!cmd.mentionMode ? q !== cmd.q0 : true)
   }
   // 文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
   // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
@@ -173,6 +176,14 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       items.push(...mentionItems(q))
       pushSearchState(items)
       pickSearchKick(() => { if (cmd.open) renderCmdPop() }) // 清单未跑完 → 流式补渲
+      return items
+    }
+    // + 模式检索：开窗后才输入的词 = 跨类全局搜索（与 @ 同源，选中追加到输入栏末尾）。
+    // 开窗时底栏已有的文本（cmd.q0）当正文不当查询——否则「写了一半点 +」会被筛成空壳。
+    if (q && q !== cmd.q0) {
+      items.push(...mentionItems(q))
+      pushSearchState(items)
+      pickSearchKick(() => { if (cmd.open) renderCmdPop() })
       return items
     }
     // 首屏入口：两个上传动作 + 已上传附件的引用行 + 四类入口

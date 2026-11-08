@@ -8,7 +8,7 @@ import { findSession } from '../engine/sessions.js'
 import { state } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject, sessionProjLabel } from '../core/util.js'
 import { createProjectPicker } from '../feature/project-picker/project-picker.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, closeMentionPop, mention, mentionChipIcon, resetMention, selectMentionItem } from './mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, closeMentionPop, mention, mentionChipIcon, resetMention, selectMentionItem, toolbarQueryText } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
 import { renderTaskDock } from './approval.js'
@@ -49,7 +49,7 @@ import { pickHome } from './toolbar/scope.js'
   // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
   // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
   // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
+  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '', q0: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -138,6 +138,9 @@ import { pickHome } from './toolbar/scope.js'
     cmd.confirming = null
     cmd.acknowledged = false
     cmd.error = null
+    // 开窗时的底栏查询基线：+ 模式下「打开后才输入」的词才当检索词（已写的正文不算，
+    // 否则带正文点 + 会被筛成空壳）；@ 模式由 mention.q 独立驱动，此值不参与。
+    cmd.q0 = toolbarQueryText().toLowerCase().replace(/^\//, '')
     renderCmdPop()
     // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
     // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
