@@ -65,16 +65,24 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
       items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt, own, proj: own ? '' : sessionProjLabel(s) })
     }
-    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
+    // 技能 = 当前项目自己的（项目根 .claude/skills，行尾标项目编号）+ 便携根全局技能，两种上下文都列：
+    // 技能是跨项目通用能力，项目没有自己的技能时（如 Pj18）入口不能空着。同名时项目件优先、不重复列。
     const proj = home
     // 启用态只控制会话启动时是否加载（agent 可见面）；@ 入口不受它约束——停用件照常可搜可插，
     // 用户主动 @ 即视为显式指定该项（用户定案）。
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    const skillNames = new Set()
+    for (const s of projSkillsOf(proj).list) {
+      if (!match(s.n) && !match(s.d)) continue
+      skillNames.add(s.n)
+      items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    }
     if (MGR) {
-      // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
       // 插件是便携根安装件、无项目归属，两种上下文都列。
       for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      for (const s of (MGR.skills && MGR.skills.personal) || []) {
+        if (skillNames.has(s.n) || (!match(s.n) && !match(s.d))) continue
+        items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      }
     }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
@@ -103,21 +111,27 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
     const m = /^((?:Sub)?Pj\d+)/i.exec(String(label || ''))
     return m ? m[1] : String(label || '')
   }
-  // 技能行 = 插件 + 技能（MGR 同源）+ **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
+  // 技能行 = 插件（便携根）+ 便携根全局技能 + **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
   // 项目判定与 + 浮窗文件组同一处（pickHome：会话所属项目 / work 工作项目，空串 = 无项目上下文）。
+  // 技能两种上下文都列（跨项目通用能力，项目没有自己的技能时入口不能空着）；同名时项目件优先。
   function cmdSkillRows(match, grp) {
     const out = []
     const proj = pickHome()
-    // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
-    // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    const seen = new Set()
     // 启用态只控制会话加载，不约束入口：停用件照常列（用户可主动选用，见 mentionItems 同条）。
     if (proj) {
-      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
-    } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+      for (const s of projSkillsOf(proj).list) {
+        if (match && !match(s.n) && !match(s.d)) continue
+        seen.add(s.n)
+        out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+      }
     }
-    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
+    for (const s of (MGR.skills && MGR.skills.personal) || []) {
+      if (seen.has(s.n) || (match && !match(s.n) && !match(s.d))) continue
+      out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+    }
+    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源）
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
