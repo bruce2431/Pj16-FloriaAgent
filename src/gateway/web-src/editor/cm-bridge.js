@@ -15,6 +15,7 @@
       currentHash: state.currentHash,
       sbMode: state.sbMode,
       workProj: state.workProj,
+      workFile: state.workFile,
       curUuid: live.curUuid,
     }),
     findSession: (u) => findSession(u),
@@ -26,8 +27,8 @@
   const {
     edCMG, edCmg, cmMathExt,
     editorApiGet, editorApiRegister, editorApiSetActive, editorApiUnregister, editorCommand, makeEditorFacade,
-    attachmentUrl, insertAttachmentMarkdown, insertTexImages, isDocumentAttachment, isImageAttachment,
-    uploadAttachment, uploadProjectAttachment, edAttImgPlugin, edAttFilePlugin,
+    attachmentUrl, insertUploadReference, isDocumentAttachment, isImageAttachment,
+    uploadFile, makeAttImgPlugin, edAttImgPlugin, edAttFilePlugin,
     copyRenderedImages, copyRenderedSelection,
     renderMarkdown, toggleTask,
     insertAtCursorCM, surroundExt, toggleTaskLineCM, wrapKeymap, wrapSelectionCM,

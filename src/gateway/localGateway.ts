@@ -30,6 +30,7 @@ import { networkInterfaces } from 'node:os'
 import { createSocket, type RemoteInfo } from 'node:dgram'
 import { createServer as netCreateServer, createConnection as netCreateConnection } from 'node:net'
 import { spawn, spawnSync } from 'node:child_process'
+import { dlopen, FFIType, ptr } from 'bun:ffi'
 import { WebSocketServer, WebSocket } from 'ws'
 import { getPortableRoot, getClaudeConfigHomeDir } from '../utils/envUtils.js'
 import {
@@ -1494,46 +1495,304 @@ export function createProjectEntry(projRoot: string, relDir: string, rawName: st
   return { ok: true, name, path: base ? `${base}/${name}` : name }
 }
 
+/** 上传落盘结果：relPath = 相对给定 root 的 POSIX 路径；abs 仅内部使用，**不进响应**。 */
+export type StoredUploadFile =
+  | { ok: true; name: string; relPath: string; abs: string; size: number }
+  | { ok: false; code: number; error: string }
+
 /**
- * 项目内上传文件（2026-10-13 work 侧栏「上传文件 / 文件夹」，#wk-new-pop 接入）。落点语义与
- * /gateway/file-cache 同一套：**同名不覆盖 → -1/-2 序号**（上传是批量动作，序号避让是上传领域先例；
- * 与 create/rename 的「显式输入 409」刻意区分——那两处用户看得见名字，这里由文件系统带来）。
- * 落点目录 mkdirSync(recursive)——「上传文件夹」的目录段来自用户所选文件夹的结构，递归建目录
- * 即该语义本身；落盘范围仍由 resolveWithinRoot 锁死在项目根内（越界 403）。
- * 字节上限由 handler 的 readBodyWithLimit 管（20 MB，对齐 /gateway/file-cache）。
- * 抽成纯函数让探针直测真实现（probe-file-create.ts）。
+ * 上传落盘唯一实现（统一上传服务）：resolveWithinRoot 锁根 → 清洗文件名 → 递归建目录 →
+ * 同名 -1/-2 序号避让 → 写盘。落点目录由调用方按 slot 给出，本函数只管「收字节、命名、落盘」。
+ * **独占创建**（writeFileSync flag:'wx'）：并发同名不会互相覆盖，EEXIST 再顺延序号。
+ * 字节上限由 handler 的 readBodyWithLimit 管（20 MB）。
  */
-export function uploadProjectFile(projRoot: string, relDir: string, rawName: string, buf: Buffer): EntryOpResult {
-  const dir = resolveWithinRoot(projRoot, relDir)
+export function storeUploadFile(root: string, relDir: string, rawName: string, buf: Buffer): StoredUploadFile {
+  const dir = resolveWithinRoot(root, relDir)
   if (!dir) return { ok: false, code: 403, error: 'forbidden' }
   const name = sanitizeEntryName(rawName)
   if (!name) return { ok: false, code: 400, error: '名称不合法' }
-  let target = join(dir, name)
   try {
     mkdirSync(dir, { recursive: true })
   } catch {
     return { ok: false, code: 500, error: 'mkdir failed' }
   }
-  if (existsSync(target)) {
-    const ext = extname(name)
-    const stem = name.slice(0, name.length - ext.length)
-    let i = 1
-    while (existsSync(join(dir, `${stem}-${i}${ext}`))) i++
-    target = join(dir, `${stem}-${i}${ext}`)
-  }
-  try {
-    writeFileSync(target, buf)
-  } catch {
-    return { ok: false, code: 500, error: 'write failed' }
-  }
+  const ext = extname(name)
+  const stem = name.slice(0, name.length - ext.length)
   const base = String(relDir || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
-  const finalName = basename(target)
-  return {
-    ok: true,
-    name: finalName,
-    path: base ? `${base}/${finalName}` : finalName,
-    size: buf.length,
+  for (let i = 0; i < 10000; i++) {
+    const candidate = i === 0 ? name : `${stem}-${i}${ext}`
+    const target = join(dir, candidate)
+    try {
+      writeFileSync(target, buf, { flag: 'wx' })
+      return {
+        ok: true,
+        name: candidate,
+        relPath: base ? `${base}/${candidate}` : candidate,
+        abs: target,
+        size: buf.length,
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        return { ok: false, code: 500, error: 'write failed' }
+      }
+    }
   }
+  return { ok: false, code: 500, error: 'name collision' }
+}
+
+/**
+ * 项目内上传文件（work 侧栏「上传文件 / 文件夹」，#wk-new-pop 接入）：落点 = 项目根相对目录，
+ * 语义全部来自 storeUploadFile（同名序号避让、递归建目录、越界 403）。抽成纯函数让探针直测
+ * 真实现（probe-file-create.ts）。
+ */
+export function uploadProjectFile(projRoot: string, relDir: string, rawName: string, buf: Buffer): EntryOpResult {
+  const stored = storeUploadFile(projRoot, relDir, rawName, buf)
+  if (!stored.ok) return stored
+  return { ok: true, name: stored.name, path: stored.relPath, size: stored.size }
+}
+
+/**
+ * 上传落盘名 = 原名主干 + `-YYYYMMDDHHMMSS` + 原扩展名（如 `报告-20261109173000.docx`）。
+ * 命名归网关：前端只传原始文件名，时间戳只作同名基础区分；同秒同名仍由 storeUploadFile 的
+ * `-1/-2` 独占序号兜底。只用于 /gateway/upload（work 文件树上传保留用户原名，不加戳）。
+ */
+function stampUploadName(rawName: string): string {
+  const name = sanitizeEntryName(rawName) || 'file'
+  const ext = extname(name)
+  const stem = name.slice(0, name.length - ext.length) || 'file'
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  return `${stem}-${stamp}${ext}`
+}
+
+// ============================================================================
+// 统一上传服务：声明式槽位（slot）
+//   POST /gateway/upload 只负责「收字节 / 命名 / 落盘 / 鉴权」；落点目录与正文引用由槽位声明决定。
+//   内置槽位只有 session（会话附件，不进正文）与 document-markdown（.md/.markdown 文档邻位）。
+//   项目可用 <项目根>/.claude/file-upload.json（version 1）声明额外槽位（如 .tex 的 includegraphics）。
+// ============================================================================
+export type UploadKind = 'image' | 'file'
+export type UploadScope = 'session' | 'document'
+export type UploadReferenceFormat = 'none' | 'markdown' | 'latex-includegraphics' | 'template'
+export type UploadFallback = 'session' | 'reject'
+
+export type UploadSlot = {
+  id: string
+  priority: number
+  match: { workFileExtensions: string[]; uploadKinds: UploadKind[] }
+  storage: { scope: UploadScope; directory: string }
+  reference: { format: UploadReferenceFormat; template?: string; pathPrefix?: string }
+  /** 该槽位匹配后无法确定落点（如 document 槽位缺 workFile）时的行为；缺省 reject。 */
+  fallback?: UploadFallback
+  /** 内置槽位：项目声明不得复用 id。 */
+  builtin?: boolean
+}
+
+export type UploadDeclaration = {
+  slots: UploadSlot[]
+  /** 文档上下文没有命中任何槽位时的行为；缺省 session（并带 fallback 标记返回）。 */
+  fallback: UploadFallback
+}
+
+/** 内置槽位 id（项目声明里出现即丢弃，避免顶替内置行为）。 */
+const RESERVED_UPLOAD_SLOT_IDS = new Set(['session', 'document-markdown'])
+
+/**
+ * 校验单条槽位声明。字段口径：
+ *  - id：`^[a-z][a-z0-9-]{0,31}$`，不得占用内置 id；
+ *  - priority：整数 -10000..10000（降序匹配，同序按声明顺序）；
+ *  - match.workFileExtensions：`\.[a-z0-9]{1,10}` 小写扩展名，非空；
+ *  - match.uploadKinds：image / file 子集，非空；
+ *  - storage.scope：session | document；document 必须给 directory（项目内相对、无反斜杠、无 `.`/`..` 段）；
+ *  - reference.format：none / markdown / latex-includegraphics / template；
+ *    markdown 由 kind 决定图片或文件引用；template 最多 512 字符且只允许一个 `{{$path}}`；
+ *    pathBase 只接受 workFileDirectory（文档引用恒相对 workFile 所在目录）；pathPrefix 只影响引用路径。
+ * 非法条目返回 null，由 readUploadDecl 丢弃该条（单条坏不拖垮整份声明）。
+ */
+function validateUploadSlot(raw: unknown): UploadSlot | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const id = typeof o.id === 'string' ? o.id.trim() : ''
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(id) || RESERVED_UPLOAD_SLOT_IDS.has(id)) return null
+  const priority = Number(o.priority)
+  if (!Number.isInteger(priority) || priority < -10000 || priority > 10000) return null
+  const fallback: UploadFallback | undefined =
+    o.fallback === 'session' ? 'session' : o.fallback === 'reject' ? 'reject' : undefined
+  const m = (o.match && typeof o.match === 'object' ? o.match : {}) as Record<string, unknown>
+  const exts = (Array.isArray(m.workFileExtensions) ? m.workFileExtensions : [])
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.trim().toLowerCase())
+    .filter((x) => /^\.[a-z0-9]{1,10}$/.test(x))
+  const kinds = (Array.isArray(m.uploadKinds) ? m.uploadKinds : [])
+    .filter((x): x is UploadKind => x === 'image' || x === 'file')
+  if (!exts.length || !kinds.length) return null
+  const s = (o.storage && typeof o.storage === 'object' ? o.storage : {}) as Record<string, unknown>
+  const scope: UploadScope | null = s.scope === 'session' ? 'session' : s.scope === 'document' ? 'document' : null
+  if (!scope) return null
+  let directory = ''
+  if (scope === 'document') {
+    directory = typeof s.directory === 'string' ? s.directory.trim().replace(/\\/g, '/') : ''
+    if (!directory || isAbsolute(directory) || /^[A-Za-z]:/.test(directory)) return null
+    if (directory.split('/').some((seg) => !seg || seg === '.' || seg === '..')) return null
+  }
+  const r = (o.reference && typeof o.reference === 'object' ? o.reference : {}) as Record<string, unknown>
+  const format: UploadReferenceFormat | null =
+    r.format === 'none' || r.format === 'markdown' ||
+    r.format === 'latex-includegraphics' || r.format === 'template'
+      ? r.format
+      : null
+  if (!format) return null
+  if (r.pathBase !== undefined && r.pathBase !== 'workFileDirectory') return null
+  let template = ''
+  if (format === 'template') {
+    template = typeof r.template === 'string' ? r.template : ''
+    if (!template || template.length > 512) return null
+    if (template.split('{{$path}}').length !== 2) return null // 只允许一个 {{$path}} 占位
+  }
+  let pathPrefix = ''
+  if (typeof r.pathPrefix === 'string' && r.pathPrefix.trim()) {
+    pathPrefix = r.pathPrefix.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+    if (!pathPrefix || isAbsolute(pathPrefix)) return null
+    if (pathPrefix.split('/').some((seg) => !seg || seg === '.' || seg === '..')) return null
+  }
+  return {
+    id,
+    priority,
+    match: { workFileExtensions: Array.from(new Set(exts)), uploadKinds: Array.from(new Set(kinds)) },
+    storage: { scope, directory },
+    reference: format === 'template' ? { format, template, pathPrefix } : { format, pathPrefix },
+    ...(fallback ? { fallback } : {}),
+  }
+}
+
+/**
+ * 读项目上传声明 `<项目根>/.claude/file-upload.json`（每请求现读，与 readPreviewJson 同口径）。
+ * 文件缺失 → 空声明；整份非法（坏 JSON / version !== 1 / slots 非数组）→ 空声明并写网关日志；
+ * 单条非法 → 丢该条。绝不抛：GET/POST 每次都跑。
+ */
+export function readUploadDecl(projectRoot: string): UploadDeclaration {
+  const empty: UploadDeclaration = { slots: [], fallback: 'session' }
+  const p = join(projectRoot, '.claude', 'file-upload.json')
+  if (!existsSync(p)) return empty
+  const obj = readJsonObject(p)
+  if (!obj || Number(obj.version) !== 1 || !Array.isArray(obj.slots)) {
+    console.log(`[gateway] 上传声明无效（需 version:1 + slots[]），忽略：${p}`)
+    return empty
+  }
+  const out: UploadSlot[] = []
+  const seen = new Set<string>()
+  for (const raw of obj.slots) {
+    const slot = validateUploadSlot(raw)
+    if (!slot) {
+      console.log(`[gateway] 上传声明丢弃非法 slot：${JSON.stringify(raw).slice(0, 200)}`)
+      continue
+    }
+    if (seen.has(slot.id)) continue
+    seen.add(slot.id)
+    out.push(slot)
+  }
+  return { slots: out, fallback: obj.fallback === 'reject' ? 'reject' : 'session' }
+}
+
+function builtinSessionSlot(): UploadSlot {
+  return {
+    id: 'session',
+    priority: 0,
+    builtin: true,
+    match: { workFileExtensions: [], uploadKinds: ['image', 'file'] },
+    storage: { scope: 'session', directory: '' },
+    reference: { format: 'none' },
+  }
+}
+
+function builtinDocumentMarkdownSlot(): UploadSlot {
+  return {
+    id: 'document-markdown',
+    priority: 0,
+    builtin: true,
+    match: { workFileExtensions: ['.md', '.markdown'], uploadKinds: ['image', 'file'] },
+    storage: { scope: 'document', directory: FILE_CACHE_DIR },
+    reference: { format: 'markdown' },
+  }
+}
+
+export type UploadSlotResolution =
+  | { ok: true; slot: UploadSlot; fallback: boolean; fallbackReason?: string }
+  | { ok: false; code: number; error: string }
+
+/**
+ * 槽位匹配：
+ *  显式 slot（未知 400；document 槽位缺 workFile 按该槽位 fallback 处理，缺省 reject）
+ *  → 项目声明（priority 降序、同序按声明顺序，扩展名与 kind 同时命中）
+ *  → 内置 document-markdown（.md/.markdown）
+ *  → 文档上下文未命中：按声明 fallback（session 默认 / reject），session 结果带 fallback 标记
+ *  → 无文档上下文（composer）：内置 session，不算 fallback。
+ */
+export function resolveUploadSlot(opts: {
+  projectRoot: string
+  workFile: string
+  kind: UploadKind
+  slotId?: string
+}): UploadSlotResolution {
+  const decl = readUploadDecl(opts.projectRoot)
+  const workFile = String(opts.workFile || '').replace(/\\/g, '/').replace(/^\/+/, '')
+  const ext = extname(workFile).toLowerCase()
+  if (opts.slotId && opts.slotId.trim()) {
+    const id = opts.slotId.trim()
+    if (id === 'session') return { ok: true, slot: builtinSessionSlot(), fallback: false }
+    if (id === 'document-markdown') {
+      if (!workFile) return { ok: false, code: 400, error: 'document-markdown 需要 workFile' }
+      return { ok: true, slot: builtinDocumentMarkdownSlot(), fallback: false }
+    }
+    const hit = decl.slots.find((s) => s.id === id)
+    if (!hit) return { ok: false, code: 400, error: `未知上传槽位: ${id}` }
+    if (hit.storage.scope === 'document' && !workFile) {
+      if (hit.fallback === 'session') {
+        return { ok: true, slot: builtinSessionSlot(), fallback: true, fallbackReason: 'slot-needs-workfile' }
+      }
+      return { ok: false, code: 400, error: `${id} 需要 workFile` }
+    }
+    return { ok: true, slot: hit, fallback: false }
+  }
+  const sorted = decl.slots
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (b.s.priority - a.s.priority) || (a.i - b.i))
+    .map((x) => x.s)
+  for (const s of sorted) {
+    if (!s.match.uploadKinds.includes(opts.kind)) continue
+    if (!ext || !s.match.workFileExtensions.includes(ext)) continue
+    return { ok: true, slot: s, fallback: false }
+  }
+  if (ext === '.md' || ext === '.markdown') {
+    return { ok: true, slot: builtinDocumentMarkdownSlot(), fallback: false }
+  }
+  if (workFile) {
+    if (decl.fallback === 'reject') {
+      return { ok: false, code: 400, error: `没有可用的上传槽位：${ext || workFile}` }
+    }
+    return { ok: true, slot: builtinSessionSlot(), fallback: true, fallbackReason: 'no-document-slot' }
+  }
+  return { ok: true, slot: builtinSessionSlot(), fallback: false }
+}
+
+/** LaTeX 文件名转义（% # & { } $ ^ ~ _ 与空格），避免文件名字符被 TeX 当语法。 */
+function latexEscapePath(p: string): string {
+  return String(p || '')
+    .replace(/\\/g, '/')
+    .replace(/[#%&{}$^~_]/g, (c) => '\\' + c)
+    .replace(/ /g, '\\ ')
+}
+
+/** 正文引用生成：refPath 已含 pathPrefix。markdown 按 kind 选图片/文件语法，LaTeX 单独转义。 */
+export function buildUploadReference(slot: UploadSlot, kind: UploadKind, refPath: string, name: string): string {
+  const fmt = slot.reference.format
+  if (fmt === 'none') return ''
+  if (fmt === 'latex-includegraphics') return `\\includegraphics{${latexEscapePath(refPath)}}`
+  const enc = encodeURI(refPath)
+  if (fmt === 'markdown') return kind === 'image' ? `![${name}](${enc})` : `[${name}](${enc})`
+  if (fmt === 'template') return String(slot.reference.template || '').replace('{{$path}}', enc)
+  return ''
 }
 
 /**
@@ -1590,67 +1849,57 @@ export function writeProjectComments(
 
 
 // 「在资源管理器中打开」并置顶（POST /gateway/file/reveal）。
-// explorer 由后台网关进程拉起，Windows 前台锁不会把新窗口的前台权交给调用方 ⇒ 窗口常落在浏览器后面。
-// 做法：先拉起 explorer，再用 Shell.Application.Windows 按**文件夹真实路径**（不是标题，标题可重名；
-// 也不用 PID，explorer 复用一个进程）找回该窗口的 HWND，最后 AttachThreadInput 借前台线程的权限
-// SetForegroundWindow。全部在独立 powershell 里跑（detached，不等结果），网关请求立即返回。
-const REVEAL_FOREGROUND_PS = String.raw`
-$ErrorActionPreference = 'SilentlyContinue'
-$target = $env:FLORIA_REVEAL_PATH
-$select = $env:FLORIA_REVEAL_SELECT -eq '1'
-if ($select) {
-  Start-Process explorer.exe -ArgumentList ('/select,"' + $target + '"') -WindowStyle Normal
-} else {
-  Start-Process explorer.exe -ArgumentList ('"' + $target + '"') -WindowStyle Normal
+// 走 Windows Shell API `SHOpenFolderAndSelectItems`（与 Obsidian 的「在文件夹中显示」同一条路）：由 shell
+// 自己完成「打开 + 前置」，不启动新的 explorer.exe 进程、不需要 PowerShell 冷启动或抢前台权限，
+// 因此既没有 console 黑框，也没有此前 2~3s 的置顶延迟。
+// 文件 → 传文件自身 PIDL + cidl=0（打开父目录并选中该文件）；目录 → 同调用（打开该目录）。
+type RevealLibs = {
+  parse: (w: Buffer, out: BigUint64Array) => number
+  open: (pidl: bigint) => number
+  free: (pidl: bigint) => void
 }
-$folder = if ($select) { [System.IO.Path]::GetDirectoryName($target) } else { $target }
-if (-not $folder) { return }
-$folder = $folder.TrimEnd('\')
-$app = New-Object -ComObject Shell.Application
-$hwnd = [int64]0
-for ($i = 0; $i -lt 25 -and $hwnd -eq 0; $i++) {
-  Start-Sleep -Milliseconds 120
-  foreach ($w in $app.Windows()) {
-    try {
-      $p = $w.Document.Folder.Self.Path
-      if ($p -and $p.TrimEnd('\') -ieq $folder) { $hwnd = [int64]$w.HWND; break }
-    } catch { }
+let revealLibs: RevealLibs | null = null
+
+/** 懒加载 shell32/ole32（仅 win32 调用；dlopen 失败只记日志，不影响其它端点）。 */
+function revealLibsOf(): RevealLibs | null {
+  if (revealLibs) return revealLibs
+  try {
+    const shell32 = dlopen('shell32.dll', {
+      SHParseDisplayName: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+      SHOpenFolderAndSelectItems: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.u32], returns: FFIType.i32 },
+    })
+    const ole32 = dlopen('ole32.dll', {
+      CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+      CoTaskMemFree: { args: [FFIType.u64], returns: FFIType.void },
+    })
+    // STA：SHOpenFolderAndSelectItems 要求调用线程已初始化 COM（已初始化时返回 S_FALSE/RPC_E_CHANGED_MODE 均可用）。
+    ole32.symbols.CoInitializeEx(null, 0x2)
+    revealLibs = {
+      parse: (w, out) => shell32.symbols.SHParseDisplayName(ptr(w), null, ptr(out), 0, null),
+      open: (pidl) => shell32.symbols.SHOpenFolderAndSelectItems(pidl, 0, 0n, 0),
+      free: (pidl) => ole32.symbols.CoTaskMemFree(pidl),
+    }
+    return revealLibs
+  } catch (e) {
+    console.log(`[gateway] 资源管理器定位初始化失败：${(e as Error).message}`)
+    return null
   }
 }
-if ($hwnd -eq 0) { return }
-Add-Type -Namespace FloriaFg -Name Native -MemberDefinition @'
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-'@
-$h = [IntPtr]$hwnd
-[FloriaFg.Native]::ShowWindow($h, 9) | Out-Null
-$fg = [FloriaFg.Native]::GetForegroundWindow()
-$fgPid = [uint32]0
-$fgThread = [FloriaFg.Native]::GetWindowThreadProcessId($fg, [ref]$fgPid)
-$myThread = [FloriaFg.Native]::GetCurrentThreadId()
-[FloriaFg.Native]::AttachThreadInput($myThread, $fgThread, $true) | Out-Null
-[FloriaFg.Native]::BringWindowToTop($h) | Out-Null
-[FloriaFg.Native]::SetForegroundWindow($h) | Out-Null
-[FloriaFg.Native]::AttachThreadInput($myThread, $fgThread, $false) | Out-Null
-`
 
-/** 在系统资源管理器中定位并置顶（仅 win32；调用方已判平台）。失败只记日志，不影响接口返回。 */
-function revealInExplorer(abs: string, isDir: boolean): void {
-  const encoded = Buffer.from(REVEAL_FOREGROUND_PS, 'utf16le').toString('base64')
-  // **禁传 detached**：Bun 运行时下 `detached:true` 的 powershell 无法把 explorer 拉起来
-  // （实测 node:child_process / Bun.spawn 均如此，窗口一个不出）；去掉 detached 正常，
-  // stdio ignore + unref 已足够让接口立即返回。同样禁传 windowsHide（见 docs/gateway.md §16）。
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded], {
-    stdio: 'ignore',
-    env: { ...process.env, FLORIA_REVEAL_PATH: abs, FLORIA_REVEAL_SELECT: isDir ? '0' : '1' },
-  })
-  child.on('error', (e) => console.log(`[gateway] 资源管理器定位失败：${(e as Error).message}`))
-  child.unref()
+/** 在系统资源管理器中定位并前置（仅 win32；调用方已判平台）。失败只记日志，不影响接口返回。 */
+function revealInExplorer(abs: string): void {
+  const libs = revealLibsOf()
+  if (!libs) return
+  const wbuf = Buffer.from(abs + '\0', 'utf16le')
+  const pidlOut = new BigUint64Array(1)
+  const hrParse = libs.parse(wbuf, pidlOut)
+  if (hrParse !== 0 || !pidlOut[0]) {
+    console.log(`[gateway] 资源管理器定位失败：SHParseDisplayName hr=${hrParse}`)
+    return
+  }
+  const hrOpen = libs.open(pidlOut[0])
+  libs.free(pidlOut[0])
+  if (hrOpen !== 0) console.log(`[gateway] 资源管理器定位失败：SHOpenFolderAndSelectItems hr=${hrOpen}`)
 }
 
 function findProjects(root: string): ProjectInfo[] {
@@ -2343,6 +2592,32 @@ function sessionRootFromId(id: string, root: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 上传上下文的会话解析，兼容两种 sid 形态：
+ *  ① 完整 sid = base64url(<启动根>/.claude/projects/<uuid>.jsonl)（会话间协作 / API 口径）；
+ *  ② web 路由 hash = 转录文件名主干 `<uuid>`（sessions.js 的 hashOf，URL `#/<uuid>`）。
+ * 裸 uuid 无法解出启动根，按各项目与全局根的 `.claude/projects/<uuid>.jsonl` 逐一确认归属；
+ * 找不到 → null（/gateway/upload 判 400；GET 读取侧按 project/网关根回落）。
+ */
+function resolveUploadSession(id: string, root: string): { root: string; dirKey: string } | null {
+  const fullRoot = sessionRootFromId(id, root)
+  if (fullRoot) {
+    try {
+      const { uuid } = decodeSessionPath(id, root)
+      if (/^[0-9a-f-]{36}$/i.test(uuid)) return { root: fullRoot, dirKey: uuid }
+    } catch { /* 落到裸 uuid 分支 */ }
+  }
+  const uuid = String(id || '').trim().replace(/\.jsonl$/i, '')
+  if (!/^[0-9a-f-]{36}$/i.test(uuid)) return null
+  for (const g of findProjects(root)) {
+    if (!isDir(g.dir)) continue
+    if (existsSync(join(g.dir, `${uuid}.jsonl`))) {
+      return { root: resolve(g.dir, '..', '..'), dirKey: uuid }
+    }
+  }
+  return null
 }
 
 // 上下文占用（2026-08-23 dsh ContextMeter 移植数据源）：取转录最后一条 assistant 的 message.usage，
@@ -4140,6 +4415,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   // 网关进程跑在用户本机，打开的即用户桌面；越界 / 不存在同 /gateway/file 口径（resolveWithinRoot）。
   // explorer 成功时也常回非 0 退出码，故 detached 拉起、不取退出码，也不等它结束。
   if (req.method === 'POST' && url.pathname === '/gateway/file/reveal') {
+    const tRevealIn = Date.now()
     try {
       const vp = await readReportBody(req)
       const vProj = findProjects(root).find((g) => g.label === (typeof vp.label === 'string' ? vp.label : ''))
@@ -4157,8 +4433,8 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         return
       }
       const isDir = statSync(vAbs).isDirectory()
-      console.log(`[gateway] 资源管理器定位 ${vProj.label} → ${vAbs}（${isDir ? '目录' : '文件'}）`)
-      revealInExplorer(vAbs, isDir)
+      console.log(`[gateway] 资源管理器定位 ${vProj.label} → ${vAbs}（${isDir ? '目录' : '文件'} · 请求到发起 ${Date.now() - tRevealIn}ms）`)
+      revealInExplorer(vAbs)
       sendJson(res, 200, { ok: true })
     } catch (e) {
       sendError(res, e)
@@ -4192,8 +4468,8 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   }
   // 项目内上传文件：POST /gateway/file/upload?label=&path=<落点目录>&name=<文件名>，body=原始字节
   // （2026-10-13 work 侧栏「上传文件 / 文件夹」）。语义与防护全在 uploadProjectFile（纯函数，
-  // probe-file-create 直测）：同名 -1/-2 序号避让（对齐 /gateway/file-cache 先例）、落点目录 recursive
-  // 创建（承载「上传文件夹」的子目录结构）、越界 403、单文件上限 20 MB（对齐 /gateway/file-cache）。
+  // probe-file-create 直测）：同名 -1/-2 序号避让（storeUploadFile 口径）、落点目录 recursive
+  // 创建（承载「上传文件夹」的子目录结构）、越界 403、单文件上限 20 MB（对齐 /gateway/upload）。
   // label 唯一命中（含工作区根）。受上方 /gateway/* token 校验保护。
   if (req.method === 'POST' && url.pathname === '/gateway/file/upload') {
     try {
@@ -4261,39 +4537,166 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     return
   }
 
-  // 2026-10-24 附件统一缓存（upload 链退役）：POST /gateway/file-cache?name=<文件名>&sid=<会话hash>[&project=<label>]，
-  // body=原始字节。image-cache 已升级并入本链（用户定案：统一为 file-cache，不保留两套缓存）：
-  // 落盘 = <会话启动根>/.claude/file-cache/<会话 uuid>/<文件名>，按项目+会话分目录、同根同清理。
-  //   · sid = base64url(<启动根>/.claude/projects/<uuid>.jsonl)（decodeSessionPath 内强制限便携根内），
-  //     剥 marker 得会话启动根（projectRoot）、uuid 即目录名——与 CLI getSessionId()/getProjectRoot() 同源。
-  //   · 首页首送前上传（尚无 sid）：带 project label 时按该项目根（与 wsession 建会话 cwd 同源），
-  //     目录名 _pending（尚未归属任何会话的暂存，清理时跳过）；label 也没有 → 网关自身根。
-  // 同名不覆盖 → -1/-2 序号。文件名 basename 化 + Windows 非法字符清洗；单文件上限 20MB。
-  // 响应 rel = `file-cache/<dir>/<name>`：正文引用的唯一键，渲染侧映射为 /gateway/file-cache/<dir>/<name>（附同一 sid/project 查询）。
+  // 统一上传端点：POST /gateway/upload?sid=&project=&workFile=&kind=image|file&slot=&name=
+  // body = 原始字节（上限 20 MB）。上传服务只负责收字节/命名/落盘/鉴权；落点目录与正文引用由槽位决定
+  // （resolveUploadSlot：显式 slot → 项目 .claude/file-upload.json → 内置 document-markdown → 内置 session）。
+  //   · name = 原始文件名；时间戳与 -1/-2 序号全部由网关加（前端不再拼命名规则）。
+  //   · sid 两种形态：完整 base64url(jsonl 路径) 或 web 路由 hash（裸 <uuid>）；给了但解析不到 → 400。
+  //   · project 必须是 findProjects 命中的 label（含全局根），否则 404。
+  //   · workFile 必须是项目内已存在文件（越界 403 / 不存在 400）；document 槽位缺它 → 400（除非槽位声明 fallback=session）。
+  //   · 响应恒含 slot/scope/originalName/name/storedPath/relativePath/reference/url/size/fallback，
+  //     session 作用域 reference 恒为 ""；不返回任何绝对文件系统路径。
+  if (req.method === 'POST' && url.pathname === '/gateway/upload') {
+    try {
+      const uSid = (url.searchParams.get('sid') || '').trim()
+      const uProject = (url.searchParams.get('project') || '').trim()
+      const uWorkFile = (url.searchParams.get('workFile') || '').trim()
+      const uKindRaw = (url.searchParams.get('kind') || '').trim()
+      if (uKindRaw && uKindRaw !== 'image' && uKindRaw !== 'file') {
+        sendJson(res, 400, { error: 'invalid kind' })
+        return
+      }
+      const uKind: UploadKind = uKindRaw === 'image' ? 'image' : 'file'
+      const uOriginalName = sanitizeEntryName(url.searchParams.get('name') || '') || 'file'
+      const uStoredName = stampUploadName(uOriginalName)
+      let uProjRoot = root
+      if (uProject) {
+        const g = findProjects(root).find((x) => x.label === uProject)
+        if (!g) {
+          sendJson(res, 404, { error: 'project not found' })
+          return
+        }
+        uProjRoot = resolve(g.dir, '..', '..')
+      }
+      // sid 显式给了就必须能解析（不静默降级到 project/网关根）
+      let uSess: { root: string; dirKey: string } | null = null
+      if (uSid) {
+        uSess = resolveUploadSession(uSid, root)
+        if (!uSess) {
+          sendJson(res, 400, { error: 'invalid sid' })
+          return
+        }
+      }
+      // workFile 越界 / 不存在在校验槽位之前拦下（它是槽位匹配判据与 document 落点基准）
+      if (uWorkFile) {
+        const wfAbs = resolveWithinRoot(uProjRoot, uWorkFile)
+        if (!wfAbs) {
+          sendJson(res, 403, { error: 'forbidden' })
+          return
+        }
+        try {
+          if (!statSync(wfAbs).isFile()) {
+            sendJson(res, 400, { error: 'workFile not found' })
+            return
+          }
+        } catch {
+          sendJson(res, 400, { error: 'workFile not found' })
+          return
+        }
+      }
+      const uResolved = resolveUploadSlot({
+        projectRoot: uProjRoot,
+        workFile: uWorkFile,
+        kind: uKind,
+        slotId: url.searchParams.get('slot') || '',
+      })
+      if (!uResolved.ok) {
+        sendJson(res, uResolved.code, { error: uResolved.error })
+        return
+      }
+      const uSlot = uResolved.slot
+      const uBuf = await readBodyWithLimit(req, 20 * 1024 * 1024)
+      if (uSlot.storage.scope === 'session') {
+        const uRoot = uSess ? uSess.root : (uProject ? uProjRoot : getProjectRoot())
+        const uDirKey = uSess ? uSess.dirKey : PENDING_FILE_DIR
+        if (uSess && uProject && resolve(uSess.root).toLowerCase() !== resolve(uProjRoot).toLowerCase()) {
+          console.log(`[gateway] upload: sid 与 project 归属不一致，以 sid 为准（${uSess.root}）`)
+        }
+        const stored = storeUploadFile(uRoot, `.claude/${FILE_CACHE_DIR}/${uDirKey}`, uStoredName, uBuf)
+        if (!stored.ok) {
+          sendJson(res, stored.code, { error: stored.error })
+          return
+        }
+        const uQuery = uSid
+          ? '?sid=' + encodeURIComponent(uSid)
+          : (uProject ? '?project=' + encodeURIComponent(uProject) : '')
+        sendJson(res, 200, {
+          ok: true, slot: uSlot.id, scope: 'session',
+          originalName: uOriginalName, name: stored.name,
+          storedPath: `.claude/${FILE_CACHE_DIR}/${uDirKey}/${stored.name}`,
+          relativePath: `${FILE_CACHE_DIR}/${uDirKey}/${stored.name}`,
+          reference: '',
+          url: `/gateway/file-cache/${uDirKey}/${encodeURIComponent(stored.name)}${uQuery}`,
+          size: stored.size,
+          fallback: uResolved.fallback,
+          ...(uResolved.fallback ? { fallbackReason: uResolved.fallbackReason || '' } : {}),
+        })
+        return
+      }
+      // document 作用域：落点 = workFile 所在目录 + slot.storage.directory（项目根相对）
+      if (!uWorkFile) {
+        sendJson(res, 400, { error: `${uSlot.id} 需要 workFile` })
+        return
+      }
+      if (!uProject) {
+        sendJson(res, 400, { error: `${uSlot.id} 需要 project` })
+        return
+      }
+      const uWf = uWorkFile.replace(/\\/g, '/').replace(/^\/+/, '')
+      const uDocDir = dirname(uWf) === '.' ? '' : dirname(uWf).replace(/\\/g, '/')
+      const uRelDir = uDocDir ? `${uDocDir}/${uSlot.storage.directory}` : uSlot.storage.directory
+      const stored = storeUploadFile(uProjRoot, uRelDir, uStoredName, uBuf)
+      if (!stored.ok) {
+        sendJson(res, stored.code, { error: stored.error })
+        return
+      }
+      const uRefPath = (uSlot.reference.pathPrefix ? uSlot.reference.pathPrefix + '/' : '') +
+        `${uSlot.storage.directory}/${stored.name}`
+      sendJson(res, 200, {
+        ok: true, slot: uSlot.id, scope: 'document',
+        originalName: uOriginalName, name: stored.name,
+        storedPath: stored.relPath,
+        relativePath: uRefPath,
+        reference: buildUploadReference(uSlot, uKind, uRefPath, stored.name),
+        url: `/gateway/file?label=${encodeURIComponent(uProject)}&path=${encodeURIComponent(stored.relPath)}`,
+        size: stored.size,
+        fallback: false,
+      })
+      return
+    } catch (e) {
+      if (e instanceof ReportBodyTooLargeError) sendReportBodyError(res, e)
+      else sendError(res, e)
+    }
+    return
+  }
+
+  // 兼容入口（保留一个版本周期）：POST /gateway/file-cache?name=&sid=&project=[&...]，body=原始字节。
+  // 内部转调统一落盘（session 作用域），不再独立落盘；返回旧格式 {ok,name,rel,size}（不再返回 abs）。
+  // 旧前端传的 name 已含时间戳，这里不二次加戳；sid 非法按旧语义回落 project / 网关自身根。
   if (req.method === 'POST' && url.pathname === '/gateway/file-cache') {
     try {
-      const name = sanitizeEntryName(url.searchParams.get('name') || '') || 'file'
-      const nameExt = extname(name)
-      const fcSid = (url.searchParams.get('sid') || '').trim()
-      const fcProj = (url.searchParams.get('project') || '').trim()
-      let dirKey = PENDING_FILE_DIR
-      if (fcSid) {
-        try { dirKey = decodeSessionPath(fcSid, root).uuid } catch { /* 非法/越界 id → 暂存目录 */ }
+      const legacyName = sanitizeEntryName(url.searchParams.get('name') || '') || 'file'
+      const legacySid = (url.searchParams.get('sid') || '').trim()
+      const legacyProj = (url.searchParams.get('project') || '').trim()
+      let legacyProjRoot = root
+      if (legacyProj) {
+        const g = findProjects(root).find((x) => x.label === legacyProj)
+        if (g) legacyProjRoot = resolve(g.dir, '..', '..')
       }
-      const fcRoot = (fcSid && sessionRootFromId(fcSid, root)) || (fcProj ? webSessionProjectRoot(fcProj) : getProjectRoot())
-      const fcDir = getFileCacheDir(fcRoot, dirKey)
-      mkdirSync(fcDir, { recursive: true })
-      let target = join(fcDir, name)
-      if (existsSync(target)) {
-        const stem = name.slice(0, name.length - nameExt.length)
-        let i = 1
-        while (existsSync(join(fcDir, `${stem}-${i}${nameExt}`))) i++
-        target = join(fcDir, `${stem}-${i}${nameExt}`)
-      }
+      const legacySess = legacySid ? resolveUploadSession(legacySid, root) : null
+      const legacyRoot = legacySess ? legacySess.root : (legacyProj ? legacyProjRoot : getProjectRoot())
+      const legacyDirKey = legacySess ? legacySess.dirKey : PENDING_FILE_DIR
       const buf = await readBodyWithLimit(req, 20 * 1024 * 1024)
-      writeFileSync(target, buf)
-      const saved = basename(target)
-      sendJson(res, 200, { ok: true, name: saved, rel: `${FILE_CACHE_DIR}/${dirKey}/${saved}`, abs: target, size: buf.length })
+      const stored = storeUploadFile(legacyRoot, `.claude/${FILE_CACHE_DIR}/${legacyDirKey}`, legacyName, buf)
+      if (!stored.ok) {
+        sendJson(res, stored.code, { error: stored.error })
+        return
+      }
+      sendJson(res, 200, {
+        ok: true, name: stored.name,
+        rel: `${FILE_CACHE_DIR}/${legacyDirKey}/${stored.name}`,
+        size: stored.size,
+      })
     } catch (e) {
       if (e instanceof ReportBodyTooLargeError) sendReportBodyError(res, e)
       else sendError(res, e)
@@ -4301,8 +4704,9 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     return
   }
   // 文件缓存读取：GET /gateway/file-cache/<会话uuid|_pending>/<键>?sid=<会话hash>[&project=<label>]
-  // （image-cache 已升级并入此链）。基址 = 会话启动根/.claude/file-cache（由 sid 解出；
-  // 无 sid 时按 project label、再退网关自身根，与 POST 同序）。
+  // （image-cache 已升级并入此链；写入侧 = POST /gateway/upload 的 session 作用域）。
+  // 基址 = 会话启动根/.claude/file-cache（由 sid 解出；无 sid 时按 project label、再退网关自身根，
+  // 与 /gateway/upload 的 session 作用域同序）。
   // 键两种形态，同一目录：① 纯数字 id —— CLI 落盘的粘贴图片 <id>.<ext>（扩展名由 mediaType 推导，
   // 此处按 `<id>.` 前缀 readdir 解析，消费端无需知道扩展名）；② 完整文件名 —— 网关落盘的上传附件。
   // 文件名单段校验（禁 / \ .. 与空串），目录键限 uuid / _pending——越界一律 400。
@@ -4320,7 +4724,8 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     }
     const fcSid = (url.searchParams.get('sid') || '').trim()
     const fcProj = (url.searchParams.get('project') || '').trim()
-    const fcRoot = (fcSid && sessionRootFromId(fcSid, root)) || (fcProj ? webSessionProjectRoot(fcProj) : getProjectRoot())
+    const fcSess = fcSid ? resolveUploadSession(fcSid, root) : null
+    const fcRoot = (fcSess && fcSess.root) || (fcProj ? webSessionProjectRoot(fcProj) : getProjectRoot())
     const fcDir = getFileCacheDir(fcRoot, m[1])
     let fcHit = fcKey
     if (/^\d+$/.test(fcKey)) {

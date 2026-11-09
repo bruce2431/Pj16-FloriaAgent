@@ -33,9 +33,9 @@
     paste: {
       clipboardFiles: (cd) => clipboardFiles(cd),
       clipboardImageUrls: (html) => clipboardImageUrls(html),
-      addImageFiles: (f, t) => addImageFiles(f, t),
-      addUploadFiles: (f, t) => addUploadFiles(f, t),
-      addImageUrls: (u, t) => addImageUrls(u, t),
+      addImageFiles: (f, t, wf) => addImageFiles(f, t, wf),
+      addUploadFiles: (f, t, wf) => addUploadFiles(f, t, wf),
+      addImageUrls: (u, t, wf) => addImageUrls(u, t, wf),
     },
   })
 

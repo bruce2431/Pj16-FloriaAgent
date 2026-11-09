@@ -6827,6 +6827,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       currentHash: state.currentHash,
       sbMode: state.sbMode,
       workProj: state.workProj,
+      workFile: state.workFile,
       curUuid: live.curUuid,
     }),
     findSession: (u) => findSession(u),
@@ -6838,8 +6839,8 @@ function setFirstSendHash(v) { firstSendHash = v }
   const {
     edCMG, edCmg, cmMathExt,
     editorApiGet, editorApiRegister, editorApiSetActive, editorApiUnregister, editorCommand, makeEditorFacade,
-    attachmentUrl, insertAttachmentMarkdown, insertTexImages, isDocumentAttachment, isImageAttachment,
-    uploadAttachment, uploadProjectAttachment, edAttImgPlugin, edAttFilePlugin,
+    attachmentUrl, insertUploadReference, isDocumentAttachment, isImageAttachment,
+    uploadFile, makeAttImgPlugin, edAttImgPlugin, edAttFilePlugin,
     copyRenderedImages, copyRenderedSelection,
     renderMarkdown, toggleTask,
     insertAtCursorCM, surroundExt, toggleTaskLineCM, wrapKeymap, wrapSelectionCM,
@@ -8387,9 +8388,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     paste: {
       clipboardFiles: (cd) => clipboardFiles(cd),
       clipboardImageUrls: (html) => clipboardImageUrls(html),
-      addImageFiles: (f, t) => addImageFiles(f, t),
-      addUploadFiles: (f, t) => addUploadFiles(f, t),
-      addImageUrls: (u, t) => addImageUrls(u, t),
+      addImageFiles: (f, t, wf) => addImageFiles(f, t, wf),
+      addUploadFiles: (f, t, wf) => addUploadFiles(f, t, wf),
+      addImageUrls: (u, t, wf) => addImageUrls(u, t, wf),
     },
   })
 
@@ -13180,6 +13181,15 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 拖拽（页面内拖选文字/链接原样不受影响）；dragenter/leave 计数对抗子元素穿越，浮层 pointer-events:none
   // 事件全落 document。2026-10-22：按类型分流——图片走 addImageFiles（缩略图胶囊 + 视觉上行），
   // 其余文件走 addUploadFiles（上传落盘 + 文件胶囊 + 正文链接），此前 filter 只留 image/* 导致非图片拖拽无反应。
+  // 落点按指针所在区域判定：落在 work 编辑区且有打开文件 → target='work' + 该文件相对路径（文档邻位槽位）；
+  // 其余位置一律底栏 composer（会话缓存，无正文引用）。
+  function dropTargetAt(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    if (el && el.closest && el.closest('#wk-ed-body') && state.workFile) {
+      return { target: 'work', filePath: state.workFile }
+    }
+    return { target: 'composer', filePath: '' }
+  }
   const dropOverlay = $('drop-overlay')
   let dragDepth = 0
   document.addEventListener('dragenter', (e) => {
@@ -13205,8 +13215,9 @@ function setFirstSendHash(v) { firstSendHash = v }
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
     const imgs = files.filter((f) => /^image\//.test(f.type))
     const others = files.filter((f) => !/^image\//.test(f.type))
-    if (imgs.length) addImageFiles(imgs)
-    if (others.length) addUploadFiles(others)
+    const { target, filePath } = dropTargetAt(e)
+    if (imgs.length) addImageFiles(imgs, target, filePath)
+    if (others.length) addUploadFiles(others, target, filePath)
   }, true)
   // 2026-09-06 纯文本复制：鼠标选中复制走浏览器默认会连 text/html 一起写剪贴板
   // （粘回输入栏/外部富文本编辑器保留背景色等样式），全局拦截 copy 只写 text/plain。
@@ -14256,16 +14267,24 @@ function setFirstSendHash(v) { firstSendHash = v }
       // sid = 会话转录文件名主干，与会话间协作的寻址键同源（engine/sessions.js hashOf = 路由 hash）
       items.push({ kind: 'session', name: s.title || '未命名会话', sid: hashOf(s), desc: relTime(s.updatedAt), t: s.updatedAt, own, proj: own ? '' : sessionProjLabel(s) })
     }
-    // 当前项目自己的技能（项目根 .claude/skills）：与 + 工具栏技能组同源，行尾标项目编号。
+    // 技能 = 当前项目自己的（项目根 .claude/skills，行尾标项目编号）+ 便携根全局技能，两种上下文都列：
+    // 技能是跨项目通用能力，项目没有自己的技能时（如 Pj18）入口不能空着。同名时项目件优先、不重复列。
     const proj = home
     // 启用态只控制会话启动时是否加载（agent 可见面）；@ 入口不受它约束——停用件照常可搜可插，
     // 用户主动 @ 即视为显式指定该项（用户定案）。
-    for (const s of projSkillsOf(proj).list) if (match(s.n) || match(s.d)) items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    const skillNames = new Set()
+    for (const s of projSkillsOf(proj).list) {
+      if (!match(s.n) && !match(s.d)) continue
+      skillNames.add(s.n)
+      items.push({ kind: 'skill', name: s.n, desc: s.d, proj, t: 0 })
+    }
     if (MGR) {
-      // 技能只给当前项目自己的（有项目上下文时不再混便携根全局技能）；
       // 插件是便携根安装件、无项目归属，两种上下文都列。
       for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (match(p.n)) items.push({ kind: 'plugin', name: p.n, desc: p.d, t: 0 })
-      if (!proj) for (const s of (MGR.skills && MGR.skills.personal) || []) if (match(s.n)) items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      for (const s of (MGR.skills && MGR.skills.personal) || []) {
+        if (skillNames.has(s.n) || (!match(s.n) && !match(s.d))) continue
+        items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
+      }
     }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
@@ -14294,21 +14313,27 @@ function setFirstSendHash(v) { firstSendHash = v }
     const m = /^((?:Sub)?Pj\d+)/i.exec(String(label || ''))
     return m ? m[1] : String(label || '')
   }
-  // 技能行 = 插件 + 技能（MGR 同源）+ **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
+  // 技能行 = 插件（便携根）+ 便携根全局技能 + **当前项目自己的技能**（项目根 .claude/skills，行尾标项目名）。
   // 项目判定与 + 浮窗文件组同一处（pickHome：会话所属项目 / work 工作项目，空串 = 无项目上下文）。
+  // 技能两种上下文都列（跨项目通用能力，项目没有自己的技能时入口不能空着）；同名时项目件优先。
   function cmdSkillRows(match, grp) {
     const out = []
     const proj = pickHome()
-    // 技能按上下文项目隔离——有项目上下文只列该项目根 .claude/skills，
-    // 不再混入便携根全局技能（MGR.skills.personal 只服务无项目上下文的全局态）。
+    const seen = new Set()
     // 启用态只控制会话加载，不约束入口：停用件照常列（用户可主动选用，见 mentionItems 同条）。
     if (proj) {
-      for (const s of projSkillsOf(proj).list) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
-    } else if (MGR) {
-      for (const s of (MGR.skills && MGR.skills.personal) || []) if (!match || match(s.n) || match(s.d)) out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+      for (const s of projSkillsOf(proj).list) {
+        if (match && !match(s.n) && !match(s.d)) continue
+        seen.add(s.n)
+        out.push({ kind: 'skill', name: s.n, desc: s.d, grp, proj })
+      }
     }
-    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源，不算「混入」）
     if (!MGR) return out
+    for (const s of (MGR.skills && MGR.skills.personal) || []) {
+      if (seen.has(s.n) || (match && !match(s.n) && !match(s.d))) continue
+      out.push({ kind: 'skill', name: s.n, desc: s.d, grp })
+    }
+    // 插件是便携根安装件、无项目归属，两种上下文都列（与技能不同源）
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
@@ -16302,67 +16327,58 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
       r.readAsDataURL(file)
     })
   }
-  // 图片附件（粘贴/拖拽/+ 浮窗）：视觉上行 base64 入列（胶囊缩略图）+ 原文件上传落盘（时间戳名）。
-  // 正文引用按 target 分：composer 不插（只进胶囊）；work 插 `![名](file-cache/…)`（CM 行内直渲）。
+  // 图片附件（粘贴/拖拽/+ 浮窗）：视觉上行 base64 入列（胶囊缩略图）+ 原文件上传（网关命名/落点）。
+  // 正文引用按 target 分：composer 不插（只进胶囊）；work 插网关返回的 reference（槽位决定语法）。
   // 落盘失败时视觉上行仍有效（无 attName、@ 不可引用，发送链 [Image #N] 照旧上行）。
   // target = editorCommand 落点 id（'composer' 底栏 / 'work' 编辑卡片），缺省底栏
-  // filePath = work 编辑卡片当前文件相对路径（kernel paste 钩子传入；缺省读 state.workFile）。
-  // 编辑卡片图片粘贴按扩展名分流（2026-11-02）：`.tex` → 落 <tex 目录>/image/ + `\includegraphics`；
-  // `.md`/`.markdown` → 原 md 引用链；**其它扩展名不响应图片粘贴**（不落 file-cache、不插引用）。
+  // filePath = work 编辑卡片当前文件相对路径（kernel paste 钩子显式传入；composer 传空）。
   async function addImageFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
     const toComposer = tgtEd === 'composer'
-    const workPath = String(filePath || state.workFile || '')
-    const isTex = !toComposer && /\.tex$/i.test(workPath)
-    const isMd = !toComposer && /\.(md|markdown)$/i.test(workPath)
-    const texNames = []
+    const workPath = String(filePath || '')
     for (const f of files) {
       if (!/^image\//.test(f.type)) continue
       // 张数上限只约束底栏发送链（pendingImages 是发送态）；编辑卡正文引用不占名额
       if (toComposer && pendingImages.length >= 9) { toast('一次最多 9 张图片'); break }
       let enc
       try { enc = await encodeImg(f) } catch { toast('图片读取失败'); continue }
-      // 模块化分流（2026-10-21 待办）：work 编辑卡 = 只落盘 + 写正文引用，**不写底栏 pending/胶囊**。
-      // 旧实现无论 target 都 push pendingImages + renderImgPills，导致编辑卡粘贴的图串进底栏胶囊行。
-      if (!toComposer) {
-        if (isTex) {
-          // tex 图片落 tex 所在目录的 image/（网关递归建目录、同名 -1/-2 去重），正文插 includegraphics
-          const slash = Math.max(workPath.lastIndexOf('/'), workPath.lastIndexOf('\\'))
-          const dir = slash >= 0 ? workPath.slice(0, slash) : ''
-          const att = await uploadProjectAttachment(f, state.workProj, dir ? dir + '/image' : 'image')
-          if (att) texNames.push(att.name)
-          continue
-        }
-        if (!isMd) continue // 编辑卡片仅 md / tex 响应图片粘贴
-        const att = await uploadAttachment(f)
-        if (att) insertAttachmentMarkdown(tgtEd, att)
+      // work 编辑卡 = 只落盘 + 写正文引用，**不写底栏 pending/胶囊**（旧实现会把编辑卡图片串进胶囊行）。
+      const att = await uploadFile(f, { kind: 'image', workFile: toComposer ? '' : workPath })
+      if (toComposer) {
+        if (att) { enc.attName = att.name; enc.attRel = att.relativePath } // @ 浮窗可引用的键
+        pendingImages.push(enc)
+        // 底栏（composer）上传 = 只进胶囊行待发，**不自动往输入框正文插引用**。
+        renderImgPills()
         continue
       }
-      const att = await uploadAttachment(f)
-      if (att) { enc.attName = att.name; enc.attRel = att.rel } // @ 浮窗可引用的键（落盘成功才有）
-      pendingImages.push(enc)
-      // 底栏（composer）上传 = 只进胶囊行待发，**不自动往输入框正文插引用**（2026-10-16 待办 2：
-      // 「不要自动在正文渲染，被图片胶囊劫持」）。
-      renderImgPills()
+      if (!att) continue
+      if (att.reference) insertUploadReference(tgtEd, att)
+      else toast(att.fallback
+        ? '当前文件类型未配置正文上传槽位，已作为会话附件保存'
+        : '已作为会话附件保存（该槽位无正文引用）')
     }
-    if (texNames.length) insertTexImages(tgtEd, texNames) // 多张按原顺序，各一行 includegraphics
     if (toComposer) syncGwSend()
   }
-  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传落盘 → pendingFiles 入列（发送侧 [文件:占位] 自动相对化）
-  // + 原文插 `[名](file-cache/…)` 文件名链接。落盘跟随会话（与粘贴图片同目录）：sid=当前会话（存量/
-  // 已开）；首页尚无会话时 project=<workProj|newSessionProject()>——与 gwSend 首送建会话的归属参数同源，
-  // 保证「上传落点的项目根 = 消息会话启动根」；两者皆无 → 网关自身根。
-  async function addUploadFiles(files, target) {
+  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传 → 底栏入 pendingFiles（发送侧 [文件:占位] 自动相对化）；
+  // 编辑卡插网关返回的 reference（文档槽位没有该类型时回落 session 并 toast）。
+  async function addUploadFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
     const toComposer = tgtEd === 'composer'
+    const workPath = String(filePath || '')
     for (const f of files) {
       toast('正在上传 ' + (f.name || '文件') + '…')
-      const att = await uploadAttachment(f)
+      const att = await uploadFile(f, { kind: 'file', workFile: toComposer ? '' : workPath })
       if (!att) continue
-      // 同 addImageFiles：底栏 = 只进附件胶囊行（不插正文，正文引用仅 @ 上传组显式选择时才写）；
-      // 编辑卡 = 只写正文链接（不串底栏胶囊）。
-      if (toComposer) { pendingFiles.push(att); renderImgPills() }
-      else insertAttachmentMarkdown(tgtEd, att)
+      if (toComposer) {
+        pendingFiles.push({ name: att.name, rel: att.relativePath, abs: att.relativePath, size: att.size })
+        renderImgPills()
+      } else if (att.reference) {
+        insertUploadReference(tgtEd, att)
+      } else {
+        toast(att.fallback
+          ? '当前文件类型未配置正文上传槽位，已作为会话附件保存'
+          : '已作为会话附件保存（该槽位无正文引用）')
+      }
       toast('已上传 ' + att.name)
     }
     if (toComposer) syncGwSend()
@@ -16405,7 +16421,7 @@ function clipboardImageUrls(html) {
 }
 // 把同源图片 URL 拉回字节 → 合成 File → 复用 addImageFiles（编码/落盘/胶囊全链同路，
 // 不另起一套）。取不到的图静默跳过（降级为「少一张」而非整次粘贴失败）。
-async function addImageUrls(urls, target) {
+async function addImageUrls(urls, target, filePath) {
   const list = Array.from(urls || [])
   if (!list.length) return
   const files = []
@@ -16419,7 +16435,7 @@ async function addImageUrls(urls, target) {
       files.push(new File([b], 'clipboard.' + ext, { type: b.type }))
     } catch { /* 跳过取不到的图 */ }
   }
-  if (files.length) await addImageFiles(files, target)
+  if (files.length) await addImageFiles(files, target, filePath)
 }
 
   async function gwSend() {
