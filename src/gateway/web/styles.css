@@ -986,43 +986,6 @@ body.kb-open #input-wrap { transition: none; }
   cursor: pointer; display: grid; place-items: center;
 }
 #img-pills .img-pill .img-x:hover { background: var(--ink-hover); }
-/* 文件胶囊（2026-09-12 三轮改版：抄 dsh AttachmentRail 附件卡形态）——64×64 方卡与图片缩略图
-   同轨等高，灰底薄描边（dsw interactive-bg-hover rgba(38,49,72,.06) / border-l2-thin rgba(0,0,0,.1)），
-   dshFile 图标+文件名居中两行截断；× 收进卡内右上 4px（dsh .remove 语义：hover 显形、
-   触屏 pointer:coarse 恒显）——替换一轮「白长条+角外黑圆」形态（黑圆真因：.img-x 定位/形状
-   规则全在 .img-pill 作用域，file-pill 的 × 只分到 background/color = 裸 button 黑块） */
-#img-pills .file-pill {
-  position: relative; flex: none;
-  width: 64px; height: 64px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 5px; padding: 6px 5px;
-  background: var(--hover-ink); border: 1px solid var(--hairline); border-radius: 12px;
-  box-sizing: border-box;
-}
-#img-pills .file-pill .fp-ico { flex: none; width: 20px; height: 20px; color: var(--ink-2); }
-#img-pills .file-pill .fp-ico svg { width: 100%; height: 100%; display: block; }
-#img-pills .file-pill .fp-name {
-  max-width: 100%; font-size: 10px; line-height: 1.25; color: var(--text-2);
-  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  word-break: break-all; text-align: center;
-}
-#img-pills .file-pill .img-x {
-  position: absolute; top: 4px; right: 4px;
-  width: 18px; height: 18px;
-  border: none; border-radius: 999px;
-  background: var(--ink-2); color: var(--bg);
-  font-size: 12px; line-height: 18px; padding: 0;
-  cursor: pointer; display: grid; place-items: center;
-  opacity: 0; transition: opacity 0.2s ease-in-out;
-}
-#img-pills .file-pill:hover .img-x,
-#img-pills .file-pill .img-x:focus-visible { opacity: 1; }
-@media (pointer: coarse) {
-  #img-pills .file-pill .img-x { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  #img-pills .file-pill .img-x { transition: none; }
-}
 /* 2026-09-06 拖拽上传浮层：全屏提示「松开以添加图片」。display:none 默认态 +
    :not([hidden]) 才 flex（同 #img-pills 写法，防作者 display 覆盖 UA [hidden]）；
    pointer-events:none 拖拽事件穿透到 document，计数不被浮层自身干扰 */
@@ -1143,75 +1106,53 @@ body.kb-open #input-wrap { transition: none; }
 /* 输入栏内的 @ chip（contenteditable 内联，整体可删除，尾随一个空格）
    2026-10-09 用户定案：去灰色胶囊底、蓝字、字号随输入文本（inherit = #input-bar 16px），图标同蓝同尺寸 */
 .mention {
-  /* 基线对齐（2026-10-22）：vertical-align:middle 对 CJK 正文会整体下沉 2~3px（用户实测「引用文本和正文上下没对齐」）。
-     inline-flex 的基线默认取首个 flex 项，而首项是图标（无文本基线）⇒ 改 align-items:baseline + 图标 align-self:center，
-     容器基线就落在 .m-nm 文本基线上，与周围正文同基线；padding 上下归 0（否则文本再被下推 padding-top）。 */
-  display: inline-flex; align-items: baseline; gap: 4px; vertical-align: baseline;
-  background: transparent; border-radius: 999px; padding: 0 4px 0 2px;
-  font-size: inherit; line-height: inherit; color: var(--blue); white-space: nowrap;
+  /* 行内模型（与 dsh 链接同构）：chip 文本直接走段落文本流，字号/字体/基线/抗锯齿天然与正文一致。
+     用 inline-flex 自建格式化上下文时基线取自首个 flex 项（图标盒，无文本基线），整块相对正文下沉 1px。 */
+  display: inline; vertical-align: baseline;
+  /* 内衬取 dsh 原值：链接本体左右各 3px（负 margin 抵消，行文零位移）。 */
+  background: transparent; border-radius: 999px; padding: 0 3px; margin: 0 -3px;
+  font: inherit; color: var(--blue); white-space: nowrap;
   user-select: none; cursor: default;
 }
-/* 图标与文本同基线（2026-11-08）：原先 align-self:center 按 24px 行盒居中，图标盒底落在文本基线
-   下方约 3px（用户实报「行对齐还是有问题」）。改为 align-self:baseline ⇒ 图标盒底恰好坐在文本基线上，
-   与旁字同基线；盒宽高取 1em 随字号，svg 0.95em（文档页轮廓的视觉高 ≈ 中文字块）。 */
-.mention .m-ic {
-  width: 1em; height: 1em; border-radius: 50%; flex: none; align-self: baseline;
-  display: flex; align-items: center; justify-content: center;
-  /* font-size 必须随 chip 文本：盒宽高与 svg 均按 em 取，font-size:0 会把图标算成 0×0
-     （2026-11-08 用户实报「引用的目录前面加一个文件夹的 icon」——目录图标早已接，是尺寸被压没）。 */
-  color: var(--blue); font-size: inherit;
-}
-.mention .m-ic svg { width: .95em; height: .95em; }
-.mention .m-nm { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+/* chip 图标几何（尺寸 / 左右间距 / 行内对齐）唯一真源 = @floria/cm6 包 src/styles.js 的
+   --chip-icon-size / --chip-icon-gap / --chip-icon-valign，宿主不持有图标尺寸规则。 */
+/* 文件名与正文同一文本流，长名随段落自然换行（不再用 inline-flex + text-overflow 截断）。 */
+.mention .m-nm { max-width: none; }
 /* 2026-10-24 定案：引用件不再有 ×（删除统一走原子跳过 + 退格整块删）——.m-x 样式随之退役。 */
 /* 附件文件引用 chip（2026-10-22）：消息气泡内 `.mention-chip.m-att`、编辑器内 `.cm-att-file.mention`
    —— 形 = 类型徽标 + 文件名（与 @ 文件 chip 同族），文件名用正文字体（覆盖 .m-path 的等宽）。 */
-.mention-chip .mc-ic { display: inline-flex; align-items: center; flex: none; margin-right: 5px; }
-.mention-chip .mc-ic svg { width: 13px; height: 13px; display: block; }
-/* chip 内文件图标一律随 chip 蓝：`fileIcon()` 给 svg 挂内联类型色（xlsx/csv 绿、pdf 红、代码紫…），
-   chip 属正文/输入栏文本流，不按类型上色（用户定案「全部都是蓝色」）。内联 style 需 !important 覆盖。 */
-.mention-chip .mc-ic .file-ic,
-.mention .m-ic .file-ic { color: inherit !important; }
+/* 文件图标（`fileIcon()`，dsh 描线族）只用 currentColor，无内联类型色 ⇒ chip 内天然随 chip 蓝。 */
 .mention-chip.m-att { font-family: inherit; }
 
 /* 选中引用 chip（2026-09-28）：输入栏内 .mention.ref 与消息内 .mention-chip.m-ref 同族观感——
    文件图标 + 「引用自 <文件名>」（用户定案：第一个是文件 icon）。
-   2026-10-09 用户定案：同 .mention 走「隐藏胶囊」——去描边底、蓝字、图标同蓝同尺寸、字号随周边文本。
-   路径/会话名过长时内层 .mc-t 省略号收口（inline-flex 直挂文本无法 text-overflow）。 */
-.mention.ref { background: transparent; border: none; padding: 0 4px 0 2px; gap: 4px; color: var(--blue); }
-.mention.ref .m-ic { width: 16px; height: 16px; color: var(--blue); }
-.mention.ref .m-ic svg { width: 16px; height: 16px; }
-.mention.ref .m-nm { max-width: 220px; }
+   2026-10-09 用户定案：同 .mention 走「隐藏胶囊」——去描边底、蓝字、图标同蓝同尺寸、字号随周边文本。 */
+.mention.ref { background: transparent; border: none; padding: 0 4px 0 2px; color: var(--blue); }
+.mention.ref .m-nm { max-width: none; }
 /* 底栏引用原文（2026-10-24）：chip 内直接是引用的真实文本（蓝紫），与消息气泡 .m-quote 同口径。
    长引用随输入栏宽度换行（.mention 默认 nowrap/省略号只适合文件名类短标签）。 */
 .mention.ref.m-quote { white-space: normal; }
 .mention.ref.m-quote .m-nm {
-  max-width: none; white-space: pre-wrap; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 /* 2026-10-14 待办 21 根修：chip 族样式去 `.msg` 祖先绑定——mdHtml 渲染器有两个宿主（消息气泡
    .msg 与底栏 md 渲染层 #input-md），样式归渲染器所有而非消息层；绑死 .msg 时渲染层里的
    .mc-ic svg 无任何尺寸约束 → 默认 300×150 放大成巨型黑色星弧盖屏（用户截图实锤）。 */
 .mention-chip.m-ref {
   background: transparent; border: none; padding: 0; border-radius: 0;
-  font-size: inherit; line-height: inherit; color: var(--blue);
-  gap: 4px; max-width: min(100%, 320px);
-  align-items: baseline; vertical-align: baseline;
+  font: inherit; color: var(--blue);
+  display: inline; vertical-align: baseline;
 }
-.mention-chip.m-ref .mc-ic { display: flex; align-items: center; flex: none; color: var(--blue); }
-.mention-chip.m-ref .mc-ic svg { width: 1em; height: 1em; }
-.mention-chip.m-ref .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mention-chip.m-ref .mc-t { display: inline; }
 /* 引用原文胶囊（2026-10-21 用户定案）：「图标 + 引用的真实文本」，蓝字，不再显示「引用自…」标签。
    原文原先落在 blockquote 里（margin 4px / padding 2px ⇒ 与正文上下错位、且与来源标签分两行）；
    现改为行内文本：display:inline（**不是** inline-flex）⇒ 基线天然与正文一致、长引用随气泡宽度换行；
    图标 inline-block 与首行文字同基线（vertical-align 微调），padding/margin 归零。 */
 .mention-chip.m-ref.m-quote {
   display: inline; vertical-align: baseline; padding: 0; margin: 0;
-  max-width: none; white-space: normal;
+  white-space: normal;
 }
-.mention-chip.m-ref.m-quote .mc-ic { display: inline-block; vertical-align: -0.12em; margin-right: .3em; }
-.mention-chip.m-ref.m-quote .mc-t {
-  display: inline; overflow: visible; text-overflow: clip; white-space: pre-wrap; overflow-wrap: anywhere;
-}
+.mention-chip.m-ref.m-quote .mc-t { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* 引用胶囊可点击跳转（回复 → chat 卡片 scroll{line}；文件 → work 卡片 scroll{path,line}，仅 work 模式）。
    可点性给一条 hover 下划线，不另加按钮/图标。 */
 .mention-chip[data-qjump],
@@ -1232,40 +1173,29 @@ body.kb-open #input-wrap { transition: none; }
   padding: 0 9px; font-size: 12.5px; line-height: 1.7; color: var(--text);
   white-space: nowrap; max-width: 100%;
 }
-/* 目录 / 文件 chip（@ 路径可长）：内层 .mc-t 承担省略号（inline-flex 直挂文本无法 text-overflow） */
+/* 目录 / 文件 chip（@ 路径可长）：与正文同一文本流，长名随气泡宽自然换行，不做截断 */
 /* 会话 chip（2026-10-24）：消息气泡侧与输入栏 `.mention` 同观感——会话图标 + 蓝字、无边框胶囊。
    发送前后形态一致（此前气泡侧只有裸文本 ⇒ 实报「icon 和蓝色字体都缺失」）。 */
 .mention-chip.m-session {
-  background: transparent; border: none; padding: 0;
-  font-size: inherit; line-height: inherit;
-  color: var(--blue); gap: 4px; max-width: min(100%, 320px);
-  align-items: baseline; vertical-align: baseline;
+  background: transparent; border: none; padding: 0 3px; margin: 0 -3px;
+  font: inherit; color: var(--blue);
+  display: inline; vertical-align: baseline;
+  white-space: normal; overflow-wrap: anywhere;
 }
-.mention-chip.m-session .mc-ic { color: var(--blue); }
-.mention-chip.m-session .mc-ic svg { width: .95em; height: .95em; }
-.mention-chip.m-session .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mention-chip.m-session .mc-t { display: inline; }
 /* 路径 / 插件 chip 同步（2026-10-24）：与底栏 `.mention` 完全同口径 = 图标 + 蓝字、无边框、
    字号随正文（此前气泡侧是等宽灰字裸文本，发送前后 UI 不一致）。 */
 .mention-chip.m-path,
 .mention-chip.m-plugin {
-  background: transparent; border: none; padding: 0;
-  font-family: inherit; font-size: inherit; line-height: inherit;
-  color: var(--blue); gap: 4px; max-width: min(100%, 320px);
-  /* 图标与正文同基线（同 .mention 底栏口径）：容器与图标都按 baseline 排，图标盒底坐文本基线 */
-  align-items: baseline; vertical-align: baseline;
+  background: transparent; border: none; padding: 0 3px; margin: 0 -3px;
+  font: inherit;
+  color: var(--blue);
+  /* 行内模型（同 .mention）：chip 文本走段落文本流，字号/基线由正文决定 */
+  display: inline; vertical-align: baseline;
+  white-space: normal; overflow-wrap: anywhere;
 }
-.mention-chip.m-path .mc-ic,
-.mention-chip.m-plugin .mc-ic { color: var(--blue); }
-/* 间距单一来源：这几族 chip 用 gap:4px 排版，.mc-ic 的基础 margin-right:5px 会叠加成 9px
-   （图标与文件名之间空出一大截）；m-att 无 gap，仍由基础 margin-right 供间距。 */
-.mention-chip.m-path .mc-ic,
-.mention-chip.m-plugin .mc-ic,
-.mention-chip.m-ref .mc-ic,
-.mention-chip.m-session .mc-ic { margin-right: 0; }
-.mention-chip.m-path .mc-ic svg,
-.mention-chip.m-plugin .mc-ic svg { width: .95em; height: .95em; }
 .mention-chip.m-path .mc-t,
-.mention-chip.m-plugin .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mention-chip.m-plugin .mc-t { display: inline; }
 
 /* chip 悬停选中态与「在资源管理器中打开」按钮归 @floria/cm6 包（产物 floria-cm6.iife.js 注入
    #floria-cm6-style），宿主此处不再持有。 */

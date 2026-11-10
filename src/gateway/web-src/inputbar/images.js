@@ -3,15 +3,17 @@
 // 命名（时间戳 / -1/-2）与引用语法全在网关，本前端**不判扩展名、不拼目录、不拼引用**：
 //   ① 上传 → ② response.reference 非空则插正文 → ③ scope=session 进附件胶囊行（待发）。
 // **正文引用落点按 target 分**：
-//   · 底栏 composer：只进附件胶囊行（`#img-pills`），不自动往输入框正文插引用——胶囊即待发表达。
+//   · 底栏 composer：图片进附件胶囊行（`#img-pills`，视觉上行必须有缩略图回显）；文件**不进胶囊**，
+//     直接以路径引用令牌（`[@文件:路径]`）插进输入框正文——文件在正文里就是一枚可点 chip。
 //   · work 编辑卡：插正文引用（图片 `![名](file-cache/…)` 行内直渲 editor-attachments、文件同链）——
 //     编辑卡是文档面，正文引用即内容；该文件类型没有文档槽位时网关回落 session 并带 fallback 标记。
 //   · @ 浮窗「上传」组：把本次已上传附件插回正文（mention.js 消费 uploadedMentionItems）——正文引用此路可达。
 // 发送链不变量原样保留：pendingImages/pendingFiles 仍是发送链内部态（send.js 消费：[Image #N] 占位 +
 // images base64 视觉上行 / [文件:占位] 相对化上行），与正文是否插引用无关。
 import { toast, esc } from '../core/util.js'
-import { I, fileIcon } from '../core/icons.js'
 import { syncGwSend } from './send.js'
+import { mentionPathToken } from '../core/mention-syntax.js'
+import { composerAppendToken } from './composer-cm.js'
 /* @module inputbar/images.js */
   // ---------- 视觉上行内部态 ----------
   // pendingImages: {content(base64 无前缀), mediaType, filename, dataUrl, attName?, attRel?}。发送时文本拼
@@ -24,21 +26,19 @@ import { syncGwSend } from './send.js'
     syncGwSend()
   }
   // pendingFiles: {name, rel, abs, size}（落盘文件）。发送时文本拼 [文件:<路径>] 占位随消息上行
-  // （CLI 端即普通文本，模型按路径 Read）；正文里的 `[名](file-cache/…)` 链接是同一次上传的引用表达。
+  // （CLI 端即普通文本，模型按路径 Read）。
   let pendingFiles = []
   function clearPendingFiles() {
     pendingFiles = []
-    renderImgPills()
     syncGwSend()
   }
-  // ---------- 附件胶囊行（#img-pills）：pending* 的可见回显（待办 6 还原）----------
-  // 图片缩略图 + 文件卡同轨（CSS 见 styles.css #img-pills），× 从 pending* 数组摘除并重渲。
+  // ---------- 附件胶囊行（#img-pills）：待发图片的可见回显（待办 6 还原）----------
+  // 只有图片缩略图（文件走正文引用 chip，不再出文件卡），× 从 pendingImages 摘除并重渲。
   // 一次绑定（dataset.bound）防重复挂监听；元素可能随后才入 DOM，故 renderImgPills 每次调用都补绑。
   function onPillRemove(e) {
     const b = e.target && e.target.closest ? e.target.closest('.img-x') : null
     if (!b) return
     if (b.dataset.i != null && b.dataset.i !== '') pendingImages.splice(+b.dataset.i, 1)
-    else if (b.dataset.f != null && b.dataset.f !== '') pendingFiles.splice(+b.dataset.f, 1)
     renderImgPills()
     syncGwSend()
   }
@@ -46,19 +46,15 @@ import { syncGwSend } from './send.js'
     const box = $('img-pills')
     if (!box) return
     if (box.dataset.bound !== '1') { box.dataset.bound = '1'; box.addEventListener('click', onPillRemove) }
-    if (!pendingImages.length && !pendingFiles.length) {
+    if (!pendingImages.length) {
       box.hidden = true
       box.textContent = ''
       return
     }
     box.hidden = false
-    box.innerHTML =
-      pendingImages
-        .map((p, i) => `<span class="img-pill"><img src="${p.dataUrl}" alt="${esc(p.filename)}"/><button class="img-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`)
-        .join('') +
-      pendingFiles
-        .map((f, i) => `<span class="file-pill" title="${esc(f.abs)}"><span class="fp-ico">${fileIcon(f.name)}</span><span class="fp-name">${esc(f.name)}</span><button class="img-x" data-f="${i}" type="button" aria-label="移除">×</button></span>`)
-        .join('')
+    box.innerHTML = pendingImages
+      .map((p, i) => `<span class="img-pill"><img src="${p.dataUrl}" alt="${esc(p.filename)}"/><button class="img-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`)
+      .join('')
   }
   // @ 浮窗「上传」组的数据源（mention.js / commands.js 消费）：本次上传、可被正文引用的附件。
   // 形态 = {kind:'attref', attKind:'img'|'file', name, md}——md 即选中后写回 doc 的正文引用原文
@@ -135,7 +131,7 @@ import { syncGwSend } from './send.js'
     }
     if (toComposer) syncGwSend()
   }
-  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传 → 底栏入 pendingFiles（发送侧 [文件:占位] 自动相对化）；
+  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传 → 底栏把路径引用 chip 插进正文（不再出文件胶囊）；
   // 编辑卡插网关返回的 reference（文档槽位没有该类型时回落 session 并 toast）。
   async function addUploadFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
@@ -146,8 +142,8 @@ import { syncGwSend } from './send.js'
       const att = await uploadFile(f, { kind: 'file', workFile: toComposer ? '' : workPath })
       if (!att) continue
       if (toComposer) {
-        pendingFiles.push({ name: att.name, rel: att.relativePath, abs: att.relativePath, size: att.size })
-        renderImgPills()
+        // 底栏文件 = 正文里的一枚路径引用 chip（可点跳转、可右键），上传本身与落盘不变。
+        composerAppendToken(mentionPathToken(att.relativePath, 'file'))
       } else if (att.reference) {
         insertUploadReference(tgtEd, att)
       } else {

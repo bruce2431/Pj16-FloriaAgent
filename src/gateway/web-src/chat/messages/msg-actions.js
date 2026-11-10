@@ -5,7 +5,9 @@ import { esc, toast } from '../../core/util.js'
 import { messagesEl, live, state } from '../../engine/state.js'
 import { findSession } from '../../engine/sessions.js'
 import { quoteBodiesAsMarkdown } from '../../inputbar/mention.js'
-import { activateMention, activateMentionReveal, mentionTargetFromChip } from '../../feature/mention-nav.js'
+import { composerAppendToken, composerFocus } from '../../inputbar/composer-cm.js'
+import { mentionPathToken, unescapeMentionPath } from '../../core/mention-syntax.js'
+import { activateMention, mentionAbsolutePath, mentionTargetFromChip, revealMentionPath } from '../../feature/mention-nav.js'
 import { ICON_COPY, writeClipboard } from './usage.js'
 /* @module chat/messages/msg-actions.js */
   // 消息复制（2026-10-09 定案：复制「原始 markdown 源码」，非渲染文本）：data-md 的生产与消费同处
@@ -44,14 +46,6 @@ import { ICON_COPY, writeClipboard } from './usage.js'
   document.addEventListener('click', (e) => {
     const chip = e.target && e.target.closest ? e.target.closest('.mention-chip') : null
     if (!chip || !messagesEl.contains(chip)) return
-    // 文件 chip 行尾「在资源管理器中打开」按钮（先于整枚 chip 的跳转判定）：只开目录，不改路由。
-    const act = e.target.closest('[data-mreveal]')
-    if (act) {
-      e.preventDefault()
-      e.stopPropagation()
-      activateMentionReveal(act.dataset.mreveal)
-      return
-    }
     if (!chip.dataset.qjump && !chip.dataset.mjump) return
     // 拖选文本的收尾 click 落在 chip 上不算「点链接」——用户是在选字，不是在跳转
     const sel = window.getSelection()
@@ -62,6 +56,68 @@ import { ICON_COPY, writeClipboard } from './usage.js'
     e.stopPropagation()
     activateMention(target)
   })
+
+  // 路径 chip 右键菜单（2026-11-10）：悬停按钮撤掉，改右键浮窗三项。
+  // 落点全部复用既有链路——打开 = /gateway/file/reveal（同 work 文件树）、复制 = 剪贴板绝对路径、
+  // 使用 AI 编辑 = 与选区引用同一语义（只把引用塞进输入栏、不发送，光标落在引用后）。
+  let chipMenu = null
+  function closeChipMenu() {
+    if (chipMenu) { chipMenu.remove(); chipMenu = null }
+  }
+  const CHIP_MENU_ITEMS = [
+    { a: 'reveal', label: '在系统资源管理器中打开' },
+    { a: 'copy', label: '复制文件路径' },
+    { a: 'ai', label: '使用 AI 编辑' },
+  ]
+  function chipMenuPick(a, raw, ptype) {
+    if (a === 'reveal') {
+      revealMentionPath(raw).catch((e) => toast((e && e.message) || String(e)))
+      return
+    }
+    if (a === 'copy') {
+      let abs = ''
+      try { abs = mentionAbsolutePath(raw) } catch (e) { toast((e && e.message) || String(e)); return }
+      writeClipboard(abs).then((ok) => toast(ok ? '已复制路径' : '复制失败'))
+      return
+    }
+    // raw 是已转义的令牌原文：先还原再走唯一的令牌序列化口，避免二次转义
+    composerAppendToken(mentionPathToken(unescapeMentionPath(raw), ptype))
+    composerFocus()
+  }
+  function openChipMenu(chip, x, y) {
+    closeChipMenu()
+    const raw = chip.dataset.mname || ''
+    const ptype = chip.dataset.mptype === 'dir' ? 'dir' : 'file'
+    const pop = document.createElement('div')
+    pop.className = 'row-menu-pop'
+    pop.innerHTML = CHIP_MENU_ITEMS.map((it) => `<button type="button" class="rm-item" data-a="${it.a}">${esc(it.label)}</button>`).join('')
+    document.body.appendChild(pop)
+    const w = pop.offsetWidth
+    const h = pop.offsetHeight
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+    pop.style.left = Math.round(Math.max(8, Math.min(x, window.innerWidth - w - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(y, viewBottom - h - 8))) + 'px'
+    pop.addEventListener('mousedown', (e) => e.stopPropagation())
+    pop.addEventListener('click', (e) => {
+      const b = e.target.closest('.rm-item')
+      if (!b) return
+      e.stopPropagation()
+      closeChipMenu()
+      chipMenuPick(b.dataset.a, raw, ptype)
+    })
+    pop.addEventListener('contextmenu', (e) => e.preventDefault())
+    chipMenu = pop
+  }
+  document.addEventListener('contextmenu', (e) => {
+    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip[data-mjump="path"]') : null
+    if (!chip || !messagesEl.contains(chip)) return
+    e.preventDefault()
+    openChipMenu(chip, e.clientX, e.clientY)
+  })
+  document.addEventListener('mousedown', (e) => { if (chipMenu && !chipMenu.contains(e.target)) closeChipMenu() })
+  window.addEventListener('scroll', () => closeChipMenu(), { passive: true, capture: true })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChipMenu() })
 
   // 围栏代码块头栏按钮（2026-10-10；同 msg-copy 的委托+反馈模式）：复制 = 读本块 pre>code.textContent
   // （高亮只包 hljs-* span、不改文本，textContent 即原始代码）；换行 = toggleCodeWrap（全页现有块同步 + 持久化）。

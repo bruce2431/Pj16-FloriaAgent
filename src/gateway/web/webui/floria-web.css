@@ -143,16 +143,6 @@ html[data-theme="dark"] {
 ::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
 
-/* 文件 chip 行尾「在资源管理器中打开」按钮（chip 由 @floria/cm6 产出，按钮几何属通用 UI）：
-   图标随文字流，悬停才浮现；触屏常显半透明。 */
-.mention-chip .mc-act {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 1em; height: 1em; margin-left: 4px; color: inherit; cursor: pointer; opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.mention-chip .mc-act svg { width: 1em; height: 1em; }
-.mention-chip:hover .mc-act { opacity: 1; }
-@media (hover: none) { .mention-chip .mc-act { opacity: .75; } }
 
 
 /* 管理页通用 UI（mgr.js 的结构样式）：列表页壳 / 分段切换 / 搜索 / 分类 / 卡片网格 /

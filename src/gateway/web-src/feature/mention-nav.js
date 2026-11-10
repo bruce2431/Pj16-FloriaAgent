@@ -86,6 +86,17 @@ import { setSbMode } from '../sidebar/work.js'
     return { project: cur, rel: full }
   }
 
+  // chip 的绝对路径（右键「复制文件路径」）：工作区根 + 项目 label + 项目内相对路径。
+  // 分隔符跟随工作区根（Windows 根 → `\`），与用户在日常路径栏里复制到的形态一致。
+  function mentionAbsolutePath(raw) {
+    const r = resolveMentionPath(raw)
+    const ws = String(state.workspace || '').replace(/[\\/]+$/, '')
+    if (!ws) throw new Error('缺少工作区根')
+    const sep = ws.includes('\\') ? '\\' : '/'
+    const rel = r.rel.replace(/[\\/]+/g, sep)
+    return ws + sep + r.project + (rel ? sep + rel : '')
+  }
+
   // 切到 work 模式并选中目标项目（树/预览等补拉由 selectProject 自己完成；同项目时保持现状）。
   async function ensureMentionWork(project) {
     if (!project) throw new Error('无法确定目标项目')
@@ -162,10 +173,6 @@ import { setSbMode } from '../sidebar/work.js'
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok || !data.ok) throw new Error((data && data.error) || '打开失败')
-  }
-
-  async function activateMentionReveal(raw) {
-    try { await revealMentionPath(raw) } catch (e) { toast((e && e.message) || String(e)) }
   }
 
   async function activateMention(target) {

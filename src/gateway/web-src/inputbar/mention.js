@@ -3,8 +3,8 @@
 // 已切出；本件只留 @ 的生命周期（锚点/查询词/落地）与 chip 构造/序列化。
 
 import { GATEWAY, gateAwait } from '../engine/gateway.js'
-import { I } from '../core/icons.js'
-import { MENTION_FILE_ICON, MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
+import { I, fileIcon } from '../core/icons.js'
+import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
 import { sessionCwd } from '../engine/sessions.js'
 import { state } from '../engine/state.js'
 import { esc } from '../core/util.js'
@@ -26,9 +26,10 @@ import { pickEnter } from './toolbar/pick.js'
   // plus = 由「+」按钮唤起（锚点处没有 '@' 字符）；@ 唤起时 plus=false，查询区间含前导 '@'。
   let mention = { open: false, plus: false, anchor: 0, q: '', items: [], sel: 0 }
 
-  function mentionChipIcon(kind, ptype) {
+  // 文件按扩展名取图标（与消息区 mentionChipHtml / 附件 chip 同一判据），目录用文件夹；未知文件名回落到通用文件图标。
+  function mentionChipIcon(kind, ptype, name) {
     if (kind === 'session') return MENTION_SESSION_ICON
-    if (kind === 'path' || kind === 'filepick' || kind === 'imgpick') return ptype === 'dir' ? MENTION_DIR_ICON : MENTION_FILE_ICON
+    if (kind === 'path') return ptype === 'dir' ? MENTION_DIR_ICON : fileIcon(name || '')
     if (kind === 'skill') return MENTION_SKILL_ICON
     return MENTION_PLUGIN_ICON
   }
@@ -39,7 +40,7 @@ import { pickEnter } from './toolbar/pick.js'
     const full = kind === 'path' ? unescapeMentionPath(name) : name
     const base = kind === 'path' ? String(full).split('/').pop() : full
     const title = kind === 'path' && base !== full ? ` title="${esc(full)}"` : ''
-    return `<span class="m-ic">${mentionChipIcon(kind, ptype)}</span><span class="m-nm"${title}>${esc(base)}</span>`
+    return `<span class="m-ic">${mentionChipIcon(kind, ptype, full)}</span><span class="m-nm"${title}>${esc(base)}</span>`
   }
   function buildMentionChip(kind, name, sid, ptype) {
     const chip = document.createElement('span')

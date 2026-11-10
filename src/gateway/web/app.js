@@ -10,14 +10,15 @@
 
   const $ = (id) => document.getElementById(id)
 
-  // 2026-10-24 收口：图标表（I + fileIcon）整体移入 UI 基础包
+  // 2026-10-24 收口：产品图标表 I 移入 UI 基础包
   // `SubPj1-FloriaWebUI安装包开发/packages/web/src/icons.js`，产物 /webui/floria-web.iife.js 先于 app.js 同步加载并挂
   // window.FloriaWeb。缺包即抛错（不回落本地副本——回落会让两份图标表各自漂移）。
+  // 文件图标 fileIcon = dsh 链接图标族（code=`</>` / image / document / other），唯一手改处
+  // `SubPj4-CodeMirror6开发/src/icons/file-icons.js`，经 /cm6/floria-cm6.iife.js 挂 window.FloriaCM6。
   if (!window.FloriaWeb) throw new Error('@floria/web 包未加载（/webui/floria-web.iife.js 须先于 app.js）')
-  const {
-    I,
-    fileIcon,
-  } = window.FloriaWeb
+  if (!window.FloriaCM6) throw new Error('@floria/cm6 包未加载（/cm6/floria-cm6.iife.js 须先于 app.js）')
+  const { I } = window.FloriaWeb
+  const { fileIcon } = window.FloriaCM6
 
   // 页面壳 / 搜索 / 分类 / 卡片 / 动作位 / 详情头的结构与绑定在包内（mgr.js + mgr.css），
   // 业务侧只提供数据与回调。缺包即抛错（不回落本地副本）。
@@ -531,9 +532,9 @@ function setConnUp(v) { connUp = v }
       const icon = ptype === 'dir' ? I.dshFolder : fileIcon(full)
       // data-m* = 链接凭据（2026-11-08 单击跳转）：path/name 为令牌原文（name 已 esc），
       // 派发器 feature/mention-nav.js 据此解析项目与相对路径，不在渲染层做业务判断。
-      // data-mreveal = 「在资源管理器中打开」按钮（dsh 文件引用卡同形）：目录=直接打开该目录，
-      // 文件=打开所在目录并选中——落点仍是 `/gateway/file/reveal`，与 work 文件树同一链路。
-      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span><span class="mc-act" role="button" title="在资源管理器中打开" data-mreveal="${name}">${I.dshFolder}</span></span>`
+      // 右键（chat/messages/msg-actions.js）= 在资源管理器打开 / 复制文件路径 / 使用 AI 编辑，
+      // 不在 chip 内嵌悬停按钮（悬停图标会挤占文件名宽度且误触）。
+      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
     }
     if (kind === 'session') {
       const title = splitSessionToken(name).title
@@ -3139,14 +3140,6 @@ function setLastNavHash(v) { lastNavHash = v }
   document.addEventListener('click', (e) => {
     const chip = e.target && e.target.closest ? e.target.closest('.mention-chip') : null
     if (!chip || !messagesEl.contains(chip)) return
-    // 文件 chip 行尾「在资源管理器中打开」按钮（先于整枚 chip 的跳转判定）：只开目录，不改路由。
-    const act = e.target.closest('[data-mreveal]')
-    if (act) {
-      e.preventDefault()
-      e.stopPropagation()
-      activateMentionReveal(act.dataset.mreveal)
-      return
-    }
     if (!chip.dataset.qjump && !chip.dataset.mjump) return
     // 拖选文本的收尾 click 落在 chip 上不算「点链接」——用户是在选字，不是在跳转
     const sel = window.getSelection()
@@ -3157,6 +3150,68 @@ function setLastNavHash(v) { lastNavHash = v }
     e.stopPropagation()
     activateMention(target)
   })
+
+  // 路径 chip 右键菜单（2026-11-10）：悬停按钮撤掉，改右键浮窗三项。
+  // 落点全部复用既有链路——打开 = /gateway/file/reveal（同 work 文件树）、复制 = 剪贴板绝对路径、
+  // 使用 AI 编辑 = 与选区引用同一语义（只把引用塞进输入栏、不发送，光标落在引用后）。
+  let chipMenu = null
+  function closeChipMenu() {
+    if (chipMenu) { chipMenu.remove(); chipMenu = null }
+  }
+  const CHIP_MENU_ITEMS = [
+    { a: 'reveal', label: '在系统资源管理器中打开' },
+    { a: 'copy', label: '复制文件路径' },
+    { a: 'ai', label: '使用 AI 编辑' },
+  ]
+  function chipMenuPick(a, raw, ptype) {
+    if (a === 'reveal') {
+      revealMentionPath(raw).catch((e) => toast((e && e.message) || String(e)))
+      return
+    }
+    if (a === 'copy') {
+      let abs = ''
+      try { abs = mentionAbsolutePath(raw) } catch (e) { toast((e && e.message) || String(e)); return }
+      writeClipboard(abs).then((ok) => toast(ok ? '已复制路径' : '复制失败'))
+      return
+    }
+    // raw 是已转义的令牌原文：先还原再走唯一的令牌序列化口，避免二次转义
+    composerAppendToken(mentionPathToken(unescapeMentionPath(raw), ptype))
+    composerFocus()
+  }
+  function openChipMenu(chip, x, y) {
+    closeChipMenu()
+    const raw = chip.dataset.mname || ''
+    const ptype = chip.dataset.mptype === 'dir' ? 'dir' : 'file'
+    const pop = document.createElement('div')
+    pop.className = 'row-menu-pop'
+    pop.innerHTML = CHIP_MENU_ITEMS.map((it) => `<button type="button" class="rm-item" data-a="${it.a}">${esc(it.label)}</button>`).join('')
+    document.body.appendChild(pop)
+    const w = pop.offsetWidth
+    const h = pop.offsetHeight
+    const vv = window.visualViewport
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+    pop.style.left = Math.round(Math.max(8, Math.min(x, window.innerWidth - w - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(y, viewBottom - h - 8))) + 'px'
+    pop.addEventListener('mousedown', (e) => e.stopPropagation())
+    pop.addEventListener('click', (e) => {
+      const b = e.target.closest('.rm-item')
+      if (!b) return
+      e.stopPropagation()
+      closeChipMenu()
+      chipMenuPick(b.dataset.a, raw, ptype)
+    })
+    pop.addEventListener('contextmenu', (e) => e.preventDefault())
+    chipMenu = pop
+  }
+  document.addEventListener('contextmenu', (e) => {
+    const chip = e.target && e.target.closest ? e.target.closest('.mention-chip[data-mjump="path"]') : null
+    if (!chip || !messagesEl.contains(chip)) return
+    e.preventDefault()
+    openChipMenu(chip, e.clientX, e.clientY)
+  })
+  document.addEventListener('mousedown', (e) => { if (chipMenu && !chipMenu.contains(e.target)) closeChipMenu() })
+  window.addEventListener('scroll', () => closeChipMenu(), { passive: true, capture: true })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChipMenu() })
 
   // 围栏代码块头栏按钮（2026-10-10；同 msg-copy 的委托+反馈模式）：复制 = 读本块 pre>code.textContent
   // （高亮只包 hljs-* span、不改文本，textContent 即原始代码）；换行 = toggleCodeWrap（全页现有块同步 + 持久化）。
@@ -12955,6 +13010,17 @@ function wkMerge3(base, local, remote) {
     return { project: cur, rel: full }
   }
 
+  // chip 的绝对路径（右键「复制文件路径」）：工作区根 + 项目 label + 项目内相对路径。
+  // 分隔符跟随工作区根（Windows 根 → `\`），与用户在日常路径栏里复制到的形态一致。
+  function mentionAbsolutePath(raw) {
+    const r = resolveMentionPath(raw)
+    const ws = String(state.workspace || '').replace(/[\\/]+$/, '')
+    if (!ws) throw new Error('缺少工作区根')
+    const sep = ws.includes('\\') ? '\\' : '/'
+    const rel = r.rel.replace(/[\\/]+/g, sep)
+    return ws + sep + r.project + (rel ? sep + rel : '')
+  }
+
   // 切到 work 模式并选中目标项目（树/预览等补拉由 selectProject 自己完成；同项目时保持现状）。
   async function ensureMentionWork(project) {
     if (!project) throw new Error('无法确定目标项目')
@@ -13031,10 +13097,6 @@ function wkMerge3(base, local, remote) {
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok || !data.ok) throw new Error((data && data.error) || '打开失败')
-  }
-
-  async function activateMentionReveal(raw) {
-    try { await revealMentionPath(raw) } catch (e) { toast((e && e.message) || String(e)) }
   }
 
   async function activateMention(target) {
@@ -13854,9 +13916,10 @@ function wkMerge3(base, local, remote) {
   // plus = 由「+」按钮唤起（锚点处没有 '@' 字符）；@ 唤起时 plus=false，查询区间含前导 '@'。
   let mention = { open: false, plus: false, anchor: 0, q: '', items: [], sel: 0 }
 
-  function mentionChipIcon(kind, ptype) {
+  // 文件按扩展名取图标（与消息区 mentionChipHtml / 附件 chip 同一判据），目录用文件夹；未知文件名回落到通用文件图标。
+  function mentionChipIcon(kind, ptype, name) {
     if (kind === 'session') return MENTION_SESSION_ICON
-    if (kind === 'path' || kind === 'filepick' || kind === 'imgpick') return ptype === 'dir' ? MENTION_DIR_ICON : MENTION_FILE_ICON
+    if (kind === 'path') return ptype === 'dir' ? MENTION_DIR_ICON : fileIcon(name || '')
     if (kind === 'skill') return MENTION_SKILL_ICON
     return MENTION_PLUGIN_ICON
   }
@@ -13867,7 +13930,7 @@ function wkMerge3(base, local, remote) {
     const full = kind === 'path' ? unescapeMentionPath(name) : name
     const base = kind === 'path' ? String(full).split('/').pop() : full
     const title = kind === 'path' && base !== full ? ` title="${esc(full)}"` : ''
-    return `<span class="m-ic">${mentionChipIcon(kind, ptype)}</span><span class="m-nm"${title}>${esc(base)}</span>`
+    return `<span class="m-ic">${mentionChipIcon(kind, ptype, full)}</span><span class="m-nm"${title}>${esc(base)}</span>`
   }
   function buildMentionChip(kind, name, sid, ptype) {
     const chip = document.createElement('span')
@@ -14854,7 +14917,7 @@ function setModelUserPicked(v) { modelUserPicked = v }
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype, it.path) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file', '') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
@@ -16362,21 +16425,19 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
     syncGwSend()
   }
   // pendingFiles: {name, rel, abs, size}（落盘文件）。发送时文本拼 [文件:<路径>] 占位随消息上行
-  // （CLI 端即普通文本，模型按路径 Read）；正文里的 `[名](file-cache/…)` 链接是同一次上传的引用表达。
+  // （CLI 端即普通文本，模型按路径 Read）。
   let pendingFiles = []
   function clearPendingFiles() {
     pendingFiles = []
-    renderImgPills()
     syncGwSend()
   }
-  // ---------- 附件胶囊行（#img-pills）：pending* 的可见回显（待办 6 还原）----------
-  // 图片缩略图 + 文件卡同轨（CSS 见 styles.css #img-pills），× 从 pending* 数组摘除并重渲。
+  // ---------- 附件胶囊行（#img-pills）：待发图片的可见回显（待办 6 还原）----------
+  // 只有图片缩略图（文件走正文引用 chip，不再出文件卡），× 从 pendingImages 摘除并重渲。
   // 一次绑定（dataset.bound）防重复挂监听；元素可能随后才入 DOM，故 renderImgPills 每次调用都补绑。
   function onPillRemove(e) {
     const b = e.target && e.target.closest ? e.target.closest('.img-x') : null
     if (!b) return
     if (b.dataset.i != null && b.dataset.i !== '') pendingImages.splice(+b.dataset.i, 1)
-    else if (b.dataset.f != null && b.dataset.f !== '') pendingFiles.splice(+b.dataset.f, 1)
     renderImgPills()
     syncGwSend()
   }
@@ -16384,19 +16445,15 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
     const box = $('img-pills')
     if (!box) return
     if (box.dataset.bound !== '1') { box.dataset.bound = '1'; box.addEventListener('click', onPillRemove) }
-    if (!pendingImages.length && !pendingFiles.length) {
+    if (!pendingImages.length) {
       box.hidden = true
       box.textContent = ''
       return
     }
     box.hidden = false
-    box.innerHTML =
-      pendingImages
-        .map((p, i) => `<span class="img-pill"><img src="${p.dataUrl}" alt="${esc(p.filename)}"/><button class="img-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`)
-        .join('') +
-      pendingFiles
-        .map((f, i) => `<span class="file-pill" title="${esc(f.abs)}"><span class="fp-ico">${fileIcon(f.name)}</span><span class="fp-name">${esc(f.name)}</span><button class="img-x" data-f="${i}" type="button" aria-label="移除">×</button></span>`)
-        .join('')
+    box.innerHTML = pendingImages
+      .map((p, i) => `<span class="img-pill"><img src="${p.dataUrl}" alt="${esc(p.filename)}"/><button class="img-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`)
+      .join('')
   }
   // @ 浮窗「上传」组的数据源（mention.js / commands.js 消费）：本次上传、可被正文引用的附件。
   // 形态 = {kind:'attref', attKind:'img'|'file', name, md}——md 即选中后写回 doc 的正文引用原文
@@ -16473,7 +16530,7 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
     }
     if (toComposer) syncGwSend()
   }
-  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传 → 底栏入 pendingFiles（发送侧 [文件:占位] 自动相对化）；
+  // 文件附件（+ 浮窗「上传文件」/粘贴）：上传 → 底栏把路径引用 chip 插进正文（不再出文件胶囊）；
   // 编辑卡插网关返回的 reference（文档槽位没有该类型时回落 session 并 toast）。
   async function addUploadFiles(files, target, filePath) {
     const tgtEd = target || 'composer'
@@ -16484,8 +16541,8 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
       const att = await uploadFile(f, { kind: 'file', workFile: toComposer ? '' : workPath })
       if (!att) continue
       if (toComposer) {
-        pendingFiles.push({ name: att.name, rel: att.relativePath, abs: att.relativePath, size: att.size })
-        renderImgPills()
+        // 底栏文件 = 正文里的一枚路径引用 chip（可点跳转、可右键），上传本身与落盘不变。
+        composerAppendToken(mentionPathToken(att.relativePath, 'file'))
       } else if (att.reference) {
         insertUploadReference(tgtEd, att)
       } else {
