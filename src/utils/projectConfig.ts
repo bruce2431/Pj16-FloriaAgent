@@ -15,6 +15,9 @@ import { getProjectRoot } from '../bootstrap/state.js'
  * reads/writes its own project's data. Pass `cwd`-independent — this is
  * project identity, not a per-cwd file operation.
  */
-export function getProjectRuntimeDir(subdir: string): string {
-  return join(getProjectRoot(), '.claude', subdir)
+export function getProjectRuntimeDir(
+  subdir: string,
+  projectRoot: string = getProjectRoot(),
+): string {
+  return join(projectRoot, '.claude', subdir)
 }

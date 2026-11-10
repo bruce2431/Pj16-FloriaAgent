@@ -5,7 +5,7 @@ import { esc, toast } from '../../core/util.js'
 import { messagesEl, live, state } from '../../engine/state.js'
 import { findSession } from '../../engine/sessions.js'
 import { quoteBodiesAsMarkdown } from '../../inputbar/mention.js'
-import { activateMention, mentionTargetFromChip } from '../../feature/mention-nav.js'
+import { activateMention, activateMentionReveal, mentionTargetFromChip } from '../../feature/mention-nav.js'
 import { ICON_COPY, writeClipboard } from './usage.js'
 /* @module chat/messages/msg-actions.js */
   // 消息复制（2026-10-09 定案：复制「原始 markdown 源码」，非渲染文本）：data-md 的生产与消费同处
@@ -44,6 +44,14 @@ import { ICON_COPY, writeClipboard } from './usage.js'
   document.addEventListener('click', (e) => {
     const chip = e.target && e.target.closest ? e.target.closest('.mention-chip') : null
     if (!chip || !messagesEl.contains(chip)) return
+    // 文件 chip 行尾「在资源管理器中打开」按钮（先于整枚 chip 的跳转判定）：只开目录，不改路由。
+    const act = e.target.closest('[data-mreveal]')
+    if (act) {
+      e.preventDefault()
+      e.stopPropagation()
+      activateMentionReveal(act.dataset.mreveal)
+      return
+    }
     if (!chip.dataset.qjump && !chip.dataset.mjump) return
     // 拖选文本的收尾 click 落在 chip 上不算「点链接」——用户是在选字，不是在跳转
     const sel = window.getSelection()

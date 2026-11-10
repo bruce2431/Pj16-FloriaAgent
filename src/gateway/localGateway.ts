@@ -30,7 +30,7 @@ import { networkInterfaces } from 'node:os'
 import { createSocket, type RemoteInfo } from 'node:dgram'
 import { createServer as netCreateServer, createConnection as netCreateConnection } from 'node:net'
 import { spawn, spawnSync } from 'node:child_process'
-import { dlopen, FFIType, ptr } from 'bun:ffi'
+import { dlopen, FFIType, JSCallback, ptr } from 'bun:ffi'
 import { WebSocketServer, WebSocket } from 'ws'
 import { getPortableRoot, getClaudeConfigHomeDir } from '../utils/envUtils.js'
 import {
@@ -39,6 +39,10 @@ import {
 } from '../utils/customizationToggle.js'
 import { FILE_CACHE_DIR, PENDING_FILE_DIR, getFileCacheDir } from '../utils/fileCache.js'
 import { getProjectRoot } from '../bootstrap/state.js'
+import {
+  recordFileModifier,
+  type FileModifierWriter,
+} from '../utils/fileModifierRegistry.js'
 import {
   extractJsonStringField,
   findLastCustomTitleCached,
@@ -97,6 +101,10 @@ const sockets = new Set<WebSocket>()
 // 2026-08-17 网关独立化：CLI 进程（非网关宿主）作为 WS 客户端连 /clients 注册自己的
 // sessionId。遥测端发消息时网关按 sessionId 路由转发给对应 CLI，由 CLI 注入其 REPL。
 const cliClients = new Map<string, WebSocket>()
+// 2026-11-10 安全卸载：/clients 的 cli-hello 上报的真实 CLI pid，按 sessionId 存全部会话
+// （此前只存 web spawn 在途/已入库的 webSessions）。eject 用它做「shutdown 后仍在」的树杀兜底——
+// 终端直开的会话不再依赖 sessionActivity 是否已上报过 pid。重连窗口内保留，会话失联确认时删。
+const cliPids = new Map<string, number>()
 // 2026-08-31 防双进程（遥测端同步异常根修）：/clients 注册时间戳（每会话最近一次）。
 // 普通 CLI 断连重连的 ~1s 窗口内 cliClients 暂 miss，此前 resume 链路直接 spawn → 与重连中的
 // 原进程形成同会话双进程（每秒互踢乒乓 + 双写 jsonl，永不自愈，2026-08-30 92bbd49b 实锤）。
@@ -1442,7 +1450,13 @@ export function renameProjectDir(
  * mtime 比对（浮点精确相等，来自读侧同一 stat），不等 → 409 conflict（外部已改，不静默覆盖）。
  * 抽成纯函数是要让探针能直测真实现（probe-file-tree-ops.ts）。
  */
-export function writeProjectFile(projRoot: string, rel: string, content: string, baseMtime?: number): FileWriteResult {
+export function writeProjectFile(
+  projRoot: string,
+  rel: string,
+  content: string,
+  baseMtime?: number,
+  attribution?: { writer?: FileModifierWriter; sid?: string },
+): FileWriteResult {
   const abs = resolveWithinRoot(projRoot, rel)
   if (!abs || abs === projRoot) return { ok: false, code: 403, error: 'forbidden' }
   if (typeof baseMtime !== 'number' || !Number.isFinite(baseMtime)) {
@@ -1460,6 +1474,13 @@ export function writeProjectFile(projRoot: string, rel: string, content: string,
     if (cur !== baseMtime) return { ok: false, code: 409, error: 'conflict' }
   }
   writeFileSync(abs, String(content ?? ''), 'utf8')
+  // 写成功后入册（403/404/409/写失败都不入册），供 CLI 撞车归因；projectRoot 必须显式传——
+  // 网关进程 cwd 不是目标项目，不能落到进程默认项目根。
+  recordFileModifier(abs, {
+    projectRoot: projRoot,
+    writer: attribution?.writer ?? 'session',
+    sid: attribution?.sid,
+  })
   return { ok: true, path: rel.replace(/\\/g, '/').replace(/^\/+/, ''), mtime: statSync(abs).mtimeMs }
 }
 
@@ -1850,17 +1871,22 @@ export function writeProjectComments(
 
 // 「在资源管理器中打开」并置顶（POST /gateway/file/reveal）。
 // 走 Windows Shell API `SHOpenFolderAndSelectItems`（与 Obsidian 的「在文件夹中显示」同一条路）：由 shell
-// 自己完成「打开 + 前置」，不启动新的 explorer.exe 进程、不需要 PowerShell 冷启动或抢前台权限，
-// 因此既没有 console 黑框，也没有此前 2~3s 的置顶延迟。
+// 自己完成「打开 + 定位」，不启动新的 explorer.exe 进程、没有 PowerShell 冷启动，因此打开即出窗。
+// **前置必须自己补**：网关是后台进程（没有前台窗口），shell 只会把窗口挂出来而不激活它（用户看到
+// 「开在最下层」）；而从后台进程直接 SetForegroundWindow 会被前台锁拒绝。这里用 AttachThreadInput
+// 附到当前前台窗口线程后再 SetForegroundWindow，末尾 SwitchToThisWindow 兜住仍被拒的情形。
 // 文件 → 传文件自身 PIDL + cidl=0（打开父目录并选中该文件）；目录 → 同调用（打开该目录）。
+type RevealWindow = { hwnd: bigint; title: string; visible: boolean }
 type RevealLibs = {
   parse: (w: Buffer, out: BigUint64Array) => number
   open: (pidl: bigint) => number
   free: (pidl: bigint) => void
+  windows: () => RevealWindow[]
+  foreground: (hwnd: bigint) => void
 }
 let revealLibs: RevealLibs | null = null
 
-/** 懒加载 shell32/ole32（仅 win32 调用；dlopen 失败只记日志，不影响其它端点）。 */
+/** 懒加载 shell32/ole32/user32（仅 win32 调用；dlopen 失败只记日志，不影响其它端点）。 */
 function revealLibsOf(): RevealLibs | null {
   if (revealLibs) return revealLibs
   try {
@@ -1872,12 +1898,65 @@ function revealLibsOf(): RevealLibs | null {
       CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
       CoTaskMemFree: { args: [FFIType.u64], returns: FFIType.void },
     })
+    const user32 = dlopen('user32.dll', {
+      EnumWindows: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
+      GetClassNameW: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+      GetWindowTextW: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+      IsWindowVisible: { args: [FFIType.u64], returns: FFIType.i32 },
+      IsIconic: { args: [FFIType.u64], returns: FFIType.i32 },
+      ShowWindow: { args: [FFIType.u64, FFIType.i32], returns: FFIType.i32 },
+      SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
+      BringWindowToTop: { args: [FFIType.u64], returns: FFIType.i32 },
+      GetForegroundWindow: { args: [], returns: FFIType.u64 },
+      GetWindowThreadProcessId: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+      AttachThreadInput: { args: [FFIType.u32, FFIType.u32, FFIType.i32], returns: FFIType.i32 },
+      SwitchToThisWindow: { args: [FFIType.u64, FFIType.i32], returns: FFIType.void },
+    })
+    // GetCurrentThreadId 在 kernel32（不在 user32），单独取。
+    const kernel32 = dlopen('kernel32.dll', {
+      GetCurrentThreadId: { args: [], returns: FFIType.u32 },
+    })
     // STA：SHOpenFolderAndSelectItems 要求调用线程已初始化 COM（已初始化时返回 S_FALSE/RPC_E_CHANGED_MODE 均可用）。
     ole32.symbols.CoInitializeEx(null, 0x2)
+    const u = user32.symbols
+    const windows = (): RevealWindow[] => {
+      const out: RevealWindow[] = []
+      const clsBuf = Buffer.alloc(64 * 2)
+      const titleBuf = Buffer.alloc(512 * 2)
+      const cb = new JSCallback((raw: bigint | number) => {
+        const hwnd = typeof raw === 'bigint' ? raw : BigInt(raw)
+        const n = u.GetClassNameW(hwnd, ptr(clsBuf), 64) as number
+        if (n > 0 && clsBuf.toString('utf16le', 0, n * 2) === 'CabinetWClass') {
+          const m = u.GetWindowTextW(hwnd, ptr(titleBuf), 512) as number
+          out.push({ hwnd, title: m > 0 ? titleBuf.toString('utf16le', 0, m * 2) : '', visible: (u.IsWindowVisible(hwnd) as number) !== 0 })
+        }
+        return 1
+      }, { args: [FFIType.u64, FFIType.u64], returns: FFIType.i32 })
+      try {
+        u.EnumWindows(cb.ptr, 0n)
+      } finally {
+        cb.close()
+      }
+      return out
+    }
+    const foreground = (hwnd: bigint): void => {
+      const fg = u.GetForegroundWindow() as bigint
+      const fgThread = fg ? (u.GetWindowThreadProcessId(fg, null) as number) : 0
+      const me = kernel32.symbols.GetCurrentThreadId() as number
+      const attached = fgThread !== 0 && fgThread !== me
+      if (attached) u.AttachThreadInput(me, fgThread, 1)
+      u.ShowWindow(hwnd, (u.IsIconic(hwnd) as number) !== 0 ? 9 /* SW_RESTORE */ : 5 /* SW_SHOW */)
+      u.BringWindowToTop(hwnd)
+      u.SetForegroundWindow(hwnd)
+      if (attached) u.AttachThreadInput(me, fgThread, 0)
+      if (String(u.GetForegroundWindow()) !== String(hwnd)) u.SwitchToThisWindow(hwnd, 1)
+    }
     revealLibs = {
       parse: (w, out) => shell32.symbols.SHParseDisplayName(ptr(w), null, ptr(out), 0, null),
       open: (pidl) => shell32.symbols.SHOpenFolderAndSelectItems(pidl, 0, 0n, 0),
       free: (pidl) => ole32.symbols.CoTaskMemFree(pidl),
+      windows,
+      foreground,
     }
     return revealLibs
   } catch (e) {
@@ -1886,10 +1965,13 @@ function revealLibsOf(): RevealLibs | null {
   }
 }
 
-/** 在系统资源管理器中定位并前置（仅 win32；调用方已判平台）。失败只记日志，不影响接口返回。 */
-function revealInExplorer(abs: string): void {
+/** 在系统资源管理器中定位并前置（仅 win32；调用方已判平台）。失败只记日志，不影响接口返回。
+ *  shell 会复用/新建一个 CabinetWClass 窗口；等它出现（最多 1.6s，异步轮询不阻塞事件循环）后
+ *  按「标题 == 文件夹名」或「新窗口/由隐藏转可见」认领，再强制置前。 */
+function revealInExplorer(abs: string, isDir: boolean): void {
   const libs = revealLibsOf()
   if (!libs) return
+  const before = new Map(libs.windows().map((w) => [String(w.hwnd), w.visible]))
   const wbuf = Buffer.from(abs + '\0', 'utf16le')
   const pidlOut = new BigUint64Array(1)
   const hrParse = libs.parse(wbuf, pidlOut)
@@ -1899,7 +1981,30 @@ function revealInExplorer(abs: string): void {
   }
   const hrOpen = libs.open(pidlOut[0])
   libs.free(pidlOut[0])
-  if (hrOpen !== 0) console.log(`[gateway] 资源管理器定位失败：SHOpenFolderAndSelectItems hr=${hrOpen}`)
+  if (hrOpen !== 0) {
+    console.log(`[gateway] 资源管理器定位失败：SHOpenFolderAndSelectItems hr=${hrOpen}`)
+    return
+  }
+  const folderName = isDir ? basename(abs) : basename(dirname(abs))
+  const deadline = Date.now() + 1600
+  const pick = (): RevealWindow | undefined => {
+    const wins = libs.windows()
+    const byTitle = wins.find((w) => w.title === folderName || w.title.startsWith(folderName + ' - '))
+    if (byTitle) return byTitle
+    return wins.find((w) => {
+      const prev = before.get(String(w.hwnd))
+      return prev === undefined || (!prev && w.visible)
+    })
+  }
+  const tick = (): void => {
+    const hit = pick()
+    if (hit) {
+      libs.foreground(hit.hwnd)
+      return
+    }
+    if (Date.now() < deadline) setTimeout(tick, 50)
+  }
+  setTimeout(tick, 30)
 }
 
 function findProjects(root: string): ProjectInfo[] {
@@ -3435,6 +3540,20 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     }, 50)
     return
   }
+  // 安全卸载（拔盘前全关）：停全部会话 + 全部卡片后端 + 网关自身。先回清单，再异步收尾。
+  if (req.method === 'POST' && url.pathname === '/gateway/eject') {
+    if (!process.argv.includes('--gateway')) {
+      sendJson(res, 409, { ok: false, error: 'eject 仅独立网关进程（--gateway）支持' })
+      return
+    }
+    const r = beginSafeEject()
+    if (!r) {
+      sendJson(res, 409, { ok: false, error: 'already ejecting' })
+      return
+    }
+    sendJson(res, 200, { ok: true, ejecting: true, sessions: r.sessions, backends: r.backends })
+    return
+  }
   if (req.method === 'GET' && url.pathname === '/gateway/sessions') {
     try {
       sendJson(res, 200, await listSessions(root))
@@ -4263,6 +4382,15 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         return
       }
       const wp = wBody as Record<string, unknown>
+      // 可选 web 会话 sid（归因用）：只做字符集/长度校验，非法 → 400 不静默丢弃。
+      let wsid: string | undefined
+      if (wp.sid !== undefined && wp.sid !== null && wp.sid !== '') {
+        if (typeof wp.sid !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(wp.sid)) {
+          sendJson(res, 400, { error: 'invalid sid' })
+          return
+        }
+        wsid = wp.sid
+      }
       const wProj = findProjects(root).find((g) => g.label === (typeof wp.label === 'string' ? wp.label : ''))
       if (!wProj) {
         sendJson(res, 404, { error: 'project not found' })
@@ -4273,6 +4401,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         typeof wp.path === 'string' ? wp.path : '',
         typeof wp.content === 'string' ? wp.content : '',
         typeof wp.baseMtime === 'number' ? wp.baseMtime : undefined,
+        { writer: 'web', sid: wsid },
       )
       if (!wOut.ok) sendJson(res, wOut.code, { error: wOut.error })
       else sendJson(res, 200, wOut)
@@ -4434,7 +4563,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       }
       const isDir = statSync(vAbs).isDirectory()
       console.log(`[gateway] 资源管理器定位 ${vProj.label} → ${vAbs}（${isDir ? '目录' : '文件'} · 请求到发起 ${Date.now() - tRevealIn}ms）`)
-      revealInExplorer(vAbs)
+      revealInExplorer(vAbs, isDir)
       sendJson(res, 200, { ok: true })
     } catch (e) {
       sendError(res, e)
@@ -5995,6 +6124,8 @@ function spawnWebSession(
    *  无投递时序问题。复用分支（活进程/近期注册痕迹）不消费模型：活进程已在跑，不注入切换。 */
   opts?: { model?: string },
 ): Promise<string> {
+  // 安全卸载已接受：拒绝任何新进程落在即将拔除的卷上（响应先于网关退出，此窗内不得再 spawn）
+  if (ejecting) return Promise.reject(new Error('网关正在安全卸载'))
   // 幂等：resume 的会话进程已在跑（前端切走再切回）→ 复用现有进程，不重复 spawn（双进程会双写同一 jsonl）
   // 2026-09-10 复用前验活：账面记录 ≠ 进程活性（死记录直接 resolve → 注入轮询 5s miss → 消息
   // 未注入丢失）。死记录清理后走正常 spawn；防双写不破——死进程不写盘，活进程重连窗口仍由
@@ -6158,6 +6289,88 @@ function stopWebSession(sessionId: string): boolean {
   persistWebSessions()
   gracefulStopCli(sessionId, p.pid)
   return true
+}
+
+// ============================================================================
+// 安全卸载（2026-11-10）：拔除外置盘前把卷上所有 Floria 进程一次收干净。
+// 与 /gateway/shutdown（/server off）的分工：后者按 2026-08-28/29 定案只停网关，会话窗口与卡片
+// 后端故意存活；eject 是显式的「全关」动词，顺序 = 请所有 CLI 优雅退出 → 超时树杀 → 停全部
+// 卡片后端 → 停 SSE watcher → 网关自身退出。不改变既有 /server off 语义。
+// 不变量：接受 eject 后不再 spawn 新会话/后端（ejecting 与 gatewayStopping 双门）。
+// ============================================================================
+let ejecting = false
+
+interface EjectTarget {
+  sessionId: string
+  pid?: number
+}
+
+function collectEjectSessions(): EjectTarget[] {
+  const sids = new Set<string>([...cliClients.keys(), ...webSessions.keys()])
+  return [...sids].map((sessionId) => ({
+    sessionId,
+    pid: webSessions.get(sessionId)?.pid ?? cliPids.get(sessionId) ?? sessionActivity.get(sessionId)?.pid,
+  }))
+}
+
+/** 返回快照；实际收尾异步执行（响应必须先发出，网关随后退出）。重复调用返回 null。 */
+function beginSafeEject(): { sessions: EjectTarget[]; backends: string[] } | null {
+  if (ejecting) return null
+  ejecting = true
+  gatewayStopping = true
+  const sessions = collectEjectSessions()
+  // 后端清单 = 本运行期 Map + 落盘注册表：注册表里可能有上一代网关遗留、本代尚未懒加载收养的存活进程
+  const registry = readBackendRegistry()
+  const backends = [...new Set([...backendProcesses.keys(), ...Object.keys(registry)])]
+  // 先请在线 CLI 自行退出（gatewayClient 收 shutdown → exit 0，WT 自动收 tab）
+  for (const sock of cliClients.values()) {
+    try {
+      sock.send(JSON.stringify({ type: 'shutdown' }))
+    } catch {
+      /* 断开忽略，走树杀兜底 */
+    }
+  }
+  void (async () => {
+    // 给优雅退出留时间（与单会话关闭的 3s 树杀窗口同量级，另加 1s 余量）
+    const deadline = Date.now() + 4000
+    while (Date.now() < deadline && cliClients.size > 0) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    // 仍在的进程逐个树杀；killTreeExcept 豁免网关自身（网关常是某个会话的子进程）
+    for (const t of sessions) {
+      if (!t.pid || !isPidAlive(t.pid)) continue
+      try {
+        killTreeExcept(t.pid, process.pid)
+      } catch (e) {
+        console.warn(`[gateway] eject: 会话 ${t.sessionId} 树杀失败: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    // 停全部卡片后端（含收养的 child=null 条目，killBackend 内部走 killTree）
+    for (const label of [...backendProcesses.keys()]) {
+      try {
+        killBackend(label)
+      } catch {
+        /* 单个失败不阻塞卸载 */
+      }
+    }
+    // 注册表里的进程未被本代收养（懒加载尚未触达）→ 按记录 pid 直接树杀，再清空注册表
+    for (const rec of Object.values(registry)) {
+      if (rec.pid > 0 && isPidAlive(rec.pid)) {
+        try {
+          killTree(rec.pid)
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+    persistBackendRegistry()
+    console.log(
+      `[gateway] 安全卸载完成：会话 ${sessions.length} 个、卡片后端 ${backends.length} 个已停，网关退出`,
+    )
+    stopLocalGateway()
+    process.exit(0)
+  })()
+  return { sessions, backends }
 }
 
 // 2026-09-10 账面活性判定（send 暂存分支 / spawn 幂等复用 / reclaim 三处共用一判）：
@@ -6510,6 +6723,7 @@ export function startLocalGateway(opts?: { host?: string; port?: number; token?:
             // 2026-09-07 wt 直并：真实 CLI pid 由 cli-hello 上报（wt.exe 中转即退，网关拿不到）。
             // spawn 在途（webSessions 尚无此 sid）→ 暂存，spawnWebSession 注册成功时取走填入；
             // 已入库 → 直接补填。普通 CLI 主进程（非 web spawn）不入暂存表。
+            if (typeof m.pid === 'number' && m.pid > 0) cliPids.set(sid, m.pid)
             if (typeof m.pid === 'number' && m.pid > 0 && (webSessions.has(sid) || spawningPromises.has(sid))) {
               const proc = webSessions.get(sid)
               if (proc && proc.pid !== m.pid) {
@@ -6789,6 +7003,7 @@ export function startLocalGateway(opts?: { host?: string; port?: number; token?:
               if (cliClients.has(sid)) return // 复核窗内重连：状态由重连重报恢复，静默
               turnBeatAt.delete(sid)
               sessionActivity.delete(sid)
+              cliPids.delete(sid)
               // 2026-10-02：进程失联确认 → 该会话未决审批/提问一并清（其唯一寿命来源=会话存活，
               // 非墙钟）。仍在线会话的待决项跨重连窗保留，见 pendingApprovals 注释。
               pendingApprovalsDropSession(sid)

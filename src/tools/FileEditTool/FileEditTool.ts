@@ -16,10 +16,23 @@ import { buildTool, type ToolDef } from '../../Tool.js'
 import { getCwd } from '../../utils/cwd.js'
 import { logForDebugging } from '../../utils/debug.js'
 import {
-  fileModifierSuffix,
+  findFileModifier,
   recordFileModifier,
 } from '../../utils/fileModifierRegistry.js'
-import { countLinesChanged, sumLinesChanged } from '../../utils/diff.js'
+import {
+  formatConcurrentChangeError,
+  formatConcurrentMergeNote,
+  hasUtf8Bom,
+  isCompleteReadSnapshot,
+  mergeTextWithPolicy,
+  readSnapshotMatchesDisk,
+} from '../../utils/concurrentWrite.js'
+import { wkLineDelta } from '../../utils/threeWayMerge.js'
+import {
+  countLinesChanged,
+  getPatchForDisplay,
+  sumLinesChanged,
+} from '../../utils/diff.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { isENOENT } from '../../utils/errors.js'
 import {
@@ -293,81 +306,62 @@ export const FileEditTool = buildTool({
       }
     }
 
-    // Check if file exists and get its last modified time
-    if (readTimestamp) {
-      const lastWriteTime = getFileModificationTime(fullFilePath)
-      if (lastWriteTime > readTimestamp.timestamp) {
-        // Timestamp indicates modification, but on Windows timestamps can change
-        // without content changes (cloud sync, antivirus, etc.). For full reads,
-        // compare content as a fallback to avoid false positives.
-        const isFullRead =
-          readTimestamp.offset === undefined &&
-          readTimestamp.limit === undefined
-        if (isFullRead && fileContent === readTimestamp.content) {
-          // Content unchanged, safe to proceed
-        } else {
-          const suffix = fileModifierSuffix(fullFilePath, readTimestamp.timestamp)
-          return {
-            result: false,
-            behavior: 'ask',
-            message: suffix
-              ? `File has been modified since read${suffix}. Read it again before attempting to write it.`
-              : 'File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.',
-            errorCode: 7,
-          }
+    const file = fileContent
+    const diskChanged = !readSnapshotMatchesDisk(readTimestamp.content, file)
+    const actualOldString = findActualString(file, old_string)
+
+    if (!diskChanged) {
+      // 磁盘与读快照一致：沿用原有的存在性/唯一性/设置文件校验。
+      if (!actualOldString) {
+        return {
+          result: false,
+          behavior: 'ask',
+          message: `String to replace not found in file.\nString: ${old_string}`,
+          meta: {
+            isFilePathAbsolute: String(isAbsolute(file_path)),
+          },
+          errorCode: 8,
         }
       }
-    }
 
-    const file = fileContent
+      const matches = file.split(actualOldString).length - 1
 
-    // Use findActualString to handle quote normalization
-    const actualOldString = findActualString(file, old_string)
-    if (!actualOldString) {
-      return {
-        result: false,
-        behavior: 'ask',
-        message: `String to replace not found in file.\nString: ${old_string}`,
-        meta: {
-          isFilePathAbsolute: String(isAbsolute(file_path)),
+      if (matches > 1 && !replace_all) {
+        return {
+          result: false,
+          behavior: 'ask',
+          message: `Found ${matches} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${old_string}`,
+          meta: {
+            isFilePathAbsolute: String(isAbsolute(file_path)),
+            actualOldString,
+          },
+          errorCode: 9,
+        }
+      }
+
+      // Additional validation for Claude settings files
+      const settingsValidationResult = validateInputForSettingsFileEdit(
+        fullFilePath,
+        file,
+        () => {
+          // Simulate the edit to get the final content using the exact same logic as the tool
+          return replace_all
+            ? file.replaceAll(actualOldString, new_string)
+            : file.replace(actualOldString, new_string)
         },
-        errorCode: 8,
+      )
+
+      if (settingsValidationResult !== null) {
+        return settingsValidationResult
       }
     }
 
-    const matches = file.split(actualOldString).length - 1
-
-    // Check if we have multiple matches but replace_all is false
-    if (matches > 1 && !replace_all) {
-      return {
-        result: false,
-        behavior: 'ask',
-        message: `Found ${matches} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${old_string}`,
-        meta: {
-          isFilePathAbsolute: String(isAbsolute(file_path)),
-          actualOldString,
-        },
-        errorCode: 9,
-      }
+    // 磁盘已被并发改动：old_string 可能被改掉或数量变化，这里不判死。
+    // call 先在当前磁盘上重放意图，不行再做三方合并；设置文件校验也在 call 内对最终内容重做。
+    return {
+      result: true,
+      meta: { actualOldString: actualOldString ?? old_string },
     }
-
-    // Additional validation for Claude settings files
-    const settingsValidationResult = validateInputForSettingsFileEdit(
-      fullFilePath,
-      file,
-      () => {
-        // Simulate the edit to get the final content using the exact same logic as the tool
-        return replace_all
-          ? file.replaceAll(actualOldString, new_string)
-          : file.replace(actualOldString, new_string)
-      },
-    )
-
-    if (settingsValidationResult !== null) {
-      return settingsValidationResult
-    }
-
-    return { result: true, meta: { actualOldString } }
   },
   inputsEquivalent(input1, input2) {
     return areFileEditsInputsEquivalent(
@@ -448,61 +442,135 @@ export const FileEditTool = buildTool({
       )
     }
 
-    // 2. Load current state and confirm no changes since last read
-    // Please avoid async operations between here and writing to disk to preserve atomicity
+    // 2. Load current state and compare against the read snapshot.
+    // 读盘→合并→写盘之间不插 await；外部进程仍可能在窗口内写入（残余竞态，见 docs/core.md）。
     const {
-      content: originalFileContents,
+      content: diskContent,
       fileExists,
       encoding,
       lineEndings: endings,
     } = readFileForEdit(absoluteFilePath)
 
-    if (fileExists) {
-      const lastWriteTime = getFileModificationTime(absoluteFilePath)
-      const lastRead = readFileState.get(absoluteFilePath)
-      if (!lastRead || lastWriteTime > lastRead.timestamp) {
-        // Timestamp indicates modification, but on Windows timestamps can change
-        // without content changes (cloud sync, antivirus, etc.). For full reads,
-        // compare content as a fallback to avoid false positives.
-        const isFullRead =
-          lastRead &&
-          lastRead.offset === undefined &&
-          lastRead.limit === undefined
-        const contentUnchanged =
-          isFullRead && originalFileContents === lastRead.content
-        if (!contentUnchanged) {
+    const lastRead = readFileState.get(absoluteFilePath)
+    const diskChanged =
+      fileExists &&
+      (!lastRead || !readSnapshotMatchesDisk(lastRead.content, diskContent))
+
+    let patch: ReturnType<typeof getPatchForEdit>['patch']
+    let finalContent: string
+    let concurrentNote: string | undefined
+
+    if (!diskChanged) {
+      // 3. Use findActualString to handle quote normalization
+      const actualOldString =
+        findActualString(diskContent, old_string) || old_string
+
+      // Preserve curly quotes in new_string when the file uses them
+      const actualNewString = preserveQuoteStyle(
+        old_string,
+        actualOldString,
+        new_string,
+      )
+
+      // 4. Generate patch
+      const result = getPatchForEdit({
+        filePath: absoluteFilePath,
+        fileContents: diskContent,
+        oldString: actualOldString,
+        newString: actualNewString,
+        replaceAll: replace_all,
+      })
+      patch = result.patch
+      finalContent = result.updatedFile
+    } else {
+      if (!lastRead) {
+        throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+      }
+      const modifier = findFileModifier(absoluteFilePath, lastRead.timestamp)
+
+      // 3a. 意图重放：改动位置在磁盘上仍可唯一确定 → 直接落到当前磁盘。
+      const replayed = replayEditOnDisk({
+        diskContent,
+        baseContent: lastRead.content,
+        oldString: old_string,
+        newString: new_string,
+        replaceAll: replace_all,
+      })
+      if (replayed) {
+        finalContent = replayed.text
+        concurrentNote = `replayed (${replayed.replacements} replacement${replayed.replacements === 1 ? '' : 's'})`
+      } else {
+        // 3b. 三方合并：base = 读快照，local = 意图应用到 base，remote = 当前磁盘。
+        if (!isCompleteReadSnapshot(lastRead)) {
           throw new Error(
-            FILE_UNEXPECTEDLY_MODIFIED_ERROR +
-              (lastRead
-                ? fileModifierSuffix(absoluteFilePath, lastRead.timestamp)
-                : ''),
+            formatConcurrentChangeError({ reason: 'no-merge-base', modifier }),
           )
         }
+        const baseOldString =
+          findActualString(lastRead.content, old_string) || old_string
+        const baseNewString = preserveQuoteStyle(
+          old_string,
+          baseOldString,
+          new_string,
+        )
+        const { updatedFile: local } = getPatchForEdit({
+          filePath: absoluteFilePath,
+          fileContents: lastRead.content,
+          oldString: baseOldString,
+          newString: baseNewString,
+          replaceAll: replace_all,
+        })
+        const merged = mergeTextWithPolicy({
+          base: lastRead.content,
+          local,
+          remote: diskContent,
+          encoding,
+        })
+        if (!merged.ok) {
+          throw new Error(
+            formatConcurrentChangeError({
+              reason: merged.reason,
+              modifier,
+              conflictLine:
+                merged.reason === 'conflict' ? merged.conflictLine : undefined,
+              remoteChanges:
+                merged.reason === 'conflict' ? merged.remoteChanges : undefined,
+            }),
+          )
+        }
+        // 合并结果按磁盘 BOM 还原；EOL 由 writeTextContent 按 endings 还原。
+        finalContent = (hasUtf8Bom(diskContent) ? '\uFEFF' : '') + merged.text
+        concurrentNote = formatConcurrentMergeNote({
+          modifier,
+          changes: wkLineDelta(lastRead.content, diskContent),
+        })
+      }
+
+      patch = getPatchForDisplay({
+        filePath: absoluteFilePath,
+        fileContents: diskContent,
+        edits: [
+          {
+            old_string: diskContent,
+            new_string: finalContent,
+            replace_all: false,
+          },
+        ],
+      })
+
+      // 合并/重放结果必须重新过 settings schema 校验（validateInput 校验的是磁盘原文上的模拟）。
+      const settingsValidationResult = validateInputForSettingsFileEdit(
+        absoluteFilePath,
+        diskContent,
+        () => finalContent,
+      )
+      if (settingsValidationResult !== null) {
+        throw new Error(settingsValidationResult.message)
       }
     }
 
-    // 3. Use findActualString to handle quote normalization
-    const actualOldString =
-      findActualString(originalFileContents, old_string) || old_string
-
-    // Preserve curly quotes in new_string when the file uses them
-    const actualNewString = preserveQuoteStyle(
-      old_string,
-      actualOldString,
-      new_string,
-    )
-
-    // 4. Generate patch
-    const { patch, updatedFile } = getPatchForEdit({
-      filePath: absoluteFilePath,
-      fileContents: originalFileContents,
-      oldString: actualOldString,
-      newString: actualNewString,
-      replaceAll: replace_all,
-    })
-
     // 5. Write to disk
-    writeTextContent(absoluteFilePath, updatedFile, encoding, endings)
+    writeTextContent(absoluteFilePath, finalContent, encoding, endings)
 
     // Notify LSP servers about file modification (didChange) and save (didSave)
     const lspManager = getLspServerManager()
@@ -511,7 +579,7 @@ export const FileEditTool = buildTool({
       clearDeliveredDiagnosticsForFile(`file://${absoluteFilePath}`)
       // didChange: Content has been modified
       lspManager
-        .changeFile(absoluteFilePath, updatedFile)
+        .changeFile(absoluteFilePath, finalContent)
         .catch((err: Error) => {
           logForDebugging(
             `LSP: Failed to notify server of file change for ${absoluteFilePath}: ${err.message}`,
@@ -528,14 +596,15 @@ export const FileEditTool = buildTool({
     }
 
     // Notify VSCode about the file change for diff view
-    notifyVscodeFileUpdated(absoluteFilePath, originalFileContents, updatedFile)
+    notifyVscodeFileUpdated(absoluteFilePath, diskContent, finalContent)
 
     // 6. Update read timestamp, to invalidate stale writes
     readFileState.set(absoluteFilePath, {
-      content: updatedFile,
+      content: finalContent,
       timestamp: getFileModificationTime(absoluteFilePath),
       offset: undefined,
       limit: undefined,
+      source: 'tool-write',
     })
     recordFileModifier(absoluteFilePath)
 
@@ -575,13 +644,14 @@ export const FileEditTool = buildTool({
     // 8. Yield result
     const data = {
       filePath: file_path,
-      oldString: actualOldString,
+      oldString: findActualString(diskContent, old_string) || old_string,
       newString: new_string,
-      originalFile: originalFileContents,
+      originalFile: diskContent,
       structuredPatch: patch,
       userModified: userModified ?? false,
       replaceAll: replace_all,
       ...(gitDiff && { gitDiff }),
+      ...(concurrentNote && { concurrentNote }),
     }
     return {
       data,
@@ -592,6 +662,9 @@ export const FileEditTool = buildTool({
     const modifiedNote = userModified
       ? '.  The user modified your proposed changes before accepting them. '
       : ''
+    const concurrentSuffix = data.concurrentNote
+      ? ` ${data.concurrentNote}.`
+      : ''
 
     // 真实增删行数（结构化 patch 统计），供遥测端「N 个文件已更改 +N -N」汇总卡片展示
     const { added, removed } = sumLinesChanged(structuredPatch)
@@ -601,14 +674,14 @@ export const FileEditTool = buildTool({
       return {
         tool_use_id: toolUseID,
         type: 'tool_result',
-        content: `The file ${filePath} has been updated${modifiedNote}. All occurrences were successfully replaced${changeSuffix}.`,
+        content: `The file ${filePath} has been updated${modifiedNote}. All occurrences were successfully replaced${changeSuffix}.${concurrentSuffix}`,
       }
     }
 
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
-      content: `The file ${filePath} has been updated successfully${modifiedNote}${changeSuffix}.`,
+      content: `The file ${filePath} has been updated successfully${modifiedNote}${changeSuffix}.${concurrentSuffix}`,
     }
   },
 } satisfies ToolDef<ReturnType<typeof inputSchema>, FileEditOutput>)
@@ -640,5 +713,52 @@ function readFileForEdit(absoluteFilePath: string): {
       }
     }
     throw e
+  }
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle === '') return 0
+  return haystack.split(needle).length - 1
+}
+
+/**
+ * 把「读快照上的意图」重放到当前磁盘。命中位置/数量无法唯一确定时返回 null，
+ * 交给三方合并处理。
+ * - 单次替换：磁盘命中必须恰为 1（沿用原唯一性约束）。
+ * - replace_all：磁盘命中数必须与 base 命中数一致，防止连带改掉用户新加的同名片段。
+ */
+function replayEditOnDisk(args: {
+  diskContent: string
+  baseContent: string
+  oldString: string
+  newString: string
+  replaceAll: boolean
+}): { text: string; replacements: number } | null {
+  const diskOld = findActualString(args.diskContent, args.oldString)
+  if (!diskOld) return null
+  const diskCount = countOccurrences(args.diskContent, diskOld)
+  if (diskCount === 0) return null
+
+  if (!args.replaceAll) {
+    if (diskCount !== 1) return null
+  } else {
+    const baseOld =
+      findActualString(args.baseContent, args.oldString) || args.oldString
+    const baseCount = countOccurrences(args.baseContent, baseOld)
+    if (baseCount === 0 || diskCount !== baseCount) return null
+  }
+
+  const diskNew = preserveQuoteStyle(
+    args.oldString,
+    diskOld,
+    args.newString,
+  )
+  const text = args.replaceAll
+    ? args.diskContent.split(diskOld).join(diskNew)
+    : args.diskContent.replace(diskOld, () => diskNew)
+  if (text === args.diskContent) return null
+  return {
+    text,
+    replacements: args.replaceAll ? diskCount : 1,
   }
 }

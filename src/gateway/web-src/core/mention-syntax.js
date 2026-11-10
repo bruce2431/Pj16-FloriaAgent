@@ -75,7 +75,9 @@ import { esc } from './util.js'
       const icon = ptype === 'dir' ? I.dshFolder : fileIcon(full)
       // data-m* = 链接凭据（2026-11-08 单击跳转）：path/name 为令牌原文（name 已 esc），
       // 派发器 feature/mention-nav.js 据此解析项目与相对路径，不在渲染层做业务判断。
-      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span></span>`
+      // data-mreveal = 「在资源管理器中打开」按钮（dsh 文件引用卡同形）：目录=直接打开该目录，
+      // 文件=打开所在目录并选中——落点仍是 `/gateway/file/reveal`，与 work 文件树同一链路。
+      return `<span class="mention-chip m-path" title="${full}" data-mjump="path" data-mname="${name}" data-mptype="${ptype === 'dir' ? 'dir' : 'file'}"><span class="mc-ic">${icon}</span><span class="mc-t">${label}</span><span class="mc-act" role="button" title="在资源管理器中打开" data-mreveal="${name}">${I.dshFolder}</span></span>`
     }
     if (kind === 'session') {
       const title = splitSessionToken(name).title

@@ -76,6 +76,10 @@ const outputSchema = lazySchema(() =>
       .describe('Whether the user modified the proposed changes'),
     replaceAll: z.boolean().describe('Whether all occurrences were replaced'),
     gitDiff: gitDiffSchema().optional(),
+    concurrentNote: z
+      .string()
+      .optional()
+      .describe('Set when the edit was replayed or merged against a concurrent disk change'),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>

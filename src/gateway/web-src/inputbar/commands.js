@@ -3,12 +3,11 @@
 // 已切出；本件只留弹窗外壳（打开/关闭/渲染/导航/落地）与项目 seat。
 
 import { I } from '../core/icons.js'
-import { mentionPathToken } from '../core/mention-syntax.js'
 import { findSession } from '../engine/sessions.js'
 import { state } from '../engine/state.js'
 import { esc, toast, isTouch, newSessionProject, sessionProjLabel } from '../core/util.js'
 import { createProjectPicker } from '../feature/project-picker/project-picker.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, closeMentionPop, mention, mentionChipIcon, resetMention, selectMentionItem, toolbarQueryText } from './mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, MENTION_UP_ICON, closeMentionPop, enterMentionDir, mention, mentionChipIcon, openMentionPopPlus, resetMention, selectMentionItem } from './mention.js'
 import { MODEL_CUR, closeModelPop } from './model-select.js'
 import { syncGwSend } from './send.js'
 import { renderTaskDock } from './approval.js'
@@ -46,10 +45,9 @@ import { pickHome } from './toolbar/scope.js'
   // 2026-08-22 取代 MOCK_MODEL_DIR（anthropic 上游）。
 
 /* @module inputbar/commands.js #2 */
-  // mentionMode = 本弹窗由输入 @ 唤起（2026-10-25 用户定案：工具栏是 @ 与 + 的唯一弹窗）。
-  // 该模式下查询词取 mention.q（@ 后到光标的文本）、结果扁平按时间混排、选中写回 @ 锚点；
-  // 非 mention 模式（= + 打开）才走入口视图与首屏。
-  const cmd = { open: false, view: '', mentionMode: false, status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '', q0: '' }
+  // 工具栏是 @ 与「+」的唯一弹窗（2026-10-25/2026-11-08 用户定案）：两种手势都在底栏留一个锚点
+  // （@ 的位置 / + 点击时的光标位置），此后输入的文本即查询词，结果扁平混排、选中替换该区间。
+  const cmd = { open: false, view: '', status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -123,31 +121,25 @@ import { pickHome } from './toolbar/scope.js'
   }
 
 /* @module inputbar/commands.js #3 */
-  // 弹窗的**唯一开链**（2026-10-25 用户定案：输入 @ 触发与底栏点 + 完全同一条链路，不另写）。
-  // mentionMode 只决定查询词来源（@ 后文本 vs 底栏全文）；有无查询词由 cmdEntries 判：
-  // 无词 = 首屏入口（与 + 一致），有词且在 @ 模式 = 扁平全局搜索。
-  function openCmdPop(mentionMode) {
+  // 弹窗的**唯一开链**：输入 @ 与点「+」完全同一条（锚点与查询词由 mention.js 维护）。
+  // 有无查询词由 cmdEntries 判：无词 = 首屏入口，有词 = 扁平全局搜索。
+  function openCmdPop() {
     const fresh = !cmd.open
     if (msel.open) closeModelPop()
-    if (!mentionMode) closeMentionPop()
     cmd.open = true
-    cmd.mentionMode = !!mentionMode
     cmd.view = '' // 每次打开都回首屏入口（手势起点一致）
     cmd.status = 'ready'
     cmd.active = 0
     cmd.confirming = null
     cmd.acknowledged = false
     cmd.error = null
-    // 开窗时的底栏查询基线：+ 模式下「打开后才输入」的词才当检索词（已写的正文不算，
-    // 否则带正文点 + 会被筛成空壳）；@ 模式由 mention.q 独立驱动，此值不参与。
-    cmd.q0 = toolbarQueryText().toLowerCase().replace(/^\//, '')
     renderCmdPop()
     // 2026-11-06 D 弹层互斥：工具栏打开即收起任务浮窗（renderTaskDock 见工具栏在场整窗让位；
     // 此时 cmdPop.hidden 已被上方 renderCmdPop 置 false，判据生效）。关闭回程由 closeCmdPop 恢复。
     renderTaskDock()
     // 过滤在底栏打字（待办 20 返修）：焦点回底栏，用户继续输入列表即变；触屏不抢焦点（iOS 弹键盘，
     // 与旧搜索框同一处置——用户自己点输入框唤起）。@ 唤起时光标本就在底栏，不重复聚焦。
-    if (!mentionMode && !isTouch()) composerFocus()
+    if (fresh && !isTouch()) composerFocus()
     if (fresh) {
       // 首次打开确保技能清单/目录层已加载（异步），加载完用当前状态重渲
       loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
@@ -156,15 +148,14 @@ import { pickHome } from './toolbar/scope.js'
       refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
     }
   }
-  function openCmdPopMention() { openCmdPop(true) }
+  function openCmdPopMention() { openCmdPop() }
   function toggleCmdPop() {
     if (cmd.open) { closeCmdPop(); return }
-    openCmdPop(false)
+    openMentionPopPlus()
   }
   function closeCmdPop() {
-    if (!cmd.open) { cmd.mentionMode = false; return }
+    if (!cmd.open) { resetMention(); return }
     cmd.open = false
-    cmd.mentionMode = false
     cmd.confirming = null
     cmd.acknowledged = false
     cmdPop.hidden = true
@@ -206,7 +197,7 @@ import { pickHome } from './toolbar/scope.js'
       // 本浮窗只做选择/上传入口，不再重复渲染缩略图（2026-10-22 用户实测：同一批图在浮窗与底栏各出现一次）。
       // 搜索结果（@ 后有查询词）= 扁平时间线，不印分组标题（用户定案「不隔离」）；@ 无词/+ 模式 = 入口视图分组。
       // 未进视图的跨类搜索才是扁平时间线；进了某类视图仍按组显示（导航行与该类标题）。
-      const flat = cmd.mentionMode && !cmd.view && !!mention.q.trim()
+      const flat = !cmd.view && !!mention.q.trim()
       let lastGrp = ''
       html += `<div role="listbox" class="viewport">${cmd.items.map((it, i) => {
         const g = it.grp || groupOf(it)
@@ -216,11 +207,16 @@ import { pickHome } from './toolbar/scope.js'
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' || it.kind === 'pathref' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
-        const detail = it.kind === 'path' || it.kind === 'pathref' ? it.path : it.desc
+        const detail = it.kind === 'path' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
-        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}</button>`
+        // 目录行行尾「进入目录」（与 dsh 同形）：点行 = 引用该目录，点这枚按钮 / 按 Tab = 下钻。
+        // 按钮必须是 span 而非 button（行本身就是 button，HTML 禁嵌套 button）。
+        const dirBtn = it.kind === 'path' && it.ptype === 'dir'
+          ? `<span class="dirEnter" data-direnter role="button" title="进入该目录（Tab）"><span class="de-k">进入目录</span><kbd>Tab</kbd><span class="de-c">›</span></span>`
+          : ''
+        return gh + `<button type="button" role="option" aria-selected="${i === cmd.active}" class="row${on}" data-idx="${i}"><span class="rowIco">${ico}</span><span class="label">${esc(label)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ''}${tag}${dirBtn}</button>`
       }).join('')}</div>`
     }
     cmdPop.innerHTML = html
@@ -234,14 +230,18 @@ import { pickHome } from './toolbar/scope.js'
     cmdPop.querySelectorAll('.row').forEach((b) => {
       let pressed = false
       const choose = () => { cmd.active = +b.dataset.idx; cmdSelect() }
+      // 行尾「进入目录」：与行点选分开（同一个委托里判落点），鼠标按下即进、触摸抬手进。
+      const enterDir = () => { cmd.active = +b.dataset.idx; cmdEnterDir() }
       b.addEventListener('pointerdown', (e) => {
         if (e.pointerType !== 'mouse' || e.button !== 0) return
         pressed = true
-        choose()
+        if (e.target.closest('[data-direnter]')) enterDir()
+        else choose()
       })
-      b.addEventListener('click', () => {
+      b.addEventListener('click', (e) => {
         if (pressed) { pressed = false; return }
-        choose()
+        if (e.target.closest('[data-direnter]')) enterDir()
+        else choose()
       })
     })
     cmdPop.querySelector('.retry')?.addEventListener('click', () => { cmd.error = null; cmd.status = 'ready'; renderCmdPop() })
@@ -308,40 +308,25 @@ import { pickHome } from './toolbar/scope.js'
     // 入口行 = 进入该类（此后查询词只在该类里搜）；返回行 = 回首屏。
     if (it.kind === 'entry') { cmd.view = it.view; cmd.active = 0; renderCmdPop(); return }
     if (it.kind === 'back') { cmd.view = ''; cmd.active = 0; renderCmdPop(); return }
-    // @ 模式：所有条目都落地到 @ 锚点（含上传附件写回正文、目录下钻重渲）——统一走 mention.js，
-    // 与 + 模式的「追加到输入栏末尾」刻意不同（@ 是就地替换查询）。
-    if (cmd.mentionMode) { if (it.kind !== 'pathwait') selectMentionItem(it); return }
     if (it.kind === 'imgpick') { $('img-file').click(); return }
     if (it.kind === 'filepick') { $('file-upload').click(); return }
-    // 已上传附件引用行（+ 模式）：引用原文追加到输入栏末尾（@ 模式走上方的 selectMentionItem 就地替换）。
-    if (it.kind === 'attref') { composerAppendText(it.md + ' '); closeCmdPop(); return }
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
-    // 下钻/返回必须走 pickEnter：它同时把 searchOff 翻回层内浏览模式；只调 loadPickPath 会让
-    // pickItems 继续按全局搜索分支渲染，点目录看起来「没反应」。
-    // 目录引用（2026-11-08 用户定案）：层内「引用此目录」行 / 搜索命中的目录行直接插 dir chip；
-    // 层内点目录（非 glob）仍下钻。
-    if (it.kind === 'pathref') { appendMentionChip('path', it.path, '', 'dir'); closeCmdPop(); return }
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
-      pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
+    // 指令行：风险命令走确认门，其余直接写入输入栏执行。
+    if (it.kind === 'cmd') {
+      const o = it.ref
+      if (o.risk) { cmd.confirming = o; cmd.acknowledged = false; renderCmdPop(); return }
+      cmdSettle(o)
       return
     }
-    if (it.kind === 'path') { appendMentionChip('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file'); closeCmdPop(); return }
-    if (it.kind === 'skill' || it.kind === 'plugin') { appendMentionChip('plugin', it.name); closeCmdPop(); return }
-    if (it.kind === 'session') { appendMentionChip('session', it.name, it.sid); closeCmdPop(); return }
-    const o = it.ref
-    if (o.risk) { cmd.confirming = o; cmd.acknowledged = false; renderCmdPop(); return }
-    cmdSettle(o)
+    // 其余条目统一落地到锚点（@ 位置 / + 点击时的光标），替换已输入的查询区间：
+    // 目录下钻重渲、目录/文件/会话/技能/插件插 chip、上传附件把正文引用写回。
+    selectMentionItem(it)
   }
-  // 浮窗直选落地（无 @ 光标锚点）：令牌追加到输入栏末尾 + 尾随空格，光标到末尾（CM6 接管后
-  // chip = doc 令牌文本的装饰视图，composerAppendToken 落 doc 即成 chip）。
-  function appendMentionChip(kind, name, sid, ptype) {
-    const token = kind === 'session'
-      ? (sid ? `[会话:${name}|${sid}]` : `[会话:${name}]`)
-      : kind === 'path'
-        ? mentionPathToken(name, ptype)
-        : `[插件:${name}]`
-    composerAppendToken(token)
-    syncGwSend()
+  // 进入目录（行尾按钮 / Tab 键共用）：只对目录行生效，非目录行不动（Tab 不该把会话/技能当目录钻）。
+  function cmdEnterDir() {
+    const it = cmd.items[cmd.active]
+    if (!it || !enterMentionDir(it)) return false
+    return true
   }
   function cmdAck(v) { cmd.acknowledged = v; renderCmdPop() }
   function cmdConfirm() {
@@ -369,13 +354,13 @@ import { pickHome } from './toolbar/scope.js'
 export {
   EFFORT_LEVELS,
   MOCK_COMMANDS,
-  appendMentionChip,
   closeCmdPop,
   closeProjPop,
   closeRiskModal,
   cmd,
   cmdAck,
   cmdConfirm,
+  cmdEnterDir,
   cmdMove,
   cmdPop,
   cmdSelect,

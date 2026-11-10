@@ -21,6 +21,8 @@ import { activateMention, mentionTargetFromSpec } from '../feature/mention-nav.j
       isOpen: () => cmd.open,
       move: (d) => cmdMove(d),
       select: () => cmdSelect(),
+      // Tab = 进入当前目录行（目录行行尾按钮同一落点）；非目录行不动，交回默认键程。
+      enterDir: () => cmdEnterDir(),
       close: () => closeCmdPop(),
       render: () => renderCmdPop(),
     },

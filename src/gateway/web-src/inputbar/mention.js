@@ -23,7 +23,8 @@ import { pickEnter } from './toolbar/pick.js'
   const MENTION_DIR_ICON = I.dshFolder
   const MENTION_UP_ICON = I.dshUp
   // CM6 接管后 sentinel（零宽 DOM 锚）退役：@ 查询锚点 = doc 位置 anchor（'@' 所在 pos）
-  let mention = { open: false, anchor: 0, q: '', items: [], sel: 0 }
+  // plus = 由「+」按钮唤起（锚点处没有 '@' 字符）；@ 唤起时 plus=false，查询区间含前导 '@'。
+  let mention = { open: false, plus: false, anchor: 0, q: '', items: [], sel: 0 }
 
   function mentionChipIcon(kind, ptype) {
     if (kind === 'session') return MENTION_SESSION_ICON
@@ -127,6 +128,7 @@ import { pickEnter } from './toolbar/pick.js'
   // 复位 @ 数据态（不碰 DOM、不开关工具栏）：@ 关闭链与工具栏关闭链共用同一处，避免两套状态漂移。
   function resetMention() {
     mention.open = false
+    mention.plus = false
     mention.anchor = 0
     mention.q = ''
     mention.items = []
@@ -140,13 +142,24 @@ import { pickEnter } from './toolbar/pick.js'
     // 否则会留下一个没有 @ 锚点却仍按 + 模式渲染的弹窗。closeCmdPop 不会回调本函数（只调 resetMention）。
     // 只在「@ 态确实开着」时才碰 cmd（composer 初始 mount 会在 commands.js 之前调本函数，
     // 此时 cmd 尚处 TDZ；wasOpen=false 短路即避开）。
-    if (wasOpen && cmd.mentionMode) closeCmdPop()
+    if (wasOpen) closeCmdPop()
     return wasOpen
   }
 
+  // 工具栏起点 = 光标位置（「+」按钮）：锚点处没有字符，此后输入的文本即查询词，选中即替换该区间。
+  function openMentionPopPlus() {
+    if (!cmView) return
+    mention.open = true
+    mention.plus = true
+    mention.anchor = cmView.state.selection.main.from
+    mention.sel = 0
+    mention.q = ''
+    openCmdPopMention()
+  }
   function openMentionPopAtCaret() {
     if (!cmView) return
     mention.open = true
+    mention.plus = false
     mention.anchor = cmView.state.selection.main.from - 1 // '@' 的 doc 位置（composer onInputMention 判定后调）
     mention.sel = 0
     mention.q = ''
@@ -155,13 +168,12 @@ import { pickEnter } from './toolbar/pick.js'
     openCmdPopMention()
   }
 
-  // 条目落地的唯一入口（点击与回车共用）：目录/上级=下钻重渲；文件=插 chip；会话/技能=插 chip。
+  // 条目落地的唯一入口（点击与回车共用）：目录/文件/会话/技能 = 插 chip；「上级目录」= 回上层。
+  // 2026-11-10 与 dsh 对齐：目录行点击 = **引用该目录**，进入下一层只在行尾按钮 / Tab 上
+  // （enterMentionDir）——此前层内点目录即下钻，还要额外记住「引用此目录」固定行，手势分叉。
   function selectMentionItem(it) {
-    // 目录引用（2026-11-08 用户定案）：层内固定行「引用此目录」直接插 chip；搜索命中的目录行
-    // 也直接插引用（glob=true，搜到即想要引用，不再下钻）；层内点目录仍下钻。
-    if (it.kind === 'pathref') { insertMention('path', it.path, '', 'dir'); return }
-    if (it.kind === 'pathup' || (it.kind === 'path' && it.ptype === 'dir' && !it.glob)) {
-      pickEnter(it).then(() => { if (cmd.open && cmd.mentionMode) renderCmdPop() })
+    if (it.kind === 'pathup') {
+      pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
       return
     }
     // 已上传附件（待办 6）：把正文 md 引用原文写回 doc（与自动插入同一形态，CM 行内直渲）。
@@ -177,14 +189,21 @@ import { pickEnter } from './toolbar/pick.js'
     else insertMention(it.kind, it.name, it.sid)
   }
 
-  // 键盘移动/选择：@ 模式与 + 模式共用同一个工具栏列表（cmd.items/cmd.active），直接转调 commands.js。
+  // 进入目录（浮窗行尾按钮 / Tab 键的唯一落点）：下钻重渲，把手势留在同一个浮窗里。
+  function enterMentionDir(it) {
+    if (!it || (it.kind !== 'pathup' && !(it.kind === 'path' && it.ptype === 'dir'))) return false
+    pickEnter(it).then(() => { if (cmd.open) renderCmdPop() })
+    return true
+  }
+
+  // 键盘移动/选择：@ 与「+」共用同一个工具栏列表（cmd.items/cmd.active），直接转调 commands.js。
   // CM 键盘链先判 cmd.isOpen()，mention 分支只在理论上兜底——保持薄转调，不另存一份高亮状态。
   function moveMentionSel(d) {
-    if (cmd.open && cmd.mentionMode) cmdMove(d)
+    if (cmd.open) cmdMove(d)
   }
 
   function selectMention() {
-    if (cmd.open && cmd.mentionMode) { cmdSelect(); return }
+    if (cmd.open) { cmdSelect(); return }
     const it = mention.items[mention.sel]
     if (it) selectMentionItem(it)
   }
@@ -217,10 +236,13 @@ import { pickEnter } from './toolbar/pick.js'
     if (cmView.composing) return
     if (st.selection.main.from !== st.selection.main.to || !st.selection.main.empty) { if (mention.open) closeMentionPop(); return }
     if (mention.open) {
+      // 「+」唤起：锚点处无 '@'，其后全文即查询；@ 唤起：跳过前导 '@'。查询区间被删到锚点
+      // 之前（或跨行）即收起。
       const between = st.doc.sliceString(mention.anchor, pos)
-      if (pos <= mention.anchor || /[\n\r]/.test(between)) { closeMentionPop(); return }
+      if (/[\r\n]/.test(between)) { closeMentionPop(); return }
+      if (mention.plus ? pos < mention.anchor : pos <= mention.anchor) { closeMentionPop(); return }
       // 选区扩展越过已落地的 chip 时，between 会夹进令牌文本 ⇒ 同样剥离，否则查询词恒零命中。
-      const q = stripChipTokens(between.slice(1))
+      const q = stripChipTokens(mention.plus ? between : between.slice(1))
       if (q !== mention.q) { mention.q = q; if (cmd.open) renderCmdPop() }
       return
     }
@@ -247,6 +269,7 @@ export {
   QUOTE_REPLY_RE,
   buildMentionChip,
   closeMentionPop,
+  enterMentionDir,
   insertMention,
   mention,
   mentionChipHtml,
@@ -256,6 +279,7 @@ export {
   onInputChange,
   onInputMention,
   openMentionPopAtCaret,
+  openMentionPopPlus,
   quotePdfChipHtml,
   quoteRefChipHtml,
   stripChipTokens,

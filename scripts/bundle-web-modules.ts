@@ -19,6 +19,8 @@ const PIECES: { file: string; part: number }[] = [
   // 管理页通用 UI 接缝（@floria/web 的 mgr 组件族）：与 icons 同属包接缝，须先于全部消费方
   // （views/cards/plugins/plugins-card.js 等）；缺包抛错，不在 Floria 内复刻结构。
   { file: 'core/mgr-ui.js', part: 1 },
+  // 交付卡 / 文件变更卡组件族接缝（@floria/web 的 delivery.js）：同属包接缝，须先于 chat/messages/change-card.js
+  { file: 'core/delivery-ui.js', part: 1 },
   { file: 'sidebar/mgr-data.js', part: 1 },
   // 界面状态纯数据（core/ui-state.js，2026-10-10 自 engine/state.js 下移）须先于 engine/state.js 与
   // core/{util,storage}.js（三件均 import 它）。
@@ -116,8 +118,9 @@ const PIECES: { file: string; part: number }[] = [
   // 启停后要刷新工具栏 tab 条与页态（applyPvTab / renderWkToolTabs），故排在 work-preview 之后。
   { file: 'sidebar/work/work-plugins.js', part: 1 },
   { file: 'sidebar/work/work-cm.js', part: 1 },
-  // 行级三方合并纯函数（2026-10-25 编辑卡实时同步）：被 work-live.js 调用，无宿主依赖。
-  { file: 'sidebar/work/work-merge.js', part: 1 },
+  // 行级三方合并唯一真源 = src/utils/threeWayMerge.ts（CLI 的 Edit/Write 与 web 编辑卡共用）。
+  // 占位片无切割 marker：转译后由 loadTsModuleBody 注入 `/* @module __ts_three_way_merge__ */`。
+  { file: '__ts_three_way_merge__', part: 1 },
   // JSON Canvas 图形预览（2026-10-13）：wkCvExt 由 work-cm.js 的 wkEdLangExt 在扩展名为 .canvas 时调用，
   // 故须排在 work-cm.js 之后（函数声明提升，序位按依赖就近）。
   { file: 'sidebar/work/work-canvas.js', part: 1 },
@@ -184,10 +187,37 @@ const PIECES: { file: string; part: number }[] = [
   { file: '__app__', part: 2 },
 ]
 
+// TS 单真源注入：占位片名 → 源文件。TS 转译产物没有切割 marker，由 loadTsModuleBody
+// 补一行作为该片唯一 marker，切片与产物自检链保持原样。
+const TS_PIECES: Record<string, string> = {
+  __ts_three_way_merge__: './src/utils/threeWayMerge.ts',
+}
+
+async function loadTsModuleBody(sourcePath: string, name: string): Promise<string[]> {
+  const src = (await Bun.file(sourcePath).text()).replace(/\r\n/g, '\n')
+  const js = new Bun.Transpiler({ loader: 'ts' }).transformSync(src)
+  const body = js
+    .split('\n')
+    .map((line) =>
+      line.replace(
+        /^export\s+(?=(?:const|let|var|function|class|async)\b)/,
+        '',
+      ),
+    )
+    // 类型/接口已在转译阶段剥除；剩余的 export { ... } 与 import 行一律不带进 IIFE。
+    .filter((line) => !/^export\s/.test(line) && !/^import\s/.test(line))
+  while (body.length && body[body.length - 1].trim() === '') body.pop()
+  return [`/* @module ${name} */`, ...body]
+}
+
 // ---------- 读取模块文件并剥离切割壳（头注释/import/setter 注释/export 块） ----------
 async function loadModuleBodies(): Promise<Map<string, string[]>> {
   const bodies = new Map<string, string[]>()
   for (const file of [...new Set(PIECES.map((p) => p.file))]) {
+    if (TS_PIECES[file]) {
+      bodies.set(file, await loadTsModuleBody(TS_PIECES[file], file))
+      continue
+    }
     const path = file === '__app__' ? `${WEB_SRC}/app.js` : `${WEB_SRC}/${file}`
     // CRLF 归一（2026-09-16 实证：Windows 编辑链会把工作区源码写成 CRLF，\r 残留撞首行锚点防呆）
     const lines = (await Bun.file(path).text()).replace(/\r\n/g, '\n').split('\n')

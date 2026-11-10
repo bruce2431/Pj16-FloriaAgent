@@ -5,7 +5,7 @@
 
 ## 1. API 前缀与端点总览
 
-端点全挂 `/gateway/<端点>`：health（响应带 `boot` = 本网关进程启动时刻；前端据此区分「同网关刷新」与「换了网关」，见 web-ui.md §58）/ activate / shutdown / sessions / plugins / models / models/catalog / model / model-report / wsession[/stop] / diagnostics / session[/rename / .queued] / backend / project / file / file-cache / conversation / activity / events。根 `/api` 撤空（不保留旧路径、无兼容双挂）。**不变量**：网关与 `/backend/<label>/` 代理页面共享同一 origin，端点若挂根，被代理页面写死的绝对路径会误打网关自身；前缀化后写错只 404，永不误伤网关（「故意打网关」的预览页显式用 `/gateway/*`）。CLI 侧 `gatewayClient`/`conversationDisplay`/`server`、前端 `app.js`/`sw.js` 同此前缀。**唯一例外**：`readyPath` 缺省 `/api/system_stats` 是项目后端（ComfyUI）自身 API，勿迁移。总门鉴权 `startsWith('/gateway/')`（health/activate 公开），sw 缓存排除同步 `/gateway/`。
+端点全挂 `/gateway/<端点>`：health（响应带 `boot` = 本网关进程启动时刻；前端据此区分「同网关刷新」与「换了网关」，见 web-ui.md §58）/ activate / shutdown / eject / sessions / plugins / models / models/catalog / model / model-report / wsession[/stop] / diagnostics / session[/rename / .queued] / backend / project / file / file-cache / conversation / activity / events。根 `/api` 撤空（不保留旧路径、无兼容双挂）。**不变量**：网关与 `/backend/<label>/` 代理页面共享同一 origin，端点若挂根，被代理页面写死的绝对路径会误打网关自身；前缀化后写错只 404，永不误伤网关（「故意打网关」的预览页显式用 `/gateway/*`）。CLI 侧 `gatewayClient`/`conversationDisplay`/`server`、前端 `app.js`/`sw.js` 同此前缀。**唯一例外**：`readyPath` 缺省 `/api/system_stats` 是项目后端（ComfyUI）自身 API，勿迁移。总门鉴权 `startsWith('/gateway/')`（health/activate 公开），sw 缓存排除同步 `/gateway/`。
 
 **文件缓存 `file-cache`（附件与粘贴图片共用一条链）**：`<会话启动根>/.claude/file-cache/<dirKey>/`，`dirKey` = 会话 uuid（`getSessionId()` 的目录名；与 sid 解码所得同源），无会话归属（首页首送前上传）= `_pending`。**`dirKey` 不编码项目**，读写都必须带 `sid`（或 `project` label）让网关解析出会话启动根。
 
@@ -351,7 +351,7 @@ work 文件树行操作浮窗（[web-ui.md](web-ui.md) §45）的提交侧。两
 
 **`POST /gateway/file/delete`** body `{label, path}` → `trashProjectEntry(projRoot, path)`。**「删除」= 移动**（工作区规范禁止 `rm`）：`renameSync` 到 `<项目根>/.trash/`，永不真删、永不覆盖——`.trash/` 下同名冲突加 `<YYYYMMDDHHMMSS>-` 前缀（同秒再撞加 `-N`）。目录删除 = 整棵子树一次搬走。响应 `{ok, trash:'.trash/<名>'}`。`.trash` 以 `.` 开头，本就不进 `/gateway/project` 文件树（`walkProjectTree` 跳过点开头条目，且在 `SKIP_TREE_DIRS` 内）。
 
-**`POST /gateway/file/reveal`**（2026-10-24，work 文件树行菜单「在资源管理器中打开」，[web-ui.md](web-ui.md) §45）body `{label, path}`。网关进程即用户本机进程，直接拉起系统资源管理器：文件 → `explorer.exe /select,<abs>`（在父目录中选中该文件），目录 → `explorer.exe <abs>`（直接打开）。实现落到 `revealInExplorer`：`bun:ffi` 直接调 shell32 的 `SHOpenFolderAndSelectItems`（与 Obsidian「在文件夹中显示」同一 API）——`SHParseDisplayName` 把绝对路径解析成 PIDL，文件/目录同一调用（传该项 PIDL + `cidl=0`：文件 = 打开父目录并选中该项，目录 = 打开该目录，由 shell 自己完成打开与前置），**不启动 explorer / PowerShell 子进程** ⇒ 无 console 黑框、无冷启动与抢前台的延迟（实测 0.36s 含开窗）。调用前 `CoInitializeEx(COINIT_APARTMENTTHREADED)`；shell32/ole32 懒加载并复用（`dlopen` 失败只记日志，不影响其它端点）；PIDL 用完 `CoTaskMemFree`。响应 `{ok:true}` 只表示已发起。路径防护同下方共用口径（越界 403、不存在 404），**空 `path` = 项目根自身、允许**（与 rename/delete 的 403 不同，打开项目根是合法意图）；非 Windows → **501 `unsupported platform`**。
+**`POST /gateway/file/reveal`**（2026-10-24，work 文件树行菜单「在资源管理器中打开」，[web-ui.md](web-ui.md) §45）body `{label, path}`。网关进程即用户本机进程，直接在系统资源管理器中定位：文件 → 打开父目录并选中该文件，目录 → 打开该目录。实现落到 `revealInExplorer`：`bun:ffi` 直接调 shell32 的 `SHOpenFolderAndSelectItems`（与 Obsidian「在文件夹中显示」同一 API）——`SHParseDisplayName` 把绝对路径解析成 PIDL，文件/目录同一调用（传该项 PIDL + `cidl=0`），由 shell 完成打开；**不启动 explorer / PowerShell 子进程** ⇒ 无 console 黑框、无冷启动延迟（实测 5~15ms 发起、约 100ms 出窗）。**前置由网关自己补**：网关没有前台窗口，shell 只把窗挂出来、不激活（表现为「开在最下层」），而纯后台进程直接 `SetForegroundWindow` 会被前台锁拒绝；故窗口出现后（异步轮询 ≤1.6s，按「标题 = 文件夹名」或「新建 / 由隐藏转可见」认领 `CabinetWClass`）用 `AttachThreadInput` 附到当前前台线程再 `SetForegroundWindow`，仍未果则 `SwitchToThisWindow`。调用前 `CoInitializeEx(COINIT_APARTMENTTHREADED)`；shell32/ole32 懒加载并复用（`dlopen` 失败只记日志，不影响其它端点）；PIDL 用完 `CoTaskMemFree`。响应 `{ok:true}` 只表示已发起。路径防护同下方共用口径（越界 403、不存在 404），**空 `path` = 项目根自身、允许**（与 rename/delete 的 403 不同，打开项目根是合法意图）；非 Windows → **501 `unsupported platform`**。
 
 **共用防护**：`resolveWithinRoot(projRoot, path)` 越界与空 `path`（= 项目根自身）→ **403**；条目不存在 → **404**；名称为空 → **400**。两端点均受上方 `/gateway/*` token/cookie 校验保护，且都在 `findProjects` **按 `label` 唯一命中**后才动盘（2026-10-15 待办 7 起**不再硬判 `scope==='project'`**——`scope==='global'` 的工作区根同样可按其 label 命中、作为一等项目接受写操作；`findProjects` 的 label 空间跨 scope 不重叠，按 label 定位即够。同一改动亦覆盖 `GET /gateway/project` 与 `file/{move,write,create}`。**例外**：`/gateway/comments` 与 `/gateway/backend/*` 仍按 `scope==='project'` 硬判——评论属项目不落全局根散装区，backend 需 `hasBackend` 只有项目具备）。
 
@@ -419,3 +419,13 @@ work 文件树 / 顶栏文件 pill 行菜单「下载」的唯一取件口。与
 - **响应头**：`Content-Disposition: attachment; filename="<ASCII 回退:非 ASCII 与引号/反斜杠→_>"; filename*=UTF-8''<RFC5987 编码原文>`（中文名不乱码）+ `Content-Length`；GET 走 `createReadStream().pipe(res)` **流式**发送，不把整文件读进网关内存；`Content-Type: application/octet-stream`。
 - **HEAD 同头**：前端下载前先 HEAD 取 `Content-Length`，超过确认阈值（前端 `WK_DL_CONFIRM_BYTES = 50MB`）弹 `#dl-modal` 确认栏（文件名 + 人类可读大小，取消/关闭/遮罩/Esc = 放弃），确认后才导航下载。
 - **根治「PDF 点下载变预览/跳转」**：旧实现是 `blob:` URL + `a[download]`，浏览器（Edge/iPad Safari）忽略 download 属性时把 blob 当文档导航 ⇒ 地址栏出现 `blob:https://<host>/<uuid>` 预览 PDF。现在下载 URL 指向网关且带 `attachment` 头，浏览器只会落盘；前端也不再 blob 化（大文件不占内存）。鉴权/越界 403/404 与 GET 同口径。
+
+## 21. 安全卸载（`POST /gateway/eject`）
+
+拔除外置盘前把卷上所有 Floria 进程一次收干净的显式动词。与 `/gateway/shutdown`（`/server off`）的分工：后者只停网关，会话窗口与卡片后端按生命周期解耦定案存活（§6、§7）；eject 额外停掉这两类进程并退出网关自身。
+
+- **前置**：仅独立网关进程（`--gateway`）可用；进程内嵌网关调用 → 409 `eject 仅独立网关进程（--gateway）支持`。重复调用 → 409 `already ejecting`。
+- **响应**：`200 {ok:true, ejecting:true, sessions:[{sessionId,pid?}], backends:[label…]}`，先回快照再异步收尾，调用方必须按「网关随后退出」处理。
+- **收尾序列**：①向所有 `/clients` 连接发 `{type:'shutdown'}`（CLI 侧 `exit 0`，WT 自动收 tab）→ ②最多等 4s 仍未断开者按 pid `killTreeExcept(pid, 网关自身)` 树杀（pid 源：`webSessions` → `cli-hello` 上报的 `cliPids` → `sessionActivity`；豁免网关自身，因其常是某个会话的子进程）→ ③逐个 `killBackend` 停全部卡片后端（含收养的 child=null 条目），再按 `.claude/gateway/backends.json` 补杀本代未收养的遗留 pid 并清空注册表 → ④`stopSseWatches` → `stopLocalGateway` + `process.exit(0)`。
+- **不变量**：接受 eject 后 `ejecting` 置位，`spawnWebSession` 直接拒绝、`gatewayStopping` 提前置位阻断新后端就绪探测——卷上不再产生新进程。pid 未知且不响应 shutdown 的旧 exe 会话可能残留，由调用方在卷停稳后核对进程表。
+- **配套脚本**：`Neuron-Pj16/l3.raw/files/20261110183000-safe-eject.ts`（在工作区外执行：读 `.claude/gateway/{token,port}` → POST → 轮询端口关闭 → 扫描残留进程并给出「可弹出」结论）。

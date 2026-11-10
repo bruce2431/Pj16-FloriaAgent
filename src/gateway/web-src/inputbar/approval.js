@@ -1,6 +1,6 @@
 // 瞬态/落定渲染 + 审批卡 + 提问卡 + 回合态（2026-09-10 web-src 模块化切割自 app.js v287；唯一手改处，web/app.js 为生成物）
 
-import { TOOL_NAMES, fmtDur, CHEV, ICON_COPY, pendingUserMsgs, statusFlags, fileCardsHtml } from '../chat/messages.js'
+import { TOOL_NAMES, fmtDur, CHEV, ICON_COPY, writeClipboard, pendingUserMsgs, statusFlags, fileCardsHtml } from '../chat/messages.js'
 import { renderHome, renderSession } from '../chat/route.js'
 import { scrollBottom, stage, stageFollow, stageSync, appendMsg } from '../chat/stage.js'
 import { gws } from '../engine/gateway.js'
@@ -406,6 +406,8 @@ import { firstSendHash } from '../sidebar/recent.js'
     const desc = a.description && typeof a.description === 'string' ? a.description.trim() : ''
     const path = a.blockedPath && typeof a.blockedPath === 'string' ? a.blockedPath.trim() : ''
     const input = prettyToolInput(a.toolName, a.input, desc)
+    // 计划审批（ExitPlanMode）：strip 行尾给一枚复制按钮，复制计划 Markdown 原文
+    const planText = a.toolName === 'ExitPlanMode' && a.input && typeof a.input.plan === 'string' ? a.input.plan : ''
     let sugsHtml = ''
     if (sugs.length) {
       sugsHtml = `<div class="appr-sugs">${sugs.map((s, si) => {
@@ -417,7 +419,7 @@ import { firstSendHash } from '../sidebar/recent.js'
     // 2026-08-22 composer takeover：审批卡占输入栏（DSH ApprovalPanel 语义），不再 appendMsg 进 chat
     showTakeover(`
       <div class="appr-card">
-        <div class="appr-strip"><span class="appr-dot"></span>需要批准${zh ? ' · ' + esc(zh) : ''}${a.toolName ? '（' + esc(a.toolName) + '）' : ''}</div>
+        <div class="appr-strip"><span class="appr-dot"></span>需要批准${zh ? ' · ' + esc(zh) : ''}${a.toolName ? '（' + esc(a.toolName) + '）' : ''}${planText ? '<button type="button" class="appr-plan-copy" title="复制计划" aria-label="复制计划">' + ICON_COPY + '</button>' : ''}</div>
         <div class="appr-body">
           <div class="appr-headline">${esc(headline)}</div>
           ${desc ? `<div class="appr-desc">${esc(desc)}</div>` : ''}
@@ -444,6 +446,24 @@ import { firstSendHash } from '../sidebar/recent.js'
     }
     t.querySelector('.appr-allow').addEventListener('click', () => sendApprove(a.requestId, true, null, [...sel].map((i) => sugs[i])))
     t.querySelector('.appr-deny').addEventListener('click', () => sendApprove(a.requestId, false))
+    // 计划复制：反馈形态同 .msg-copy（图标换对勾 1s）；卡片被重建时随 innerHTML 一并替换，无需解绑
+    const copyBtn = t.querySelector('.appr-plan-copy')
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        writeClipboard(planText).then((ok) => {
+          if (!ok) { toast('复制失败'); return }
+          copyBtn.classList.add('copied')
+          copyBtn.innerHTML = I.dshCheck
+          copyBtn.title = '已复制'
+          setTimeout(() => {
+            if (!copyBtn.isConnected) return
+            copyBtn.classList.remove('copied')
+            copyBtn.innerHTML = ICON_COPY
+            copyBtn.title = '复制计划'
+          }, 1000)
+        })
+      })
+    }
   }
 
   // 2026-08-24 提问交互表单：DSH「输入栏转化、依次显示」的降级——floria 在一张卡里列出所有问题，

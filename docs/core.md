@@ -183,19 +183,42 @@ web 点击排队气泡 → 当前这次**生成流**就地收尾，排队消息�
 
 **验证**：`probes/probe-session-link.ts` **62 过 / 0 败**（A 包装往返 / D 寻址含 D7 sid 键优先与 D10 复合令牌不代拆 / F web 接线 / G CLI 接线+工具说明+G7 撤门钉（标识符级防 sessionExposure 残留回潮）/ H 来源行对齐 / I 新建会话形态（`resolveSendMode` 真值测 + 工具/网关/说明接线钉））。
 
-## 跨会话文件修改归因（`utils/fileModifierRegistry.ts`）
+## 跨会话文件修改归因与 AI 并发写协作
 
-两会话（=两进程，内存不互通）并发编辑同一文件时，后写方命中的 modified-since-read 门原只报「被用户/linter 改过」，报不出**谁**改的——根因 `readFileState` 是每进程私有内存，跨进程归因唯一通道是磁盘。归因注册表：
+两会话（=两进程，内存不互通）或「CLI × web 编辑卡」并发编辑同一文件时，后写方命中的 modified-since-read 门原只报「被用户/linter 改过」，报不出**谁**改的——根因 `readFileState` 是每进程私有内存，跨进程归因唯一通道是磁盘。
+
+**归因注册表（`utils/fileModifierRegistry.ts`）**
 
 | 件 | 职责 |
 |---|---|
-| `utils/fileModifierRegistry.ts` | `recordFileModifier(path)`（写入侧）：`appendFileSync` 追加 `{p,sid,ts}` 行到 `<项目根>/.claude/file-mods.jsonl`（`getProjectRuntimeDir`）——追加无读改写竞争，坏行容忍，超 1MB 压缩保尾 1000 行，全程容错不抛；`fileModifierSuffix(path, sinceTs)`（拦截侧）：逆序找最新**非本会话**且 `ts > sinceTs` 条目，命中返回 ` (last modified by session <sid>)`，否则 `''` |
+| `recordFileModifier(path, {projectRoot?, writer?, sid?})` | 写入侧：`appendFileSync` 追加 `{p,w,sid,ts}` 行到 `<项目根>/.claude/file-mods.jsonl`——追加无读改写竞争，坏行容忍，超 1MB 压缩保尾 1000 行，全程容错不抛。`writer:'web'` 的 sid 缺省为 `''`（**绝不回落网关进程 sid**）；CLI 缺省 `writer:'session'` + `getSessionId()`。`projectRoot` 缺省 `getProjectRoot()`，网关调用必须显式传入（否则按网关进程 cwd 解析，写错项目根） |
+| `findFileModifier(path, sinceTs, {projectRoot?})` | 拦截侧：逆序找最新 `ts > sinceTs` 条目；`w:'web'` → `'web'`；CLI 条目命中的 sid 与本会话相同则跳过（自家写会刷新自家 readFileState）；旧格式无 `w` 行按 CLI 条目处理 |
+| `describeFileModifier(id?)` | `undefined` → `'another process'`；`'web'` → `'the web editor'`；否则 `'session <sid>'` |
 
-- **记录挂点四处**：FileEditTool / FileWriteTool / NotebookEditTool 各自 `readFileState.set` 之后 + BashTool sed 模拟写路径之后。
-- **拦截提示五处**：Edit（ec7）/ Write（ec3）/ NotebookEdit（ec10）三处 validateInput + Edit/Write 两处竞态 `FILE_UNEXPECTEDLY_MODIFIED_ERROR` throw 后缀拼接——竞态路径恰是「两会话真同时」的主现场。
-- **边界**：Bash 原生写不经工具链不可归因（仍后写覆盖无提示）；注册表按项目根隔离，跨项目撞车查不到回落原文；本会话自己的行跳过（自家写会刷新自家 readFileState）。
+- **记录挂点**：FileEditTool / FileWriteTool / NotebookEditTool 各自 `readFileState.set` 之后 + BashTool sed 模拟写路径之后 + 网关 `writeProjectFile` **写盘成功后**（403/404/409/写入失败不入册）。
+- **边界**：Bash 原生写不经工具链不可归因；注册表按项目根隔离，跨项目撞车查不到回落原文。
 
-**验证**：`probes/probe-file-modifier-registry.ts` **5 过 / 0 败**。纯 CLI 工具层，无 web 改动不 bump sw。
+**并发写协作（AI 工具链）**
+
+目标：AI 的写从「文件被动过就整条失败」改为「应用意图」——改的是别处就顺势落地并告知，真重叠才失败且能说清谁改的。
+
+| 件 | 职责 |
+|---|---|
+| `utils/threeWayMerge.ts` | 合并引擎唯一真源（CLI 与 web bundle 共用同一份 TS，见下「web 注入」）。patience diff（唯一行锚点 + LIS）+ 整段替换兜底；`WK_MERGE_MAX_LINES = 20000`；冲突返回 `{ok:false, reason:'conflict', conflictLine /* 1-based */, remoteChanges}`，超限 `reason:'too-large'`。`wkLineDelta(base,result)` 给增删行数 |
+| `utils/concurrentWrite.ts` | 策略层。`normalizeForCompare`（去 BOM + CRLF→LF + 去末尾换行）使**末尾换行 / BOM / CRLF 差异永不算并发修改**；`isCompleteReadSnapshot` 只接受 `source ∈ {read,tool-write,seed}` 且 `!isPartialView && !truncated`、无 `limit`、`offset` 为 undefined/0/1；`mergeTextWithPolicy` 仅 UTF-8 走合并（UTF-16 等只允许 replay）；错误/成功文案统一在此 |
+
+- **`FileState` 完整快照标记**：`FileState` 增 `source`（`read` / `tool-write` / `notebook` / `attachment` / `seed`）与 `truncated`。FileReadTool 文本读 `source:'read'` + 从 `readFileInRange` 取 `truncatedByBytes` 写入 `truncated`（此前被静默丢弃）；notebook 读/NotebookEditTool `source:'notebook'`；Edit/Write 写后 `source:'tool-write'`；attachments 两处 memory 注入 `source:'attachment'`；`cli/print.ts` seed `source:'seed'`。局部读、截断读、notebook、attachment 一律不作合并 base。
+- **Write（`FileWriteTool`）**：validateInput 只要求「必须先 Read」，mtime 判死移除；call 内读当前盘 → 与快照比对 → 一致直接写；不一致则要求完整快照并三方合并（base=`readFileState.content`，local=模型全文，remote=磁盘），无基准则报 `no merge base` 不猜不写。EOL/BOM 按模型内容还原（模型给 CRLF 就整篇 CRLF，给 BOM 就带 BOM）。
+- **Edit（`FileEditTool`）**：validateInput 在磁盘已变时放行（跳过 old_string 未命中/多重命中的前置判定，交 call 处理）。call 三段：
+  1. **意图重放**：`old_string` 在当前盘上命中且唯一（`replace_all` 时磁盘命中数必须等于 base 命中数）→ 直接替换；文案 `replayed (N replacement(s))`；
+  2. **三方合并**：replay 不成立且快照完整 → 把意图应用在 base 上得到 local，再与磁盘合并；结果按磁盘 BOM/EOL 还原（BOM 取磁盘，EOL 走 `writeTextContent(..., endings)`）；
+  3. **冲突**：重叠或超限 → 只回工具错误，含归属（`the web editor` / `session <sid>` / `another process`）、重叠行号、远端增删行数；**不写盘**。
+- **settings 文件**：合并/replay 的最终内容仍过 `validateInputForSettingsFileEdit`，非法即失败不写盘。
+- **web 注入**：合并引擎不再有 web 副本（原 `web-src/sidebar/work/work-merge.js` 已删）。`scripts/bundle-web-modules.ts` 以 `TS_PIECES` 占位件读 `src/utils/threeWayMerge.ts` → `Bun.Transpiler` 转译 → 去 `export ` → 首行注入 `/* @module __ts_three_way_merge__ */` marker，满足 `slicePieces`「marker 恰命中 1 次」契约。
+
+**残余竞态（明确边界，非已解决）**：合并只消除本进程的异步交错；「读盘 → 合并 → 写盘」之间不插 `await`，但仍**不能**阻止 web 网关、外部编辑器或另一 CLI 在该亚毫秒窗口内写入，最后写者仍可能覆盖对方。恢复靠写前 `fileHistoryTrackEdit` 备份。不引入文件锁/CAS：Windows 无原生 CAS，外部编辑器不参与锁协议，锁只覆盖 Floria 自家进程，收益不抵失效锁/审批延迟。
+
+**验证**：`probes/probe-three-way-merge.ts` **12 过 / 0 败**；`probes/probe-concurrent-write.ts` **23 过 / 0 败**；`probes/probe-file-modifier-registry.ts` **11 过 / 0 败**（含旧行兼容、本会话跳过、web 不跳过、自定义 projectRoot）；`bun scripts/bundle-web-modules.ts` 自检通过。
 
 ## 工具搜索可用性（`utils/toolSearch.ts`）
 

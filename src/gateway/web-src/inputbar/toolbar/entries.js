@@ -8,7 +8,7 @@ import { hashOf } from '../../engine/sessions.js'
 import { ALL } from '../../engine/state.js'
 import { MGR, projSkillsOf } from '../../sidebar/mgr-data.js'
 import { pendingImages, uploadedMentionItems } from '../images.js'
-import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, mention, toolbarQueryText } from '../mention.js'
+import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, mention } from '../mention.js'
 import { MOCK_COMMANDS, cmd } from '../commands.js'
 import { pick, pickAll, pickItems, pickSearchKick } from './pick.js'
 import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
@@ -16,7 +16,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   // ---------- 条目分组（+ 工具栏入口视图的唯一真源）----------
   // 搜索结果**不分组也不截断**（2026-10-25 用户定案：@ 唤起同一工具栏、扁平按时间排列）；
   // groupOf 只服务 + 工具栏的入口视图（每类一屏）与首屏两组（上传 / 浏览）。
-  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathref: '文件', pathwait: '文件' }
+  const GROUP_OF = { imgpick: '上传', filepick: '上传', attref: '上传', session: '聊天', plugin: '技能', skill: '技能', path: '文件', pathup: '文件', pathwait: '文件' }
   function groupOf(it) {
     return GROUP_OF[it.kind] || '指令'
   }
@@ -28,12 +28,12 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
     { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
     { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
   ]
-  // 过滤查询唯一来源 = 底栏输入框文本（2026-10-14 待办 20 返修）：弃独立搜索框——旧框每次 input 都
-  // innerHTML 重渲并**重建框自身**，IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，
-  // 底栏 contenteditable 原样不动，中文 IME 正常。命令前缀 / 由 cmdEntries 剥。
-  function barQuery() {
-    // 剥离已落地的 chip 令牌：令牌不是检索词，夹在 q 里会让「底栏有引用件时」所有搜索零命中。
-    return toolbarQueryText()
+  // 过滤查询唯一来源 = 锚点（`@` 位置 / 「+」点击时的光标）到光标的文本 = `mention.q`。
+  // 弃独立搜索框（2026-10-14 待办 20 返修）：旧框每次 input 都 innerHTML 重渲并**重建框自身**，
+  // IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，中文 IME 正常。
+  // 命令前缀 / 由本函数剥。
+  function cmdQuery() {
+    return mention.q.trim().toLowerCase().replace(/^\//, '')
   }
 
   // 弹窗的统一条目源（@ 模式与 + 工具栏搜索共用；+ 的入口视图另走 cmdEntries）。
@@ -140,8 +140,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   function pickProgressRenders() {
     if (cmd.view === 'file') return true
     if (cmd.view) return false
-    const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
-    return !!q && (!cmd.mentionMode ? q !== cmd.q0 : true)
+    return !!cmdQuery()
   }
   // 文件清单是流式产出的（BFS 每批即并入）：跑完且零命中才报「无匹配」，未跑完就在尾部挂
   // 「搜索中…」——有命中照常列出，用户不必干等全量索引。base = 推入搜索结果前的行数（文件视图无「返回」行）。
@@ -153,17 +152,14 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   // 浮窗滚动量保持的「同一屏」判据：模式 / 视图 / 查询词 / 当前浏览层任一变化 = 换了一屏，
   // 旧 scrollTop 必须作废（否则新屏带着上一屏的滚动量，分组标题被顶上裁掉半截）。
   function cmdViewKey() {
-    const q = (cmd.mentionMode ? mention.q : toolbarQueryText()).toLowerCase()
-    return `${cmd.mentionMode ? '@' : '+'}|${cmd.view || ''}|${q}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
+    return `${cmd.view || ''}|${cmdQuery()}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
   }
   function cmdEntries() {
-    // 查询词：@ 模式 = @ 后到光标的文本；+ 模式 = 底栏全文（剥掉可能的前导 /）。
-    const q = (cmd.mentionMode ? mention.q : barQuery()).trim().toLowerCase().replace(/^\//, '')
+    const q = cmdQuery()
     const match = (s) => !q || String(s || '').toLowerCase().includes(q)
     const items = []
     // 范围判据（2026-10-25 用户定案）：**进了某一类视图 = 查询只在该类里搜**；没进视图时
-    // @ 后有查询词 = 跨类扁平全局搜索（不按类隔离、按时间混排）。只输入 @ 而无查询词 =
-    // 等价于唤出工具栏首屏（与 + 一致）。+ 模式底栏文本只过滤当前入口视图，从不触发全局搜索。
+    // 锚点后有查询词 = 跨类扁平全局搜索。无查询词 = 首屏入口（@ 刚打出 / 刚点 + 都是这一态）。
     if (cmd.view) {
       // 文件视图不叠「导航/返回」（2026-11-05 用户定案）：它自带「上级目录」，两行同图标上箭头 + 两个分组标题
       // 看着像两栏叠在一起；文件视图的退出走 Esc / 点浮窗外（pathup 行同时承担层内上行）。
@@ -186,18 +182,10 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       }
       return items
     }
-    if (cmd.mentionMode && q) {
+    if (q) {
       items.push(...mentionItems(q))
       pushSearchState(items)
       pickSearchKick(() => { if (cmd.open) renderCmdPop() }) // 清单未跑完 → 流式补渲
-      return items
-    }
-    // + 模式检索：开窗后才输入的词 = 跨类全局搜索（与 @ 同源，选中追加到输入栏末尾）。
-    // 开窗时底栏已有的文本（cmd.q0）当正文不当查询——否则「写了一半点 +」会被筛成空壳。
-    if (q && q !== cmd.q0) {
-      items.push(...mentionItems(q))
-      pushSearchState(items)
-      pickSearchKick(() => { if (cmd.open) renderCmdPop() })
       return items
     }
     // 首屏入口：两个上传动作 + 已上传附件的引用行 + 四类入口

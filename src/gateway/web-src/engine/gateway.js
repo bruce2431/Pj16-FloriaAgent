@@ -72,6 +72,11 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       .appr-card{overflow:hidden;width:100%;border:1px solid var(--warn-line);border-radius:20px;background:var(--bg);box-shadow:0 4px 12px 0 rgba(0,0,0,.02),0 2px 8px 0 rgba(0,0,0,.04)}
       .appr-strip{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--warn-bg);color:var(--warn-fg);font-size:13px;line-height:18px}
       .appr-strip .appr-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--warn-fg)}
+      /* 计划审批（ExitPlanMode）：条带行尾复制按钮，复制计划 Markdown 原文（approval.js renderApproval） */
+      .appr-strip .appr-plan-copy{margin-left:auto;flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:6px;background:transparent;color:inherit;cursor:pointer;opacity:.8}
+      .appr-strip .appr-plan-copy:hover{background:color-mix(in srgb,var(--warn-fg) 14%,transparent);opacity:1}
+      .appr-strip .appr-plan-copy svg{width:15px;height:15px;display:block}
+      .appr-strip .appr-plan-copy.copied{color:var(--ok-fg);opacity:1}
       /* 2026-09-10 用户定案「审批栏拉到合适高度、不出滑条」：旧定值 200px 让十几行的命令体（Edit 的
          old/new_string 等）恒出滚动条=又丑又要二次滚。改为视口预算——正文吃满自然高度，上限=视口高
          减 260px（黄条带 38 + 按钮行 60 + 底距 22 + 聊天区至少可见 ~140），只有真超屏才滚（真边界，

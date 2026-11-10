@@ -149,12 +149,9 @@ import { pickHome } from './scope.js'
       }
       return items
     }
-    if (pick.path) {
-      items.push({ kind: 'pathup', name: '上级目录', path: pickParent() })
-      // 目录引用（2026-11-08 用户定案）：层内浏览时目录行仍下钻，目录本身要能引用 ⇒ 固定一行
-      // 「引用此目录」插当前层（ptype=dir，令牌 [@目录:path]）；搜索命中里的目录行直接插入引用。
-      items.push({ kind: 'pathref', name: '引用此目录', path: pick.path, ptype: 'dir' })
-    }
+    // 层内上行（2026-11-10 目录行交互对齐 dsh）：目录行点击 = 引用该目录，行尾「进入目录」按钮 / Tab
+    // = 下钻；此前目录行点击即下钻、另设「引用此目录」固定行，两个手势挤在同一层里反而要记两套。
+    if (pick.path) items.push({ kind: 'pathup', name: '上级目录', path: pickParent() })
     if (pick.loading || !pick.entries) return items
     for (const e of pick.entries) {
       if (ql && !String(e.name).toLowerCase().includes(ql)) continue

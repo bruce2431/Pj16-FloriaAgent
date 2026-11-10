@@ -8,6 +8,7 @@
   let wkLiveBusy = false
   let wkLivePendingMtime = null // 连续两次 HEAD 得到同一个新 mtime 才采纳（防 AI 非原子写读到半截）
   let wkLivePausedKey = ''      // 冲突未处置时的 (proj\path)；换文件自动解除
+  let wkLiveKickPending = false // 探测在途时收到的立即重试请求：本轮收尾后补跑，不丢（保存 409 后的合并不能等下一轮）
 
   function wkLiveKey() {
     return state.workProj + '\n' + state.workFile
@@ -25,6 +26,7 @@
   function wkLiveReset() {
     wkLivePendingMtime = null
     wkLivePausedKey = ''
+    wkLiveKickPending = false
     setWkRemoteNote('')
   }
 
@@ -42,6 +44,11 @@
 
   // 立即探测一次（保存 409 后由保存链调用；跳过「两次确认」，冲突处置不能再等一轮）
   function wkLiveKick() {
+    // 探测在途：记下待办，由 finally 补跑——否则 409 后的强制合并会被静默丢弃，白等一轮轮询
+    if (wkLiveBusy) {
+      wkLiveKickPending = true
+      return
+    }
     wkLiveTick(true)
   }
 
@@ -96,11 +103,17 @@
       /* 瞬时网络错误忽略，下轮重试 */
     } finally {
       wkLiveBusy = false
+      if (wkLiveKickPending) {
+        wkLiveKickPending = false
+        wkLiveTick(true)
+      }
     }
   }
 
   // 采纳一次外部变更：拉新内容 → 无脏直接换 / 有脏三方合并写回
   async function wkLiveAdopt(proj, path, seq, headMtime) {
+    // 探测期间自动保存在途：它的写盘会推进基线/磁盘 mtime，此刻采纳会基于旧基线，交给下一轮重判
+    if (wkEdSaving) return
     const res = await fetch(fileUrl(path), { cache: 'no-store' })
     if (proj !== state.workProj || path !== state.workFile || seq !== edSeq) return
     if (!res.ok) return
@@ -124,6 +137,8 @@
 
   // 有脏：三方合并（base = 上次磁盘基线 wkEdText）→ 写回；409 = 期间磁盘又变 → 重取重合并
   async function wkLiveMergeAndSave(proj, path, seq, remote, baseMtime, retries) {
+    // 在途保存会让 base/磁盘再变：跳过本轮，下一轮重新取远端重合并（不能在这里判冲突）
+    if (wkEdSaving) return
     const merged = wkMerge3(wkEdText, wkEdDocText(), remote)
     if (!merged.ok) {
       return wkLiveConflict(
@@ -134,6 +149,9 @@
     }
     if (merged.text !== wkEdDocText()) {
       if (!wkEdApplyRemote(merged.text)) return
+      // 合并结果是必须落盘的本地内容：程序性 dispatch 不记脏，这里按「与磁盘基线是否一致」补脏，
+      // 否则并发保存刚好在合并前落盘时，这次合并会被 wkEdSave 判成 clean 而静默丢失。
+      wkEdDirty = wkEdDocText() !== wkEdText
     }
     wkEdMtime = baseMtime
     const r = await wkEdSave({})
@@ -141,6 +159,8 @@
       wkLiveReset()
       return
     }
+    // busy = 另一笔保存在途（紧随其后的自动保存会带上本次合并内容），不是冲突，下一轮重判
+    if (r === 'busy') return
     if (r !== 'conflict' || retries <= 0) {
       return wkLiveConflict('外部改动频繁且与本地编辑重叠，已保留本地内容')
     }

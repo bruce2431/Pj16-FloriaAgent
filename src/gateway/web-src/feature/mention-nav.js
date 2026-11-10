@@ -7,6 +7,7 @@
 // 落到当前项目的 work 插件页；引用（qjump）保持原行为（reply → chat scroll；file → work scroll）。
 // 依赖方向：feature → engine/core 与同层 sidebar（setSbMode / selectProject 为共享 IIFE 内的函数声明）。
 import { cardBus } from '../engine/card-bus.js'
+import { apiUrl } from '../engine/gateway.js'
 import { ALL, state } from '../engine/state.js'
 import { findSession, hashOf, loadSessions } from '../engine/sessions.js'
 import { splitSessionToken, unescapeMentionPath } from '../core/mention-syntax.js'
@@ -147,6 +148,24 @@ import { setSbMode } from '../sidebar/work.js'
       if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
       return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 })
     }
+  }
+
+  // 消息内文件引用 chip 的「在资源管理器中打开」（dsh 文件卡同形）：复用 work 文件树同一条
+  // `/gateway/file/reveal`（网关侧 shell API 打开 + 置顶），不新增后端。路径口径同 chip 跳转：
+  // 按项目 label 前缀解析，文件=父目录选中、目录=直接打开。
+  async function revealMentionPath(raw) {
+    const r = resolveMentionPath(raw)
+    const res = await fetch(apiUrl('/gateway/file/reveal'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: r.project, path: r.rel }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error((data && data.error) || '打开失败')
+  }
+
+  async function activateMentionReveal(raw) {
+    try { await revealMentionPath(raw) } catch (e) { toast((e && e.message) || String(e)) }
   }
 
   async function activateMention(target) {

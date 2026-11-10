@@ -1753,6 +1753,7 @@ export function memoryFilesToAttachments(
         offset: undefined,
         limit: undefined,
         isPartialView: memoryFile.contentDiffersFromDisk,
+        source: 'attachment',
       })
 
 
@@ -2539,6 +2540,7 @@ export function filterDuplicateMemoryAttachments(
           timestamp: m.mtimeMs,
           offset: undefined,
           limit: m.limit,
+          source: 'attachment',
         })
       }
       return filtered.length > 0 ? { ...attachment, memories: filtered } : null

@@ -445,6 +445,7 @@ export const NotebookEditTool = buildTool({
         timestamp: getFileModificationTime(fullPath),
         offset: undefined,
         limit: undefined,
+        source: 'notebook',
       })
       recordFileModifier(fullPath)
       const data = {

@@ -312,7 +312,13 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     wkEdState('保存中…', 'dirty')
     let conflict = false
     try {
-      const payload = { label: state.workProj, path: state.workFile, content }
+      const payload = {
+        label: state.workProj,
+        path: state.workFile,
+        content,
+        // 归因：CLI 撞车时能说出「web editor / 哪个 web 会话改的」（网关只做格式校验）。
+        sid: state.currentHash || '',
+      }
       if (!force && wkEdMtime !== null) payload.baseMtime = wkEdMtime
       const res = await fetch(apiUrl('/gateway/file/write'), {
         method: 'POST',

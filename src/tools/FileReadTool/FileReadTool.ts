@@ -847,6 +847,7 @@ async function callInner(
       timestamp: Math.floor(stats.mtimeMs),
       offset,
       limit,
+      source: 'notebook',
     })
     context.nestedMemoryAttachmentTriggers?.add(fullFilePath)
 
@@ -1021,14 +1022,21 @@ async function callInner(
 
   // --- Text file (single async read via readFileInRange) ---
   const lineOffset = offset === 0 ? 0 : offset - 1
-  const { content, lineCount, totalLines, totalBytes, readBytes, mtimeMs } =
-    await readFileInRange(
-      resolvedFilePath,
-      lineOffset,
-      limit,
-      limit === undefined ? maxSizeBytes : undefined,
-      context.abortController.signal,
-    )
+  const {
+    content,
+    lineCount,
+    totalLines,
+    totalBytes,
+    readBytes,
+    mtimeMs,
+    truncatedByBytes,
+  } = await readFileInRange(
+    resolvedFilePath,
+    lineOffset,
+    limit,
+    limit === undefined ? maxSizeBytes : undefined,
+    context.abortController.signal,
+  )
 
   await validateContentTokens(content, ext, maxTokens)
 
@@ -1037,6 +1045,8 @@ async function callInner(
     timestamp: Math.floor(mtimeMs),
     offset,
     limit,
+    source: 'read',
+    truncated: truncatedByBytes === true,
   })
   context.nestedMemoryAttachmentTriggers?.add(fullFilePath)
 

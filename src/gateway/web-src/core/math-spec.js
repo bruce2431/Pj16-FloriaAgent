@@ -12,9 +12,10 @@
   const MATH_SRC_BLOCK_BRACKET = '\\\\\\[([\\s\\S]+?)\\\\\\]' // \[…\]（可跨行）
   const MATH_SRC_INLINE_PAREN = '\\\\\\(([\\s\\S]+?)\\\\\\)'  // \(…\)（行内）
   const MATH_SRC_INLINE_DOLLAR = '\\$([^$\\n]+?)\\$'          // $…$（单行）
-  // 行内 $…$ 假阳性防护：首尾不留空白、不紧跟数字（避免 "$5 and $10" 这类货币被误吃）。
-  // 与 core/markdown.js 2026-10-06 定案同判据（提取到本层后行为不变）。
-  const mathInlineOk = (body) => !/^\s/.test(body) && !/\s$/.test(body) && !/^\d/.test(body)
+  // 行内 $…$ 假阳性防护：首尾不留空白；数字开头仅在正文无 LaTeX 结构时视为货币（"$5 and $10"）。
+  // 有反斜杠命令 / ^ / _ / {} 的数字开头（如 "$200\text{-}800^\circ/\mathrm{s}$"）仍按公式渲染。
+  const mathInlineOk = (body) => !/^\s/.test(body) && !/\s$/.test(body) &&
+    !(/^\d/.test(body) && !/[\\^_{}]/.test(body))
   // 抽取顺序契约：块级先于行内（否则 $$ 被 $ 抢占）。消费方按此序依次 replace。
   const MATH_EXTRACT_ORDER = ['blockDollar', 'blockBracket', 'inlineParen', 'inlineDollar']
 

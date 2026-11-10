@@ -406,7 +406,8 @@ async function applySedEdit(simulatedEdit: {
     content: newContent,
     timestamp: getFileModificationTime(absoluteFilePath),
     offset: undefined,
-    limit: undefined
+    limit: undefined,
+    source: 'tool-write'
   });
   recordFileModifier(absoluteFilePath);
 

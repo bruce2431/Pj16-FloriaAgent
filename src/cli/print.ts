@@ -3046,6 +3046,7 @@ function runHeadlessStreaming(
                 timestamp: diskMtime,
                 offset: undefined,
                 limit: undefined,
+                source: 'seed',
               })
             }
           } catch {

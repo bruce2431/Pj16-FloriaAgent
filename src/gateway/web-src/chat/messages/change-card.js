@@ -1,8 +1,7 @@
 // 文件变更汇总卡片（+N/-N）：路径归一/增删解析/聚合/渲染 + 折叠事件委托
-import { esc } from '../../core/util.js'
 import { sessionCwd } from '../../engine/sessions.js'
 import { messagesEl } from '../../engine/state.js'
-import { CHEV } from './icons.js'
+import { changesCardHtml } from '../../core/delivery-ui.js'
 /* @module chat/messages/change-card.js */
   // ---- 文件变更汇总卡片（Codex 风格：+N 绿 / -N 红）----
   // 数据源（2026-08-23 起）：源码 conversationDisplay.ts 在 tool_result 块上输出结构化
@@ -52,17 +51,12 @@ import { CHEV } from './icons.js'
   }
   function renderChangeCardHtml(changes, key) {
     if (!changes || !changes.size) return ''
-    let totalAdd = 0, totalDel = 0
-    let rows = ''
-    for (const [path, c] of changes) {
-      totalAdd += c.added
-      totalDel += c.removed
-      rows += `<div class="ch-row"><span class="ch-file">${esc(relFromCwd(path))}</span><span class="ch-add">+${c.added}</span><span class="ch-del">-${c.removed}</span></div>`
-    }
-    // 2026-08-19 默认折叠：卡片落地即为收起姿态（标题行 + ▸），点右上角展开文件列表
-    // 2026-08-26：key 可选（messagesHtml 段尾传入 s.key）→ 带 data-m/data-t 供增量重建定位删除；
-    // 实时 commitLiveChangeCard 不带 key（无 data-m，属消息流外手动追加，不受增量删除影响）
-    return `<div class="msg change-card collapsed"${key != null ? ` data-m="${key}" data-t="c"` : ''}><div class="ch-title"><span class="ch-count">${changes.size}个文件已更改</span><span class="ch-add">+${totalAdd}</span><span class="ch-del">-${totalDel}</span><button class="ch-toggle" title="收起/展开文件列表">${CHEV}</button></div><div class="ch-list">${rows}</div></div>`
+    // 视觉与折叠结构归 @floria/web 的 delivery 组件族（changesCardHtml）；本处只把聚合结果
+    // 归一为展示用相对路径数组。key 可选（messagesHtml 段尾传入 s.key）→ 带 data-m/data-t 供
+    // 增量重建定位删除；实时行不带 key（无 data-m，属消息流外手动追加，不受增量删除影响）。
+    const files = []
+    for (const [path, c] of changes) files.push({ path: relFromCwd(path), added: c.added, removed: c.removed })
+    return `<div class="msg change-card"${key != null ? ` data-m="${key}" data-t="c"` : ''}>${changesCardHtml(files)}</div>`
   }
 
   // ---- 文件变更汇总卡片：历史/实时统一由 messagesHtml 段尾 seg.changes 数据驱动渲染
@@ -70,12 +64,12 @@ import { CHEV } from './icons.js'
   //     commitLiveChangeCard 链随 WS out 流退役删除（网关从不投递 out，2026-09-07 定案）----
   // 卡片右上角隐藏按钮：点击切换列表收起/展开（事件委托，innerHTML 重建不受影响）
   document.addEventListener('click', (e) => {
-    const btn = e.target && e.target.closest ? e.target.closest('.ch-toggle') : null
+    const btn = e.target && e.target.closest ? e.target.closest('[data-chg-toggle]') : null
     if (!btn || !messagesEl.contains(btn)) return
-    const card = btn.closest('.change-card')
+    const card = btn.closest('.chg')
     if (!card) return
-    const collapsed = card.classList.toggle('collapsed')
-    btn.innerHTML = CHEV
-    btn.classList.toggle('open', !collapsed)
+    const open = card.classList.toggle('open')
+    const total = card.querySelectorAll('.chg-row').length
+    btn.textContent = open ? '收起' : `全部 ${total} 个文件`
   })
 

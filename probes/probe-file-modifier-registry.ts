@@ -10,9 +10,11 @@
  * （整文件重写在多会话并发追加下有丢行竞态，不值）。
  */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 import {
+  fileModifierSuffix,
   findFileModifier,
   recordFileModifier,
 } from '../src/utils/fileModifierRegistry.ts'
@@ -69,6 +71,54 @@ check(
 check(
   'D 未记录路径不误报',
   findFileModifier(resolve('.claude', 'never-recorded.tmp'), 0) === undefined,
+)
+
+// E: 旧行（无 w 字段）仍按 CLI 会话归因
+const legacyTarget = resolve('.claude', `probe-fm-legacy-${Date.now()}.tmp`)
+const legacyKey =
+  process.platform === 'win32' ? legacyTarget.toLowerCase() : legacyTarget
+appendFileSync(
+  registry,
+  JSON.stringify({ p: legacyKey, sid: 'legacy-sid', ts: Date.now() }) + '\n',
+  'utf8',
+)
+check(
+  'E 旧行兼容按 session 归因',
+  findFileModifier(legacyTarget, 0) === 'legacy-sid',
+)
+
+// F: 本会话自己的写入不算「他人修改」
+const ownTarget = resolve('.claude', `probe-fm-own-${Date.now()}.tmp`)
+recordFileModifier(ownTarget)
+check('F 本会话写入跳过', findFileModifier(ownTarget, 0) === undefined)
+
+// G: web 写者单独归因，且不回落 CLI sid
+const webTarget = resolve('.claude', `probe-fm-web-${Date.now()}.tmp`)
+const webKey =
+  process.platform === 'win32' ? webTarget.toLowerCase() : webTarget
+appendFileSync(
+  registry,
+  JSON.stringify({ p: webKey, w: 'web', sid: '', ts: Date.now() }) + '\n',
+  'utf8',
+)
+check('G1 web 写者归因', findFileModifier(webTarget, 0) === 'web')
+check(
+  'G2 web 文案',
+  fileModifierSuffix(webTarget, 0) === ' (last modified by the web editor)',
+  fileModifierSuffix(webTarget, 0),
+)
+
+// H: projectRoot 选项改写落点（网关进程用自己的 cwd 会写错项目）
+const customRoot = join(tmpdir(), `probe-fm-root-${Date.now()}`)
+const customTarget = join(customRoot, 'src', 'x.ts')
+recordFileModifier(customTarget, { projectRoot: customRoot })
+check(
+  'H1 projectRoot 指定注册表落点',
+  existsSync(join(customRoot, '.claude', 'file-mods.jsonl')),
+)
+check(
+  'H2 projectRoot 读侧一致',
+  findFileModifier(customTarget, 0, { projectRoot: customRoot }) === undefined, // 本会话写入，仍跳过
 )
 
 console.log(`[probe-file-modifier-registry] ${pass} pass / ${fail} fail`)

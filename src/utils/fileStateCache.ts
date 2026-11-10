@@ -1,6 +1,16 @@
 import { LRUCache } from 'lru-cache'
 import { normalize } from 'path'
 
+// 缓存条目来源。只有 read / tool-write / seed 的 content 可充当三方合并的 base：
+// notebook 的 content 是 cells JSON（非文件正文），attachment 是注入片段，
+// 二者即便看起来完整也不能当 base。
+export type FileStateSource =
+  | 'read'
+  | 'tool-write'
+  | 'notebook'
+  | 'attachment'
+  | 'seed'
+
 export type FileState = {
   content: string
   timestamp: number
@@ -12,6 +22,10 @@ export type FileState = {
   // Edit/Write must require an explicit Read first. `content` here holds the
   // RAW disk bytes (for getChangedFiles diffing), not what the model saw.
   isPartialView?: boolean
+  source?: FileStateSource
+  // True when the cached text was clipped (byte cap / line cap) and therefore
+  // does not cover the whole file. Never usable as a merge base.
+  truncated?: boolean
 }
 
 // Default max entries for read file state caches

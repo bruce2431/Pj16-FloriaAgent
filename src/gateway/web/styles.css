@@ -541,7 +541,7 @@ a { text-decoration: none; color: inherit; }
  * 2026-09-09 定案「充满该行」：flex:1 1 0 基准 0 只吃 summary 剩余整行（v269 一度用
  * flex:0 1 auto——基准=max-content 把行撑溢出、连 .think-state（min-width:auto=CJK 单字
  * 宽）一起压成逐字换行「正在思考」折三行实测，故基准必须为 0；min-width:0 允许裁切；删
- * 56ch/62vw 封顶——封顶在行内留死空）；保尾照抄 .ch-file 实证配方（direction:rtl +
+ * 56ch/62vw 封顶——封顶在行内留死空）；保尾照抄 .chg-path 实证配方（direction:rtl +
  * text-align:left，新输出固定可见、头部溢出）——原 unicode-bidi:plaintext 在内容以
  * 拉丁字符开头时把基方向解析成 LTR、裁切边反转（保尾失效），删除；左缘渐隐收短到 1.5em。 */
 .think-stream {
@@ -694,53 +694,13 @@ a { text-decoration: none; color: inherit; }
   white-space: pre-wrap; word-break: break-word;
 }
 
-/* 文件变更汇总卡片（Codex 风格浮窗：白底圆角阴影，行间浅灰细线，右上角隐藏按钮收起/展开列表） */
-.change-card {
-  margin: 8px 0 2px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.07);
-  font-size: 13px; line-height: 1.5; overflow: hidden;
-}
-.change-card .ch-title {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 12px; font-weight: 600; color: var(--text-1);
-}
-.change-card .ch-count { margin-right: auto; }
-/* 右上角隐藏按钮：默认 opacity 0，hover 卡片才浮现（移动端恒显），点击收起/展开列表 */
-.change-card .ch-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border: none; background: none; border-radius: 6px;
-  color: var(--text-3); font-size: 12px; line-height: 1; cursor: pointer;
-  opacity: 0; transition: opacity 0.15s;
-}
-.change-card:hover .ch-toggle,
-.change-card .ch-toggle:hover { opacity: 1; }
-.change-card .ch-toggle:hover { background: var(--hover-ink); }
-/* 2026-08-21：切换箭头改 DSH chevron SVG，展开态旋转 90° 指向下 */
-.change-card .ch-toggle svg { width: 12px; height: 12px; display: block; transition: transform 0.2s ease; }
-.change-card .ch-toggle.open svg { transform: rotate(90deg); }
-@media (hover: none) { .change-card .ch-toggle { opacity: 1; } }
-body.touch .change-card .ch-toggle { opacity: 1; } /* 真触屏恒显（iPad 伪装 hover:hover，同 body.touch 段） */
-.change-card .ch-list { border-top: 1px solid var(--border-soft); }
-.change-card .ch-row {
-  display: flex; align-items: baseline; gap: 8px; padding: 7px 12px;
-}
-/* 每行文件之间一条浅灰细线 */
-.change-card .ch-row + .ch-row { border-top: 1px solid var(--border-soft); }
-.change-card.collapsed .ch-list { display: none; }
-.change-card .ch-file {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  /* 相对路径显示（2026-08-29）：路径较长溢出时省略头部、保留尾部（文件名端）可见（rtl 方向技巧） */
-  direction: rtl; text-align: left;
-  font-family: var(--mono); font-size: 12px; color: var(--text-2);
-}
-.change-card .ch-add { color: #16a34a; font-weight: 600; font-variant-numeric: tabular-nums; }
-.change-card .ch-del { color: #dc2626; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* 文件变更汇总卡片的视觉与折叠结构归 @floria/web 包的 delivery 组件族（.chg / .chg-row /
+   .chg-toggle，随 floria-web.css 发布）；宿主只保留 .msg 定位壳（data-m/data-t 增量重建锚点）。 */
 
 /* 实时内联变更行（2026-08-26 任务 C）：替代原输入栏上方悬浮胶囊（#live-change 已移除）。
    文件变更聚合行渲染在处理折叠（done-fold body）内，与消息流绑定一体——弱化小字文本行
    （无背景/无边框/无圆角，不再像胶囊），+N 绿 / -N 红沿用汇总卡片配色；
-   回合结束收拢为 .change-card 汇总卡片 */
+   回合结束收拢为变更汇总卡片（@floria/web delivery 组件族） */
 .change-inline {
   display: inline-flex; align-items: baseline; gap: 6px;
   margin: 1px 0 2px 4px; padding: 0;
@@ -1307,6 +1267,9 @@ body.kb-open #input-wrap { transition: none; }
 .mention-chip.m-path .mc-t,
 .mention-chip.m-plugin .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
+/* chip 悬停选中态与「在资源管理器中打开」按钮归 @floria/cm6 包（产物 floria-cm6.iife.js 注入
+   #floria-cm6-style），宿主此处不再持有。 */
+
 /* ===== 项目选择器 #proj-root（2026-09-02）：初始界面工具行 + 右侧目标项目切换 =====
    外观=dsh .trigger 同族（28px chip）；弹层=cmd-pop 同表面（r12 白底 shadow-lv3，向上弹出）。
    空态=目标项目选择（可点切换）；会话态（#chat-area.in-session）=工作文件夹标识保留显示
@@ -1396,7 +1359,10 @@ body.kb-open #input-wrap { transition: none; }
   cursor: pointer; font-size: 13px; color: var(--ink);
   border: none; background: transparent; text-align: left; width: 100%;
 }
-#cmd-pop .row:hover, #cmd-pop .row.rowActive { background: var(--hover-ink); }
+/* 行悬停 = 浅蓝选中态（对齐 dsh）：整行底色提示「这一行就是当前项」，比中性灰更明确。 */
+#cmd-pop .row:hover, #cmd-pop .row.rowActive { background: rgba(77, 107, 254, 0.12); }
+html[data-theme="dark"] #cmd-pop .row:hover,
+html[data-theme="dark"] #cmd-pop .row.rowActive { background: rgba(77, 107, 254, 0.24); }
 /* 行图标块 = dsh MenuView `.itemIcon` 逐字（`width:14px;height:14px;display:inline-flex;
    align-items:center;justify-content:center`）：**裸图标，无背景/圆角，颜色随行文本**。
    旧版是 floria 自造件——26px 灰底 #f2f3f5 + 7px 圆角 + 灰字 #6b7076：1px 细描线坐在浅灰底上
@@ -1411,6 +1377,20 @@ body.kb-open #input-wrap { transition: none; }
 #cmd-pop .detail { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #cmd-pop .check { display: inline-flex; flex: none; color: var(--ink); }
 #cmd-pop .check svg { width: 16px; height: 16px; }
+/* 目录行行尾「进入目录 Tab ›」（与 dsh 同形）：点行 = 引用该目录，点按钮 / Tab = 下钻。
+   默认隐形（行距不跳），悬停/高亮行才浮现；触屏没有悬停，常显。 */
+#cmd-pop .dirEnter {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; margin-left: 4px;
+  padding: 1px 5px; border-radius: 6px; font-size: 11px; line-height: 16px; color: var(--ink-3);
+  opacity: 0; transition: opacity 0.12s ease; white-space: nowrap;
+}
+#cmd-pop .row:hover .dirEnter, #cmd-pop .row.rowActive .dirEnter { opacity: 1; }
+#cmd-pop .dirEnter kbd {
+  font-family: inherit; font-size: 10px; line-height: 14px; padding: 0 4px;
+  border: 1px solid var(--hairline-2); border-radius: 4px; background: var(--bg); color: var(--ink-3);
+}
+#cmd-pop .dirEnter .de-c { font-size: 14px; line-height: 1; }
+@media (hover: none) { #cmd-pop .dirEnter { opacity: 1; } }
 /* 项目技能行尾的编号标记（项目根 .claude/skills 的条目）：随 .detail 之后贴右，窄号不换行 */
 #cmd-pop .projTag {
   flex: none; margin-left: 4px; padding: 0 5px; border: 1px solid var(--hairline-2); border-radius: 6px;

@@ -25,7 +25,7 @@ import { isEnvTruthy } from '../../utils/envUtils.js'
 import { isENOENT } from '../../utils/errors.js'
 import { getFileModificationTime, writeTextContent } from '../../utils/file.js'
 import {
-  fileModifierSuffix,
+  findFileModifier,
   recordFileModifier,
 } from '../../utils/fileModifierRegistry.js'
 import {
@@ -39,6 +39,15 @@ import {
   fetchSingleFileGitDiff,
   type ToolUseDiff,
 } from '../../utils/gitDiff.js'
+import {
+  formatConcurrentChangeError,
+  formatConcurrentMergeNote,
+  hasUtf8Bom,
+  isCompleteReadSnapshot,
+  mergeTextWithPolicy,
+  readSnapshotMatchesDisk,
+} from '../../utils/concurrentWrite.js'
+import { wkLineDelta } from '../../utils/threeWayMerge.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { logError } from '../../utils/log.js'
 import { expandPath } from '../../utils/path.js'
@@ -92,6 +101,10 @@ const outputSchema = lazySchema(() =>
         'The original file content before the write (null for new files)',
       ),
     gitDiff: gitDiffSchema().optional(),
+    concurrentNote: z
+      .string()
+      .optional()
+      .describe('Set when the content was three-way merged with a concurrent disk change'),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>
@@ -195,12 +208,11 @@ export const FileWriteTool = buildTool({
     }
 
     const fs = getFsImplementation()
-    let fileMtimeMs: number
     try {
-      const fileStat = await fs.stat(fullFilePath)
-      fileMtimeMs = fileStat.mtimeMs
+      await fs.stat(fullFilePath)
     } catch (e) {
       if (isENOENT(e)) {
+        // 新建文件不需要先 Read；并发判定与合并都在 call 内按磁盘内容做。
         return { result: true }
       }
       throw e
@@ -216,21 +228,8 @@ export const FileWriteTool = buildTool({
       }
     }
 
-    // Reuse mtime from the stat above — avoids a redundant statSync via
-    // getFileModificationTime. The readTimestamp guard above ensures this
-    // block is always reached when the file exists.
-    const lastWriteTime = Math.floor(fileMtimeMs)
-    if (lastWriteTime > readTimestamp.timestamp) {
-      const suffix = fileModifierSuffix(fullFilePath, readTimestamp.timestamp)
-      return {
-        result: false,
-        message: suffix
-          ? `File has been modified since read${suffix}. Read it again before attempting to write it.`
-          : 'File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.',
-        errorCode: 3,
-      }
-    }
-
+    // 磁盘是否被并发改动不在这里按 mtime 判死：mtime 会被同步/杀软等无关写入
+    // 抬高，且 EOL/BOM/末尾换行差异不算修改。判定统一放 call 的快照比对里。
     return { result: true }
   },
   async call(
@@ -289,26 +288,49 @@ export const FileWriteTool = buildTool({
       }
     }
 
+    let finalContent = content
+    let concurrentNote: string | undefined
     if (meta !== null) {
-      const lastWriteTime = getFileModificationTime(fullFilePath)
       const lastRead = readFileState.get(fullFilePath)
-      if (!lastRead || lastWriteTime > lastRead.timestamp) {
-        // Timestamp indicates modification, but on Windows timestamps can change
-        // without content changes (cloud sync, antivirus, etc.). For full reads,
-        // compare content as a fallback to avoid false positives.
-        const isFullRead =
-          lastRead &&
-          lastRead.offset === undefined &&
-          lastRead.limit === undefined
-        // meta.content is CRLF-normalized — matches readFileState's normalized form.
-        if (!isFullRead || meta.content !== lastRead.content) {
+      if (!lastRead) {
+        throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
+      }
+      // 行尾/BOM/末尾换行差异不算并发修改；只有内容真变了才走合并。
+      if (!readSnapshotMatchesDisk(lastRead.content, meta.content)) {
+        const modifier = findFileModifier(fullFilePath, lastRead.timestamp)
+        if (!isCompleteReadSnapshot(lastRead)) {
           throw new Error(
-            FILE_UNEXPECTEDLY_MODIFIED_ERROR +
-              (lastRead
-                ? fileModifierSuffix(fullFilePath, lastRead.timestamp)
-                : ''),
+            formatConcurrentChangeError({ reason: 'no-merge-base', modifier }),
           )
         }
+        const merged = mergeTextWithPolicy({
+          base: lastRead.content,
+          local: content,
+          remote: meta.content,
+          encoding: meta.encoding,
+        })
+        if (!merged.ok) {
+          throw new Error(
+            formatConcurrentChangeError({
+              reason: merged.reason,
+              modifier,
+              conflictLine:
+                merged.reason === 'conflict' ? merged.conflictLine : undefined,
+              remoteChanges:
+                merged.reason === 'conflict' ? merged.remoteChanges : undefined,
+            }),
+          )
+        }
+        finalContent = merged.text
+        // Write 是整篇替换：换行风格与 BOM 跟随模型给出的内容。
+        if (content.includes('\r\n')) {
+          finalContent = finalContent.replaceAll('\n', '\r\n')
+        }
+        if (hasUtf8Bom(content)) finalContent = '\uFEFF' + finalContent
+        concurrentNote = formatConcurrentMergeNote({
+          modifier,
+          changes: wkLineDelta(lastRead.content, meta.content),
+        })
       }
     }
 
@@ -320,7 +342,7 @@ export const FileWriteTool = buildTool({
     // the old file's line endings (or sampled the repo via ripgrep for new
     // files), which silently corrupted e.g. bash scripts with \r on Linux when
     // overwriting a CRLF file or when binaries in cwd poisoned the repo sample.
-    writeTextContent(fullFilePath, content, enc, 'LF')
+    writeTextContent(fullFilePath, finalContent, enc, 'LF')
 
     // Notify LSP servers about file modification (didChange) and save (didSave)
     const lspManager = getLspServerManager()
@@ -328,7 +350,7 @@ export const FileWriteTool = buildTool({
       // Clear previously delivered diagnostics so new ones will be shown
       clearDeliveredDiagnosticsForFile(`file://${fullFilePath}`)
       // didChange: Content has been modified
-      lspManager.changeFile(fullFilePath, content).catch((err: Error) => {
+      lspManager.changeFile(fullFilePath, finalContent).catch((err: Error) => {
         logForDebugging(
           `LSP: Failed to notify server of file change for ${fullFilePath}: ${err.message}`,
         )
@@ -344,14 +366,15 @@ export const FileWriteTool = buildTool({
     }
 
     // Notify VSCode about the file change for diff view
-    notifyVscodeFileUpdated(fullFilePath, oldContent, content)
+    notifyVscodeFileUpdated(fullFilePath, oldContent, finalContent)
 
     // Update read timestamp, to invalidate stale writes
     readFileState.set(fullFilePath, {
-      content,
+      content: finalContent,
       timestamp: getFileModificationTime(fullFilePath),
       offset: undefined,
       limit: undefined,
+      source: 'tool-write',
     })
     recordFileModifier(fullFilePath)
 
@@ -382,7 +405,7 @@ export const FileWriteTool = buildTool({
         edits: [
           {
             old_string: oldContent,
-            new_string: content,
+            new_string: finalContent,
             replace_all: false,
           },
         ],
@@ -391,10 +414,11 @@ export const FileWriteTool = buildTool({
       const data = {
         type: 'update' as const,
         filePath: file_path,
-        content,
+        content: finalContent,
         structuredPatch: patch,
         originalFile: oldContent,
         ...(gitDiff && { gitDiff }),
+        ...(concurrentNote && { concurrentNote }),
       }
       // Track lines added and removed for file updates, right before yielding result
       countLinesChanged(patch)
@@ -414,14 +438,15 @@ export const FileWriteTool = buildTool({
     const data = {
       type: 'create' as const,
       filePath: file_path,
-      content,
+      content: finalContent,
       structuredPatch: [],
       originalFile: null,
       ...(gitDiff && { gitDiff }),
+      ...(concurrentNote && { concurrentNote }),
     }
 
     // For creation of new files, count all lines as additions, right before yielding the result
-    countLinesChanged([], content)
+    countLinesChanged([], finalContent)
 
     logFileOperation({
       operation: 'write',
@@ -435,7 +460,8 @@ export const FileWriteTool = buildTool({
     }
   },
   mapToolResultToToolResultBlockParam(data: Output, toolUseID) {
-    const { filePath, type, content, structuredPatch } = data
+    const { filePath, type, content, structuredPatch, concurrentNote } = data
+    const note = concurrentNote ? ` ${concurrentNote}.` : ''
     switch (type) {
       case 'create': {
         // 新文件：全行算新增
@@ -443,7 +469,7 @@ export const FileWriteTool = buildTool({
         return {
           tool_use_id: toolUseID,
           type: 'tool_result',
-          content: `File created successfully at: ${filePath} (+${added} -0)`,
+          content: `File created successfully at: ${filePath} (+${added} -0).${note}`,
         }
       }
       case 'update': {
@@ -452,7 +478,7 @@ export const FileWriteTool = buildTool({
         return {
           tool_use_id: toolUseID,
           type: 'tool_result',
-          content: `The file ${filePath} has been updated successfully (+${added} -${removed}).`,
+          content: `The file ${filePath} has been updated successfully (+${added} -${removed}).${note}`,
         }
       }
     }
