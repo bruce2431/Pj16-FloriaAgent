@@ -5,6 +5,8 @@ import {
   logEvent,
 } from '../../services/analytics/index.js'
 import { queryHaiku } from '../../services/api/claude.js'
+import { getWebFetchCredentials } from '../../utils/credentials/pool.js'
+import { postDeepSeekTools } from '../../utils/credentials/deepseekWebTools.js'
 import { AbortError } from '../../utils/errors.js'
 import { getWebFetchUserAgent } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
@@ -412,6 +414,44 @@ export async function getURLMarkdownContent(
       throw e
     }
     logError(e)
+  }
+
+  // Explicit DeepSeek Fetch backend: the API returns page Markdown directly,
+  // so the local GET + Turndown path is skipped. Strict — a failure surfaces.
+  const fetchConfig = getWebFetchCredentials()
+  if (fetchConfig.backend === 'deepseek') {
+    const result = await postDeepSeekTools(
+      'fetch',
+      { url: upgradedUrl },
+      {
+        baseUrl: fetchConfig.deepseekBaseUrl,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        signal: abortController.signal,
+      },
+    )
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+    // The Fetch API answers `{ content: "<page markdown>" }`, not a bare body.
+    let content: string
+    try {
+      const payload = JSON.parse(result.text) as { content?: unknown }
+      if (typeof payload.content !== 'string') {
+        throw new Error('missing content string')
+      }
+      content = payload.content
+    } catch {
+      throw new Error('DeepSeek Fetch returned a malformed response (expected JSON { content })')
+    }
+    const entry: CacheEntry = {
+      bytes: Buffer.byteLength(content),
+      code: 200,
+      codeText: 'OK',
+      content,
+      contentType: 'text/markdown',
+    }
+    URL_CACHE.set(url, entry, { size: Math.max(1, entry.bytes) })
+    return entry
   }
 
   const response = await getWithPermittedRedirects(

@@ -19,6 +19,7 @@ import type {
   PricingConfig,
   ProviderConfig,
   ToolBinding,
+  WebFetchCredentials,
   WebSearchCredentials,
 } from './types.js'
 
@@ -100,6 +101,9 @@ export function loadCredentials(): CredentialsFile {
     // be silently wiped on the next write.
     if (typeof data.webSearch === 'object' && data.webSearch !== null) {
       creds.webSearch = data.webSearch as WebSearchCredentials
+    }
+    if (typeof data.webFetch === 'object' && data.webFetch !== null) {
+      creds.webFetch = data.webFetch as WebFetchCredentials
     }
     // 同理由：定价覆盖段必须原样带走，否则 /key 轮换会清掉用户的价格覆盖
     if (typeof data.pricing === 'object' && data.pricing !== null) {
@@ -344,6 +348,14 @@ export function getGlobalActiveModel(): string | null {
  */
 export function getWebSearchCredentials(): WebSearchCredentials {
   return loadCredentials().webSearch ?? {}
+}
+
+/**
+ * Get the WebFetch tool's backend configuration section.
+ * Returns {} when never configured (local HTTP + Turndown).
+ */
+export function getWebFetchCredentials(): WebFetchCredentials {
+  return loadCredentials().webFetch ?? {}
 }
 
 /**

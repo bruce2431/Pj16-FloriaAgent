@@ -25,7 +25,7 @@ CRITICAL REQUIREMENT - You MUST follow this:
 
 Usage notes:
   - The query is passed through to the locally configured search backend, so operators such as site:example.com, filetype:pdf, intitle:word, -term, and "exact phrase" may work when the backend supports them
-  - Results come from the backend configured in the webSearch section of credentials.json (searxng, brave, tavily, or exa)
+  - Results come from the backend configured in the webSearch section of credentials.json (searxng, brave, tavily, exa, or deepseek)
 
 IMPORTANT - Use the correct year in search queries:
   - The current month is ${currentMonthYear}. You MUST use this year when searching for recent information, documentation, or current events.

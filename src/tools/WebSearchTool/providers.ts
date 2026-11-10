@@ -10,6 +10,10 @@
  */
 
 import { getWebSearchCredentials } from '../../utils/credentials/pool.js'
+import {
+  getDeepSeekWebApiKey,
+  postDeepSeekTools,
+} from '../../utils/credentials/deepseekWebTools.js'
 
 export interface WebHit {
   title: string
@@ -245,11 +249,52 @@ const exa: SearchProvider = {
   },
 }
 
-export const SEARCH_PROVIDERS: SearchProvider[] = [searxng, brave, tavily, exa]
+// ── DeepSeek Search API — native search endpoint (no auxiliary model turn) ───
+
+const DEEPSEEK_SEARCH_MAX_COUNT = 50
+
+const deepseek: SearchProvider = {
+  name: 'deepseek',
+  isAvailable() {
+    return Boolean(getDeepSeekWebApiKey())
+  },
+  async search(query, limit, signal) {
+    const response = await postDeepSeekTools(
+      'search',
+      {
+        query,
+        count: Math.max(1, Math.min(limit, DEEPSEEK_SEARCH_MAX_COUNT)),
+        need_content: false,
+      },
+      { baseUrl: getWebSearchCredentials().deepseekBaseUrl, signal },
+    )
+    if (!response.ok) return { success: false, error: response.error }
+
+    let parsed: { results?: Record<string, unknown>[] }
+    try {
+      parsed = JSON.parse(response.text) as { results?: Record<string, unknown>[] }
+    } catch {
+      return { success: false, error: 'DeepSeek Search returned malformed JSON' }
+    }
+    const rawResults = parsed.results ?? []
+    return {
+      success: true,
+      hits: rawResults.slice(0, limit).map(r => ({
+        title: str(r.title),
+        url: str(r.url),
+        // `snippet` is the display excerpt; `summary` is the longer model-facing one.
+        description: str(r.snippet) || str(r.summary),
+      })),
+    }
+  },
+}
+
+export const SEARCH_PROVIDERS: SearchProvider[] = [searxng, brave, tavily, exa, deepseek]
 
 // Autodetect preference for never-configured setups (Hermes order, restricted
 // to the ported set): keyed vendors before the self-hosted URL before free-tier.
-const AUTODETECT_ORDER = ['tavily', 'exa', 'searxng', 'brave']
+// DeepSeek is last so an already-configured vendor always wins.
+const AUTODETECT_ORDER = ['tavily', 'exa', 'searxng', 'brave', 'deepseek']
 
 export type ResolvedProvider =
   | { provider: SearchProvider }
@@ -273,7 +318,7 @@ export function resolveSearchProvider(): ResolvedProvider {
     }
     if (!provider.isAvailable()) {
       return {
-        error: `Web search backend "${explicit}" is selected but not usable — set its API key (or SearXNG URL) in the webSearch section of credentials.json.`,
+        error: `Web search backend "${explicit}" is selected but not usable — set its API key (or SearXNG URL) in the webSearch section of credentials.json; the deepseek backend uses the pool's deepseek provider key (or webSearch.keys.deepseek).`,
       }
     }
     return { provider }

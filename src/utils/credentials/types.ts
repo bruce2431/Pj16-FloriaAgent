@@ -135,6 +135,10 @@ export interface CredentialsFile {
    */
   webSearch?: WebSearchCredentials
   /**
+   * WebFetch tool backend configuration. `undefined` = local HTTP + Turndown.
+   */
+  webFetch?: WebFetchCredentials
+  /**
    * 模型定价覆盖（见 utils/modelPricing.ts）。全部字段可选，缺省即走
    * 「厂商官网价目 → models.dev 目录」自动链路。
    */
@@ -172,10 +176,26 @@ export interface PricingConfig {
  * LLM provider pool — one global source of truth for API keys.
  */
 export interface WebSearchCredentials {
-  /** Explicit backend selection (searxng | brave | tavily | exa); autodetect when unset. */
+  /** Explicit backend selection (searxng | brave | tavily | exa | deepseek); autodetect when unset. */
   backend?: string
   /** Self-hosted SearXNG instance base URL (enables the searxng backend). */
   searxngUrl?: string
-  /** Vendor API keys, keyed by backend name (brave | tavily | exa). */
+  /** Vendor API keys, keyed by backend name (brave | tavily | exa | deepseek). */
   keys?: Record<string, string>
+  /**
+   * DeepSeek Search/Fetch API base (default `https://api.deepseek.com/v1/tools`,
+   * or the origin of the deepseek provider baseUrl + `/v1/tools`).
+   */
+  deepseekBaseUrl?: string
+}
+
+/**
+ * WebFetch backend selection. `http` (default) fetches locally and converts HTML
+ * with Turndown; `deepseek` calls the DeepSeek Fetch API and returns its Markdown
+ * directly. The backend is strict — a failure surfaces, never silently reroutes.
+ */
+export interface WebFetchCredentials {
+  backend?: 'http' | 'deepseek'
+  /** DeepSeek tools base override; defaults to the same resolution as search. */
+  deepseekBaseUrl?: string
 }

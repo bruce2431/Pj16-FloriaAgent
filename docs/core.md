@@ -109,9 +109,17 @@ allow/deny/ask + defaultMode 兜底；路径匹配 gitignore 语义（`@/`=便�
 
 `src/tools/WebSearchTool/`（WebSearchTool.ts + providers.ts + prompt.ts/UI.tsx）。**架构移植自 Hermes Agent web_tools**（参考源码 `C:\Users\Ma2431\AppData\Local\hermes\hermes-agent\plugins\web\`）：搜索为**纯客户端本地执行**（进程内 JSON HTTP），与推理 API 服务端工具能力解耦——任何模型 provider（GLM 反代等）都可用。原 Anthropic 服务端 `web_search_20250305` server-tool 链退役；原 isEnabled 的 provider 门控同步移除。
 
-- **后端四家**（`providers.ts`，每家约 40 行 JSON HTTP）：`searxng`（自托管实例 `searxngUrl`，免 key，score 降序）/ `brave`（free-tier Data-for-Search，count 上限 20）/ `tavily`（/search，上限 20）/ `exa`（REST 直连不带 SDK，highlights 摘要拼接）。未移植：ddgs（Python 包爬虫，TS 无等价）、xai（仍是服务端路线）、firecrawl/parallel/keenable/perplexity（extract 向，正文抓取已由 WebFetch 覆盖）。
-- **密钥与选择走全局密钥池**：credentials.json（`getClaudeConfigHomeDir()`，本机=全局根 `@WrokSpace\.claude\`）顶层 `webSearch` 段——`{ backend?: string, searxngUrl?: string, keys?: { brave|tavily|exa: string } }`；`loadCredentials` 白名单放行该段（load→save round-trip，否则被 /key 写操作冲掉），取值口 `getWebSearchCredentials()`（pool.ts）。后端选择：显式 `backend` **严格不换道**（不可用即报错，不静默 reroute）→ 从未配置过才自动探测（tavily→exa→searxng→brave）→ 全无则工具隐藏 + call 返回配置指引。密钥单源=池（不做 env 双轨）。
+- **后端五家**（`providers.ts`，每家约 40 行 JSON HTTP）：`searxng`（自托管实例 `searxngUrl`，免 key，score 降序）/ `brave`（free-tier Data-for-Search，count 上限 20）/ `tavily`（/search，上限 20）/ `exa`（REST 直连不带 SDK，highlights 摘要拼接）/ `deepseek`（DeepSeek Search API `POST /v1/tools/search`，count 1–50，返回 `snippet` 优先、缺省用 `summary`）。未移植：ddgs（Python 包爬虫，TS 无等价）、xai（仍是服务端路线）、firecrawl/parallel/keenable/perplexity（extract 向，正文抓取已由 WebFetch 覆盖）。
+- **DeepSeek Search/Fetch API 传输口**：`utils/credentials/deepseekWebTools.ts`——`postDeepSeekTools(operation, body, …)` 统一 Bearer 鉴权、超时与取消；key 解析 = `webSearch.keys.deepseek` 显式覆盖 → 池内 `providers.deepseek` 的可用钥匙（`getProviderApiKey`，跳过冷却中 exhausted）；base 解析 = `webSearch.deepseekBaseUrl` / `webFetch.deepseekBaseUrl` → deepseek provider `baseUrl` 的 origin + `/v1/tools` → 官方 `https://api.deepseek.com/v1/tools`。
+- **密钥与选择走全局密钥池**：credentials.json（`getClaudeConfigHomeDir()`，本机=全局根 `@WrokSpace\.claude\`）顶层 `webSearch` 段——`{ backend?: string, searxngUrl?: string, keys?: { brave|tavily|exa|deepseek: string }, deepseekBaseUrl?: string }`；`loadCredentials` 白名单放行该段（load→save round-trip，否则被 /key 写操作冲掉），取值口 `getWebSearchCredentials()`（pool.ts）。后端选择：显式 `backend` **严格不换道**（不可用即报错，不静默 reroute）→ 从未配置过才自动探测（tavily→exa→searxng→brave→deepseek）→ 全无则工具隐藏 + call 返回配置指引。密钥单源=池（不做 env 双轨）。
 - **工具面**：isEnabled = 显式 backend 存在 ‖ 任一后端可用；输入 schema = `query + limit(1-100，默认 5)`（域名过滤走 `site:` 等运算符由后端自行支持）；输出 `Output` 形状 {query, results, durationSeconds}（SearchResult.tool_use_id 语义=后端名），UI 渲染链零改动；错误以字符串条目进 results（模型可见）。密钥写入暂为手编 credentials.json（/key 面板接入待做）。
+
+### WebFetch 抓取后端
+
+`src/tools/WebFetchTool/` 的 `getURLMarkdownContent` 先过 URL 校验与域名 blocklist 预检，再按 `credentials.json` 顶层 `webFetch` 段选抓取后端：
+
+- `http`（缺省）= 本地 axios GET + Turndown 转 Markdown + 二进制落盘；重定向走 `isPermittedRedirect` 白名单。
+- `deepseek` = `POST /v1/tools/fetch {url}`，响应为 JSON `{ content: "<整页 Markdown>" }`（不是裸 body），跳过本地 GET/Turndown；**严格不回落**，失败或响应缺 `content` 直接报错。配置 `{ backend?: "http" | "deepseek", deepseekBaseUrl?: string }`，取值口 `getWebFetchCredentials()`；`loadCredentials` 白名单透传该段。后续 `applyPromptToMarkdown` 二次模型总结链不变。
 
 ## 动态模型定价（`utils/modelPricing.ts` + `utils/modelCost.ts`）
 
