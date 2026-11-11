@@ -63,9 +63,105 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     })
   }
 
+  // ---------- 编辑器显示设置浮窗（右键编辑区唤出，Obsidian 式） ----------
+  // 行宽/行号开关 + 两档间距，改动即时生效并写 localStorage（work-cm.js），不需要确认按钮。
+  const WK_EDP_LEVELS = [['tight', '紧凑'], ['normal', '标准'], ['loose', '宽松']]
+  // 行宽/行号图标照 Obsidian（Lucide）：ruler / list-ordered；间距用方向箭头表达。
+  const WK_EDP_ICONS = {
+    width: '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/>',
+    lines: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+    lineHeight: '<path d="M12 2v20"/><path d="m8 6 4-4 4 4"/><path d="m8 18 4 4 4-4"/>',
+    gutterGap: '<path d="M2 12h20"/><path d="m6 8-4 4 4 4"/><path d="m18 8 4 4-4 4"/>',
+  }
+  const wkEdpIcon = (k) => '<span class="wk-edp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + WK_EDP_ICONS[k] + '</svg></span>'
+  let wkEdPrefsPop = null
+  let wkEdPrefsBound = false
+
+  function wkEdPrefsPopHtml() {
+    const p = wkEdGetPrefs()
+    const seg = (k) => '<div class="wk-edp-seg">' + WK_EDP_LEVELS.map(([v, label]) =>
+      `<button type="button" data-k="${k}" data-v="${v}" class="${p[k] === v ? 'on' : ''}" aria-pressed="${p[k] === v}">${label}</button>`).join('') + '</div>'
+    const sw = (k, label, on) => `<div class="wk-edp-row">${wkEdpIcon(k)}<span class="wk-edp-label">${label}</span>` +
+      `<button type="button" class="wk-edp-switch${on ? ' on' : ''}" data-switch="${k}" role="switch" aria-checked="${on}" aria-label="${label}"></button></div>`
+    return (
+      '<div class="wk-edp-head">编辑器显示</div>' +
+      sw('width', '限制行宽', !!p.width) +
+      sw('lines', '行号', !!p.lines) +
+      `<div class="wk-edp-row">${wkEdpIcon('lineHeight')}<span class="wk-edp-label">行距</span>${seg('lineHeight')}</div>` +
+      `<div class="wk-edp-row">${wkEdpIcon('gutterGap')}<span class="wk-edp-label">行号间距</span>${seg('gutterGap')}</div>`
+    )
+  }
+  // 按当前偏好回写面板选中态（不重建面板，避免点完失焦/闪）。
+  function wkEdPrefsSync() {
+    if (!wkEdPrefsPop) return
+    const p = wkEdGetPrefs()
+    wkEdPrefsPop.querySelectorAll('[data-switch]').forEach((sw) => {
+      const on = !!p[sw.dataset.switch]
+      sw.classList.toggle('on', on)
+      sw.setAttribute('aria-checked', String(on))
+    })
+    wkEdPrefsPop.querySelectorAll('.wk-edp-seg button').forEach((b) => {
+      const on = p[b.dataset.k] === b.dataset.v
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
+    })
+  }
+  function wkEdPrefsClose() {
+    if (wkEdPrefsPop) { wkEdPrefsPop.remove(); wkEdPrefsPop = null }
+  }
+  function wkEdPrefsOpen(x, y) {
+    wkEdPrefsClose()
+    const pop = document.createElement('div')
+    pop.className = 'wk-ed-prefs-pop'
+    pop.innerHTML = wkEdPrefsPopHtml()
+    document.body.appendChild(pop)
+    const w = pop.offsetWidth
+    const h = pop.offsetHeight
+    const vv = window.visualViewport
+    const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+    pop.style.left = Math.round(Math.max(8, Math.min(x, window.innerWidth - w - 8))) + 'px'
+    pop.style.top = Math.round(Math.max(8, Math.min(y, bottom - h - 8))) + 'px'
+    pop.addEventListener('contextmenu', (e) => e.preventDefault())
+    pop.addEventListener('click', (e) => {
+      const sw = e.target.closest('[data-switch]')
+      if (sw) {
+        const k = sw.dataset.switch
+        wkEdSetPrefs({ [k]: !wkEdGetPrefs()[k] })
+        wkEdPrefsSync()
+        return
+      }
+      const b = e.target.closest('.wk-edp-seg button')
+      if (b) {
+        wkEdSetPrefs({ [b.dataset.k]: b.dataset.v })
+        wkEdPrefsSync()
+      }
+    })
+    wkEdPrefsPop = pop
+  }
+  // 绑定一次：右键落在编辑器（.wk-ed-cm）内才接管；点面板外 / Esc / 编辑器滚动即收起。
+  function wkEdPrefsBind() {
+    if (wkEdPrefsBound) return
+    const body = $('wk-ed-body')
+    if (!body) return
+    wkEdPrefsBound = true
+    body.addEventListener('contextmenu', (e) => {
+      if (!e.target.closest('.wk-ed-cm')) return
+      e.preventDefault()
+      wkEdPrefsOpen(e.clientX, e.clientY)
+    })
+    document.addEventListener('pointerdown', (e) => {
+      if (wkEdPrefsPop && !wkEdPrefsPop.contains(e.target)) wkEdPrefsClose()
+    }, true)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && wkEdPrefsPop) wkEdPrefsClose()
+    })
+    body.addEventListener('scroll', wkEdPrefsClose, true) // 编辑器滚走即收（浮窗不跟随内容）
+  }
+
   function renderEditor() {
     const body = $('wk-ed-body')
     if (!body) return
+    wkEdPrefsClose()
     if (!state.workFile) {
       wkEdReset()
       body.innerHTML = '<div class="wk-ed-empty">从左侧文件树选择一个文件</div>'
@@ -123,6 +219,7 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     // 子节点）；仅当 readFile 置了 wkEdPendingDoc（新文件）才换文档 + 热换语言，否则保留编辑器现状
     // （重渲不得用陈旧基线覆盖用户未保存的编辑）。
     wkEditor.attach(body)
+    wkEdPrefsBind()
     const fresh = wkEdPendingDoc !== null
     if (fresh) {
       wkEdSetLang(state.workFile)

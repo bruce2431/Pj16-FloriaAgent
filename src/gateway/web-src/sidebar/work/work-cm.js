@@ -21,8 +21,29 @@
     return apiUrl(`/gateway/file?label=${encodeURIComponent(state.workProj)}&path=${encodeURIComponent(p)}`)
   }
 
+  // ---------- 编辑器显示偏好（限制行宽 / 行号 / 行距 / 行号间距） ----------
+  // 全局一套、localStorage 记忆：所有文件与项目共用，刷新/重开保持。档位名由包内映射到实际值。
+  const WK_ED_PREF_KEY = 'floria.wkEditorPrefs'
+  const WK_ED_PREF_DEF = { width: true, lines: true, lineHeight: 'normal', gutterGap: 'normal' }
+  function wkEdPrefsLoad() {
+    try {
+      const p = JSON.parse(localStorage.getItem(WK_ED_PREF_KEY) || '{}')
+      return { ...WK_ED_PREF_DEF, ...(p && typeof p === 'object' ? p : {}) }
+    } catch (e) { return { ...WK_ED_PREF_DEF } }
+  }
+  let wkEdPrefs = wkEdPrefsLoad()
+  function wkEdGetPrefs() { return { ...wkEdPrefs } }
+  // 部分更新：先落 localStorage 再交包内 reconfigure（view 未建时只记状态，建 view 时生效）。
+  function wkEdSetPrefs(patch) {
+    wkEdPrefs = { ...wkEdPrefs, ...(patch || {}) }
+    try { localStorage.setItem(WK_ED_PREF_KEY, JSON.stringify(wkEdPrefs)) } catch (e) {}
+    wkEditor.setPrefs(wkEdPrefs)
+    return wkEdPrefs
+  }
+
   // ---------- CM6 引擎实例（包内惰性建单 view，跨文件复用） ----------
   const wkEditor = FloriaCM6.createWorkEditor({
+    prefs: wkEdPrefs,
     apiUrl: (p) => apiUrl(p),
     getWorkProj: () => state.workProj,
     getWorkFile: () => wkEdFile,
