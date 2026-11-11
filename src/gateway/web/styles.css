@@ -1103,17 +1103,25 @@ body.kb-open #input-wrap { transition: none; }
 /* @ 提及浮窗样式已退役（2026-10-25）：输入 @ 直接唤起 #cmd-pop（工具栏是唯一弹窗），
    搜索结果扁平按时间排列，不再有独立浮窗与分组标题 */
 
-/* 输入栏内的 @ chip（contenteditable 内联，整体可删除，尾随一个空格）
-   2026-10-09 用户定案：去灰色胶囊底、蓝字、字号随输入文本（inherit = #input-bar 16px），图标同蓝同尺寸 */
-.mention {
-  /* 行内模型（与 dsh 链接同构）：chip 文本直接走段落文本流，字号/字体/基线/抗锯齿天然与正文一致。
-     用 inline-flex 自建格式化上下文时基线取自首个 flex 项（图标盒，无文本基线），整块相对正文下沉 1px。 */
+/* 链接 chip 统一行内模型（唯一内衬定义）：底栏 .mention 两族 + 消息区 .mention-chip 各类
+   （path / session / plugin / ref）共用同一套内衬——左右各 4px（负 margin 抵消，行文零位移），
+   图标左留白由这里给出、图标右间距由包内 --chip-icon-gap 给出 ⇒ 前后与图标两侧都是等距 4px。
+   新增 chip 类型只挂到本选择器组，不得各写一套 padding/margin（此前 m-ref 写死 padding:0，
+   表现为「前面有空格、后面贴边」）。 */
+.mention,
+.mention.ref,
+.mention-chip.m-session,
+.mention-chip.m-path,
+.mention-chip.m-plugin,
+.mention-chip.m-ref,
+.mention-chip.m-ref.m-quote {
+  /* 行内模型：chip 文本直接走段落文本流，字号/字体/基线天然与正文一致（inline-flex 自建基线会下沉）。 */
   display: inline; vertical-align: baseline;
-  /* 内衬取 dsh 原值：链接本体左右各 3px（负 margin 抵消，行文零位移）。 */
-  background: transparent; border-radius: 999px; padding: 0 3px; margin: 0 -3px;
-  font: inherit; color: var(--blue); white-space: nowrap;
-  user-select: none; cursor: default;
+  background: transparent; border: none; border-radius: 0;
+  padding: 0 4px; margin: 0 -4px;
+  font: inherit; color: var(--blue);
 }
+.mention { white-space: nowrap; user-select: none; cursor: default; }
 /* chip 图标几何（尺寸 / 左右间距 / 行内对齐）唯一真源 = @floria/cm6 包 src/styles.js 的
    --chip-icon-size / --chip-icon-gap / --chip-icon-valign，宿主不持有图标尺寸规则。 */
 /* 文件名与正文同一文本流，长名随段落自然换行（不再用 inline-flex + text-overflow 截断）。 */
@@ -1124,34 +1132,13 @@ body.kb-open #input-wrap { transition: none; }
 /* 文件图标（`fileIcon()`，dsh 描线族）只用 currentColor，无内联类型色 ⇒ chip 内天然随 chip 蓝。 */
 .mention-chip.m-att { font-family: inherit; }
 
-/* 选中引用 chip（2026-09-28）：输入栏内 .mention.ref 与消息内 .mention-chip.m-ref 同族观感——
-   文件图标 + 「引用自 <文件名>」（用户定案：第一个是文件 icon）。
-   2026-10-09 用户定案：同 .mention 走「隐藏胶囊」——去描边底、蓝字、图标同蓝同尺寸、字号随周边文本。 */
-.mention.ref { background: transparent; border: none; padding: 0 4px 0 2px; color: var(--blue); }
+/* 引用 chip 只留换行口径差异（内衬/字体/颜色/行内模型已在上方统一组里）。
+   引用原文（.m-quote）= chip 内直接是引用的真实文本，长引用随容器宽度换行，不做省略号。 */
 .mention.ref .m-nm { max-width: none; }
-/* 底栏引用原文（2026-10-24）：chip 内直接是引用的真实文本（蓝紫），与消息气泡 .m-quote 同口径。
-   长引用随输入栏宽度换行（.mention 默认 nowrap/省略号只适合文件名类短标签）。 */
 .mention.ref.m-quote { white-space: normal; }
-.mention.ref.m-quote .m-nm {
-  white-space: pre-wrap; overflow-wrap: anywhere;
-}
-/* 2026-10-14 待办 21 根修：chip 族样式去 `.msg` 祖先绑定——mdHtml 渲染器有两个宿主（消息气泡
-   .msg 与底栏 md 渲染层 #input-md），样式归渲染器所有而非消息层；绑死 .msg 时渲染层里的
-   .mc-ic svg 无任何尺寸约束 → 默认 300×150 放大成巨型黑色星弧盖屏（用户截图实锤）。 */
-.mention-chip.m-ref {
-  background: transparent; border: none; padding: 0; border-radius: 0;
-  font: inherit; color: var(--blue);
-  display: inline; vertical-align: baseline;
-}
+.mention.ref.m-quote .m-nm { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mention-chip.m-ref .mc-t { display: inline; }
-/* 引用原文胶囊（2026-10-21 用户定案）：「图标 + 引用的真实文本」，蓝字，不再显示「引用自…」标签。
-   原文原先落在 blockquote 里（margin 4px / padding 2px ⇒ 与正文上下错位、且与来源标签分两行）；
-   现改为行内文本：display:inline（**不是** inline-flex）⇒ 基线天然与正文一致、长引用随气泡宽度换行；
-   图标 inline-block 与首行文字同基线（vertical-align 微调），padding/margin 归零。 */
-.mention-chip.m-ref.m-quote {
-  display: inline; vertical-align: baseline; padding: 0; margin: 0;
-  white-space: normal;
-}
+.mention-chip.m-ref.m-quote { white-space: normal; }
 .mention-chip.m-ref.m-quote .mc-t { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* 引用胶囊可点击跳转（回复 → chat 卡片 scroll{line}；文件 → work 卡片 scroll{path,line}，仅 work 模式）。
    可点性给一条 hover 下划线，不另加按钮/图标。 */
@@ -1173,27 +1160,11 @@ body.kb-open #input-wrap { transition: none; }
   padding: 0 9px; font-size: 12.5px; line-height: 1.7; color: var(--text);
   white-space: nowrap; max-width: 100%;
 }
-/* 目录 / 文件 chip（@ 路径可长）：与正文同一文本流，长名随气泡宽自然换行，不做截断 */
-/* 会话 chip（2026-10-24）：消息气泡侧与输入栏 `.mention` 同观感——会话图标 + 蓝字、无边框胶囊。
-   发送前后形态一致（此前气泡侧只有裸文本 ⇒ 实报「icon 和蓝色字体都缺失」）。 */
-.mention-chip.m-session {
-  background: transparent; border: none; padding: 0 3px; margin: 0 -3px;
-  font: inherit; color: var(--blue);
-  display: inline; vertical-align: baseline;
-  white-space: normal; overflow-wrap: anywhere;
-}
-.mention-chip.m-session .mc-t { display: inline; }
-/* 路径 / 插件 chip 同步（2026-10-24）：与底栏 `.mention` 完全同口径 = 图标 + 蓝字、无边框、
-   字号随正文（此前气泡侧是等宽灰字裸文本，发送前后 UI 不一致）。 */
+/* 会话 / 路径 / 插件 chip 只留换行口径（内衬与行内模型在上方统一组里）：长名随气泡宽自然换行，不做截断。 */
+.mention-chip.m-session,
 .mention-chip.m-path,
-.mention-chip.m-plugin {
-  background: transparent; border: none; padding: 0 3px; margin: 0 -3px;
-  font: inherit;
-  color: var(--blue);
-  /* 行内模型（同 .mention）：chip 文本走段落文本流，字号/基线由正文决定 */
-  display: inline; vertical-align: baseline;
-  white-space: normal; overflow-wrap: anywhere;
-}
+.mention-chip.m-plugin { white-space: normal; overflow-wrap: anywhere; }
+.mention-chip.m-session .mc-t,
 .mention-chip.m-path .mc-t,
 .mention-chip.m-plugin .mc-t { display: inline; }
 
