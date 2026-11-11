@@ -155,6 +155,16 @@ import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_RE, QUOTE_PDF_RE, Q
       if (MD_ATT_CODE.test(u)) {
         return `<span class="mention-chip m-path m-att" title="${u}"><span class="mc-ic">${fileIcon(u)}</span><span class="mc-t">${t}</span></span>`
       }
+      // 文件引用 `[`名`](路径:行号)`：解析与展示文本口径归 @floria/cm6（parseFileLink 单真源），
+      // 这里只落 chip DOM（与 @ 文件 chip 同族 + 行号跳转凭据），点击由 feature/mention-nav 派发。
+      const fl = window.FloriaCM6 && window.FloriaCM6.parseFileLink ? window.FloriaCM6.parseFileLink(u) : null
+      if (fl) {
+        const ph = /^\u0000(\d+)\u0000$/.exec(t)
+        const raw = ph ? (codes[+ph[1]] || '') : t
+        const label = String(raw).trim().replace(/^`(.*)`$/, '$1').trim() || fl.base
+        const disp = fl.line ? `${label}:${fl.line}${fl.lineEnd !== fl.line ? '-' + fl.lineEnd : ''}` : label
+        return `<span class="mention-chip m-path" title="${fl.path}${fl.line ? ':' + fl.line : ''}" data-mjump="path" data-mname="${fl.path}" data-mline="${fl.line || 0}" data-mptype="file"><span class="mc-ic">${fileIcon(fl.path)}</span><span class="mc-t">${disp}</span></span>`
+      }
       return MD_LINK_OK(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t
     })
     s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, p, u) => p + `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)

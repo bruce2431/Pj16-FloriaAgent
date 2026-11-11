@@ -29,7 +29,7 @@ import { setSbMode } from '../sidebar/work.js'
       return { kind: 'session', title: t.title, sid: t.sid }
     }
     if (m === 'path') {
-      return { kind: 'path', ptype: el.dataset.mptype === 'dir' ? 'dir' : 'file', path: el.dataset.mname || '' }
+      return { kind: 'path', ptype: el.dataset.mptype === 'dir' ? 'dir' : 'file', path: el.dataset.mname || '', line: Number(el.dataset.mline) || 0 }
     }
     if (m === 'plugin') return { kind: 'plugin', name: el.dataset.mname || '' }
     return null
@@ -157,7 +157,7 @@ import { setSbMode } from '../sidebar/work.js'
       const r = resolveMentionPath(t.path)
       await ensureMentionWork(r.project)
       if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
-      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 })
+      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 }) // 文件链接带行号（`[名](路径:行)`）
     }
   }
 

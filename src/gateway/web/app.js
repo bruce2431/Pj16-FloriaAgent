@@ -785,6 +785,16 @@ function setConnUp(v) { connUp = v }
       if (MD_ATT_CODE.test(u)) {
         return `<span class="mention-chip m-path m-att" title="${u}"><span class="mc-ic">${fileIcon(u)}</span><span class="mc-t">${t}</span></span>`
       }
+      // 文件引用 `[`名`](路径:行号)`：解析与展示文本口径归 @floria/cm6（parseFileLink 单真源），
+      // 这里只落 chip DOM（与 @ 文件 chip 同族 + 行号跳转凭据），点击由 feature/mention-nav 派发。
+      const fl = window.FloriaCM6 && window.FloriaCM6.parseFileLink ? window.FloriaCM6.parseFileLink(u) : null
+      if (fl) {
+        const ph = /^\u0000(\d+)\u0000$/.exec(t)
+        const raw = ph ? (codes[+ph[1]] || '') : t
+        const label = String(raw).trim().replace(/^`(.*)`$/, '$1').trim() || fl.base
+        const disp = fl.line ? `${label}:${fl.line}${fl.lineEnd !== fl.line ? '-' + fl.lineEnd : ''}` : label
+        return `<span class="mention-chip m-path" title="${fl.path}${fl.line ? ':' + fl.line : ''}" data-mjump="path" data-mname="${fl.path}" data-mline="${fl.line || 0}" data-mptype="file"><span class="mc-ic">${fileIcon(fl.path)}</span><span class="mc-t">${disp}</span></span>`
+      }
       return MD_LINK_OK(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t
     })
     s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, p, u) => p + `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)
@@ -13071,7 +13081,7 @@ function wkMerge3(base, local, remote) {
       return { kind: 'session', title: t.title, sid: t.sid }
     }
     if (m === 'path') {
-      return { kind: 'path', ptype: el.dataset.mptype === 'dir' ? 'dir' : 'file', path: el.dataset.mname || '' }
+      return { kind: 'path', ptype: el.dataset.mptype === 'dir' ? 'dir' : 'file', path: el.dataset.mname || '', line: Number(el.dataset.mline) || 0 }
     }
     if (m === 'plugin') return { kind: 'plugin', name: el.dataset.mname || '' }
     return null
@@ -13199,7 +13209,7 @@ function wkMerge3(base, local, remote) {
       const r = resolveMentionPath(t.path)
       await ensureMentionWork(r.project)
       if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
-      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 })
+      return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 }) // 文件链接带行号（`[名](路径:行)`）
     }
   }
 
@@ -14217,13 +14227,23 @@ function wkMerge3(base, local, remote) {
     if (it) selectMentionItem(it)
   }
 
+  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用 [@目录:] 令牌。
+  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
+  function fileLinkMarkdown(p) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop()
+    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    return '[\u0060' + base + '\u0060](' + url + ')'
+  }
+
   // 选中项 → 令牌 + 尾随空格替换 @查询区间（[mention.anchor, 光标]），光标到空格后。sid 仅会话
   // chip 有（寻址键，序列化为 `[会话:标题|sid]`；插件/技能无 sid）。
   function insertMention(kind, name, sid, ptype) {
     const token = kind === 'session'
       ? (sid ? `[会话:${name}|${sid}]` : `[会话:${name}]`)
       : kind === 'path'
-        ? mentionPathToken(name, ptype)
+        ? (ptype === 'dir' ? mentionPathToken(name, 'dir') : fileLinkMarkdown(name))
         : `[插件:${name}]`
     const pos = cmView ? cmView.state.selection.main.from : mention.anchor
     composerReplaceRange(mention.anchor, pos, token + ' ')

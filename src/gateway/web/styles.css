@@ -1103,27 +1103,10 @@ body.kb-open #input-wrap { transition: none; }
 /* @ 提及浮窗样式已退役（2026-10-25）：输入 @ 直接唤起 #cmd-pop（工具栏是唯一弹窗），
    搜索结果扁平按时间排列，不再有独立浮窗与分组标题 */
 
-/* 链接 chip 统一行内模型（唯一内衬定义）：底栏 .mention 两族 + 消息区 .mention-chip 各类
-   （path / session / plugin / ref）共用同一套内衬——左右各 4px（负 margin 抵消，行文零位移），
-   图标左留白由这里给出、图标右间距由包内 --chip-icon-gap 给出 ⇒ 前后与图标两侧都是等距 4px。
-   新增 chip 类型只挂到本选择器组，不得各写一套 padding/margin（此前 m-ref 写死 padding:0，
-   表现为「前面有空格、后面贴边」）。 */
-.mention,
-.mention.ref,
-.mention-chip.m-session,
-.mention-chip.m-path,
-.mention-chip.m-plugin,
-.mention-chip.m-ref,
-.mention-chip.m-ref.m-quote {
-  /* 行内模型：chip 文本直接走段落文本流，字号/字体/基线天然与正文一致（inline-flex 自建基线会下沉）。 */
-  display: inline; vertical-align: baseline;
-  background: transparent; border: none; border-radius: 0;
-  padding: 0 4px; margin: 0 -4px;
-  font: inherit; color: var(--blue);
-}
+/* 链接 chip 的行内模型、内衬（--chip-inline-pad）、图标几何、颜色与 hover 反馈唯一真源 =
+   @floria/cm6 包 src/styles.js（注入 #floria-cm6-style），宿主不持有。这里只留业务语义：
+   换行策略、可点击性光标、跳转。 */
 .mention { white-space: nowrap; user-select: none; cursor: default; }
-/* chip 图标几何（尺寸 / 左右间距 / 行内对齐）唯一真源 = @floria/cm6 包 src/styles.js 的
-   --chip-icon-size / --chip-icon-gap / --chip-icon-valign，宿主不持有图标尺寸规则。 */
 /* 文件名与正文同一文本流，长名随段落自然换行（不再用 inline-flex + text-overflow 截断）。 */
 .mention .m-nm { max-width: none; }
 /* 2026-10-24 定案：引用件不再有 ×（删除统一走原子跳过 + 退格整块删）——.m-x 样式随之退役。 */
@@ -1141,15 +1124,12 @@ body.kb-open #input-wrap { transition: none; }
 .mention-chip.m-ref.m-quote { white-space: normal; }
 .mention-chip.m-ref.m-quote .mc-t { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* 引用胶囊可点击跳转（回复 → chat 卡片 scroll{line}；文件 → work 卡片 scroll{path,line}，仅 work 模式）。
-   可点性给一条 hover 下划线，不另加按钮/图标。 */
+   hover 下划线归 @floria/cm6 包；这里只留可点性光标。 */
 .mention-chip[data-qjump],
 .mention-chip[data-mjump] { cursor: pointer; }
-.mention-chip[data-qjump]:hover .mc-t,
-.mention-chip[data-mjump]:hover .mc-t { text-decoration: underline; text-underline-offset: 2px; }
-/* 输入栏 CM6 chip 的超链接外观（包在 chips.activate 在场时给 .m-link）：与消息区同一 hover 反馈；
-   user-select:none 防拖选把 chip 当文本选中（点击落点由包内 mousedown/click 接管）。 */
+/* 输入栏 CM6 chip 的超链接外观（包在 chips.activate 在场时给 .m-link）；user-select:none
+   防拖选把 chip 当文本选中（点击落点由包内 mousedown/click 接管）。 */
 .mention.m-link { cursor: pointer; user-select: none; -webkit-user-select: none; }
-.mention.m-link:hover .m-nm { text-decoration: underline; text-underline-offset: 2px; }
 /* @ 目录 chip 跳转定位：命中行短暂高亮，说明「跳到了这里」 */
 .wk-row.wk-hit { background: var(--active); transition: background .2s ease; }
 

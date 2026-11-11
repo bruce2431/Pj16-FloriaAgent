@@ -209,13 +209,23 @@ import { pickEnter } from './toolbar/pick.js'
     if (it) selectMentionItem(it)
   }
 
+  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用 [@目录:] 令牌。
+  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
+  function fileLinkMarkdown(p) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop()
+    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    return '[\u0060' + base + '\u0060](' + url + ')'
+  }
+
   // 选中项 → 令牌 + 尾随空格替换 @查询区间（[mention.anchor, 光标]），光标到空格后。sid 仅会话
   // chip 有（寻址键，序列化为 `[会话:标题|sid]`；插件/技能无 sid）。
   function insertMention(kind, name, sid, ptype) {
     const token = kind === 'session'
       ? (sid ? `[会话:${name}|${sid}]` : `[会话:${name}]`)
       : kind === 'path'
-        ? mentionPathToken(name, ptype)
+        ? (ptype === 'dir' ? mentionPathToken(name, 'dir') : fileLinkMarkdown(name))
         : `[插件:${name}]`
     const pos = cmView ? cmView.state.selection.main.from : mention.anchor
     composerReplaceRange(mention.anchor, pos, token + ' ')
