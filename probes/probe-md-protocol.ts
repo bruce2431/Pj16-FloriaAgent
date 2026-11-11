@@ -15,8 +15,8 @@ import { resolve } from 'path'
 
 const ROOT = resolve(import.meta.dir, '..')
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8')
-// CM6 内核在独立包（Pj16-SubPj4-CM6），结构断言读包源码
-const PKG = resolve(ROOT, '../Pj16-SubPj4-CM6/src')
+// CM6 内核在独立包（SubPj4-CodeMirror6开发），结构断言读包源码
+const PKG = resolve(ROOT, '../SubPj4-CodeMirror6开发/src')
 const readPkg = (p: string) => readFileSync(resolve(PKG, p), 'utf8')
 
 let pass = 0

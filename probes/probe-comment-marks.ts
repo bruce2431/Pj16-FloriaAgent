@@ -28,7 +28,7 @@ const work = [
 ].map(read).join('\n')
 // CM6 编辑器引擎已收口到兄弟包 @floria/cm6（#71）：宿主内部（装饰器/语言 compartment/高亮/HR/表格渲染）
 // 在包内 `hosts/work-cm.js`，断言锁包源码；Floria 侧只剩适配转调。
-const workPkg = read('../Pj16-SubPj4-CM6/src/hosts/work-cm.js')
+const workPkg = read('../SubPj4-CodeMirror6开发/src/hosts/work-cm.js')
 
 let pass = 0
 let fail = 0
@@ -99,8 +99,8 @@ else bad('styles.css 缺水平线样式')
 // （.cm-line，break-spaces）不一致 ⇒ 宿主覆盖为 pre-wrap，统一到 EditorView.lineWrapping 口径
 if (/#work-editor \.cm-codeblock-widget pre \{[^}]*white-space: pre-wrap/.test(css) && /#work-editor \.cm-codeblock-widget \{[^}]*var\(--field-2\)/.test(css)) ok('styles.css 代码块 widget 按窗口软换行（pre-wrap）+ 项目令牌底/边（库 hsl(--muted) 假设失效）')
 else bad('代码块 widget 仍不换行（库 pre 的 white-space:pre 未覆盖）或未用项目令牌')
-// cm6 库补丁（兄弟包 Pj16-SubPj4-CM6/patches/）：行内标记（**加粗** 等）显隐按**父节点范围**判定
-const libPatch = read('../Pj16-SubPj4-CM6/patches/codemirror-live-markdown@0.5.1-alpha.1.patch')
+// cm6 库补丁（兄弟包 SubPj4-CodeMirror6开发/patches/）：行内标记（**加粗** 等）显隐按**父节点范围**判定
+const libPatch = read('../SubPj4-CodeMirror6开发/patches/codemirror-live-markdown@0.5.1-alpha.1.patch')
 if (/INLINE_REVEAL_PARENTS/.test(libPatch) && /revealNode\.from/.test(libPatch)) ok('vendored 库补丁：行内标记显隐按父节点范围（光标落在内容中间即整块显码）')
 else bad('vendored 库缺行内显隐补丁（**加粗** 仍需光标贴 * 才显码）')
 // 表格单元格 md 渲染：库 TableWidget.toDOM 原为 th/td `textContent=`（纯文本，格内 md 原样吐出）；

@@ -70,7 +70,7 @@
 
 ## Changelog（`releaseNotes.ts`）
 
-源 = 本仓库 GitHub Release（`api.github.com/repos/bruce2431/Floria/releases`，取 `body` 的 `- ` 行转 `## <version>`），版本变化时后台拉取写入 `<配置根>/cache/changelog.md`（会被覆盖，**禁手写**）；取不到网络不清缓存，沿用上次内容。**展示过滤**：只取新于 `lastReleaseNotesSeen` 的版本；同 base semver（dev 构建仅变 build metadata）无新条目时回落最新一版，避免 What's new 恒空。标准 → [standards.md](standards.md) §8。
+源 = 本仓库 GitHub Release（`api.github.com/repos/bruce2431/Pj16-FloriaAgent/releases`，取 `body` 的 `- ` 行转 `## <version>`），版本变化时后台拉取写入 `<配置根>/cache/changelog.md`（会被覆盖，**禁手写**）；取不到网络不清缓存，沿用上次内容。**展示过滤**：只取新于 `lastReleaseNotesSeen` 的版本；同 base semver（dev 构建仅变 build metadata）无新条目时回落最新一版，避免 What's new 恒空。标准 → [standards.md](standards.md) §8。
 
 ## 沙箱权限（`permissions/`）
 

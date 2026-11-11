@@ -27,7 +27,7 @@
 ├── .claude/              ← 便携全局配置根（settings/skills/plugins；会话与自动记忆均在项目级）
 │   └── .claude-portable  ← 便携标记（在配置根内部，不可移动/删除）
 ├── Pj16-CodeAgent构建/   ← 项目根（非仓库根）
-│   ├── Floria/           ← 源码构建区 + 权威标准 = git 仓库根（远程 bruce2431/Floria）
+│   ├── Floria/           ← 源码构建区 + 权威标准 = git 仓库根（远程 bruce2431/Pj16-FloriaAgent）
 │   │   ├── src/ scripts/ probes/ assets/ package.json node_modules/ …
 │   │   ├── docs/         ← 文档库（本文件 + build/glossary/core/gateway/web-ui/README）
 │   │   └── README.md     ← 仓库说明
@@ -196,7 +196,7 @@ description: <何时用/怎么用，一句话，供 Skill 工具自动命中>
 
 ## 8. Changelog 标准
 
-- **源 = 本仓库 GitHub Release**（`https://api.github.com/repos/bruce2431/Floria/releases`）。启动时版本变化即后台拉取，`releasesToChangelog()` 只取每个 release `body` 的 `- ` 行、转成 `## <version>` 段落写进 `<配置根>/cache/changelog.md`（供 "What's new" 展示）；取不到网络时**不清缓存**，沿用上次成功内容。发布流程须保证 Release 正文用 `- ` bullet（→ CLAUDE.md「发布规则」）。
+- **源 = 本仓库 GitHub Release**（`https://api.github.com/repos/bruce2431/Pj16-FloriaAgent/releases`）。启动时版本变化即后台拉取，`releasesToChangelog()` 只取每个 release `body` 的 `- ` 行、转成 `## <version>` 段落写进 `<配置根>/cache/changelog.md`（供 "What's new" 展示）；取不到网络时**不清缓存**，沿用上次成功内容。发布流程须保证 Release 正文用 `- ` bullet（→ CLAUDE.md「发布规则」）。
 - **展示语义**：默认只显示比 `lastReleaseNotesSeen` 新的版本条目；但条目键是 base semver（如 `3.48.0`）而 dev 构建每版只变 build metadata（`+YYYYMMDD.tHHMMSS`）⇒ 同一 base 永远不算「新」，直接过滤会让 What's new 恒空。故过滤结果为空时**回落展示最新一版的条目**（`getRecentReleaseNotes` 内，与 `/release-notes` 命令的空结果回落同义）。
 - `cache/changelog.md` 是 **App 展示缓存**，会被网络拉取**覆盖**，**禁止手工往里写**。
 - **禁止**在 `@WrokSpace` 根创建 `CHANGELOG.md`——官方惯例在本 fork 不适用，App 不读它。
@@ -222,7 +222,7 @@ description: <何时用/怎么用，一句话，供 Skill 工具自动命中>
 | 全局配置根 | `~/.claude` | `@WrokSpace/.claude`（`.claude/.claude-portable` 标记逐级向上找） |
 | 插件发现 | marketplace + `--plugin-dir` | 额外扫描 `.claude/plugins/`（@pluginsdir 原地插件） |
 | MCP 命名空间 | `mcp__<server>__*` | `mcp__plugin_<plugin name>_<server>__*` |
-| Changelog | 根 CHANGELOG.md / 官方 release 源 | **本仓库 GitHub Release**（`api.github.com/repos/bruce2431/Floria/releases`）→ `cache/changelog.md` |
+| Changelog | 根 CHANGELOG.md / 官方 release 源 | **本仓库 GitHub Release**（`api.github.com/repos/bruce2431/Pj16-FloriaAgent/releases`）→ `cache/changelog.md` |
 | 构建 | npm 官方发布流程 | `bun --compile --bytecode` 自包含单文件（→ [build.md](build.md)） |
 | 项目 `.claude/` | trust/onboarding 触发创建 | **惰性创建**（首次写项目设置才 mkdir；会话存储的 `.claude/projects/` 写会话时自动建） |
 | 会话/记忆存储 | 全局 `~/.claude/projects/` 统一 | **会话/自动记忆均项目级、平铺**：会话 `<项目>/.claude/projects/*.jsonl`，记忆 `<项目>/.claude/projects/memory/` |

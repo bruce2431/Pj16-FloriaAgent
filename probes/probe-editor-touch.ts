@@ -30,8 +30,8 @@ const bad = (m: string) => {
 }
 
 const css = read('src/gateway/web/styles.css')
-// CM6 基线现在来自兄弟包 Pj16-SubPj4-CM6（@floria/cm6 内联 @codemirror/view），不再有 vendored live-markdown.js
-const vendor = read('../Pj16-SubPj4-CM6/node_modules/@codemirror/view/dist/index.js')
+// CM6 基线现在来自兄弟包 SubPj4-CodeMirror6开发（@floria/cm6 内联 @codemirror/view），不再有 vendored live-markdown.js
+const vendor = read('../SubPj4-CodeMirror6开发/node_modules/@codemirror/view/dist/index.js')
 
 // ---- 1. 手势显式声明 ----
 const block = css.match(/\.wk-ed-cm \.cm-scroller,\s*\.wk-ed-cm \.cm-content \{[^}]*\}/)

@@ -1064,7 +1064,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 
 ## 71. CM6 编辑层独立包 `@floria/cm6`（唯一真源，Floria 只留接缝）
 
-**能力**：web 前端的全部 CodeMirror 6 逻辑（底栏 composer、work 编辑区、Markdown Live Preview 扩展、数学/任务/块级标记/附件/剪贴板/事务命令/API 注册表）收敛为一个自包含 ESM 包 `Pj16-SubPj4-CM6`，构建成单文件 IIFE 整目录搬进 Floria。**Floria 内零 CM6 内核代码**，只有一个桥接件。
+**能力**：web 前端的全部 CodeMirror 6 逻辑（底栏 composer、work 编辑区、Markdown Live Preview 扩展、数学/任务/块级标记/附件/剪贴板/事务命令/API 注册表）收敛为一个自包含 ESM 包 `SubPj4-CodeMirror6开发`，构建成单文件 IIFE 整目录搬进 Floria。**Floria 内零 CM6 内核代码**，只有一个桥接件。
 
 - **包内布局**：`src/index.js`（32 个导出）· `src/cm.js`（CM6 命名空间，直连 npm，取代旧 `window.CMLiveMarkdown` 全局）· `src/env.js`（宿主依赖注入面）· `src/styles.js`（组件样式，npm 消费者用，Floria 不调用）· `src/kernel/`（10 件纯逻辑：cm-math / task-list / block-mark / editor-api / editor-attachments / editor-clipboard / editor-markdown / editor-transactions / file-link / math-spec）· `src/hosts/composer.js`、`src/hosts/work-cm.js`（`createComposer(host)` / `createWorkEditor(host)` 工厂）· `patches/codemirror-live-markdown@0.5.1-alpha.1.patch`（`[floria patch]`：围栏行隐藏 + 语言钮；升级该依赖须重打）。包内**不 import 任何 Floria 模块**。
 - **宿主注入**：`configureEnv({ toast, newSessionProject, fileIcon, apiUrl, getContext, findSession, mdHtml, messageMd, selectionMd, esc })`。内核需要的一切宿主能力走此面；新增依赖必须先加 env 键，禁在包内读全局或跨仓 import。
@@ -1079,7 +1079,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 - **构建与部署**：`bun dev/serve.ts`（原生 ESM 开发台，零打包，隐式全局依赖当场暴露）→ `bun build.ts` → `bun tools/sync.ts deploy --yes`（只拷 IIFE 到 `Floria/src/gateway/web/cm6/`）；随后 Floria 侧 `bun run build:dev` 重新 gen-web-assets 并重启网关。
 - **npm / Node 可安装性**：包 `package.json` 已具备 `name: "@floria/cm6"` / `type: module` / `main`+`module`+`exports` / `files: ["dist"]` / `patchedDependencies`，可作 `file:` 依赖或发布后 `npm i @floria/cm6` 供 Node/打包器消费；`exports["./src/*"]` 亦供源码级引用。**限制**：`private: true` 阻止 `npm publish`（发布需改 false 并另行管理 `@floria` scope）；更关键的是 Floria 浏览器运行时**不消费裸模块说明符**——拼接器（`bundle-web-modules.ts`）切片拼 IIFE、不解析 npm 依赖，故 Floria 必须走 IIFE 产物；第三方打包器（Vite/webpack）则可直接 import ESM 并用 `patchedDependencies` 生效（bun/pnpm 支持，npm 不执行该字段，需 `patch-package` 或维护 fork）。
 - **剩余原生输入面（非 CM6 编辑器，未纳入包）**：评论面板 `<textarea class="cmp-in">`（`feature/comment/comment-composer.js`）、画布节点名内联编辑 `<textarea>`（`sidebar/work/work-canvas.js`）、复制回退 textarea（`chat/messages/usage.js`，非编辑面）。包当前只提供 composer/work-editor 两个宿主工厂，无通用纯文本编辑器工厂；如需统一，须先加第三工厂再逐个替换。
-- **探针锚点**：`probes/probe-code-block.ts`（高亮经 `edCMG` 注入）、`probes/probe-work-canvas.ts`（`CM.syntaxHighlighting` / `edCMG.WidgetType` / `getCanvasExt` 契约）、`probes/probe-md-protocol.ts`（读 `Pj16-SubPj4-CM6/src` 包源码 + kernel/math-spec 与 core/math-spec 逐字同源校验 + PIECES 收 `editor/cm-bridge.js`）。
+- **探针锚点**：`probes/probe-code-block.ts`（高亮经 `edCMG` 注入）、`probes/probe-work-canvas.ts`（`CM.syntaxHighlighting` / `edCMG.WidgetType` / `getCanvasExt` 契约）、`probes/probe-md-protocol.ts`（读 `SubPj4-CodeMirror6开发/src` 包源码 + kernel/math-spec 与 core/math-spec 逐字同源校验 + PIECES 收 `editor/cm-bridge.js`）。
 
 ## 72. UI 基础包 `@floria/web`（主题令牌 / 基础样式 / 图标，唯一真源）
 

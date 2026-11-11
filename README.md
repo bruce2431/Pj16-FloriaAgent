@@ -1,6 +1,6 @@
 # Floria
 
-便携版 Claude Code fork 的**源码构建区 + 权威标准**所在仓库（原 `Pj16-CodeAgent构建/_agent-src/`，现为独立 git 仓库根，远程 `bruce2431/Floria`）。
+便携版 Claude Code fork 的**源码构建区 + 权威标准**所在仓库（原 `Pj16-CodeAgent构建/_agent-src/`，现为独立 git 仓库根，远程 `bruce2431/Pj16-FloriaAgent`）。
 
 ## 仓库内容
 
@@ -41,5 +41,5 @@
 
 ## 版本控制（git）
 
-- 本目录即仓库根，远程 `bruce2431/Floria`；`node_modules/`、`.codegraph/`、`dist/`、`temp/`、`*.exe`、`.env*` 由 `.gitignore` 排除。
+- 本目录即仓库根，远程 `bruce2431/Pj16-FloriaAgent`；`node_modules/`、`.codegraph/`、`dist/`、`temp/`、`*.exe`、`.env*` 由 `.gitignore` 排除。
 - **GitHub Release 发布**：tag 与版本串格式 = `v<X.Y.Z>+<YYYYMMDD>.t<UTC时分秒>.sha<HEAD 8 位>`。构建元数据必须挂 `+` 不挂 `-`——`-` 是 SemVer 的 pre-release 段（语义「该版本的预发布」，优先级还低于该版本本身），会把已发布正式版标成自相矛盾的预发布；`+` 是 build metadata，不参与优先级比较。`X.Y.Z` 取 `package.json` 的 `version`，dev 构建版本串 = `<version>+<构建元数据>`（`scripts/build.ts` `getDevVersion`）。**Release 标题 = 裸 tag 名**（不另起游离标题）；notes = 功能一句话 + 缺陷一行（不写「现象→根因→修法」叙事）。**递增按改动性质走标准 SemVer**：不兼容 → MAJOR、新功能 → MINOR、纯修复/调参 → **单独切 PATCH（末位 +1，不并入功能版）**。流程 = commit+push → 按该 HEAD 构建 exe → 建同名 tag → Release → 附该次构建的 exe 为 asset（产物带时间戳，不覆盖）。远程 `github.com:443` 不通时走 REST（推送模板 `Neuron-Pj16/l3.raw/files/20260922140000-push-via-api.py`）。
