@@ -283,6 +283,73 @@ async function run() {
   await fetchC('https://example.test/openai/v1/messages/count_tokens', { method: 'POST', body: '{}' })
   ok(passedThrough.endsWith('/count_tokens'), 'count_tokens passes through untreated')
 
+  // ── Test F: 上游静默 EOF（无 finish_reason / 无 [DONE]）必须报错 ──
+  // 伪造成 end_turn 会让核心以为回合正常结束，不再重试/回退（Gemini 大
+  // tool call 生成期静默、被链路上限掐断时的实际形态）。
+  console.log('Test F: premature EOF surfaces as a stream error')
+  const fetchF = createOpenAIChatFetch({
+    baseUrl: 'https://example.test/v1beta/openai',
+    apiKey: 'KEY',
+    innerFetch: (async () =>
+      new Response(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`,
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )) as typeof globalThis.fetch,
+  })
+  const respF = await fetchF('https://example.test/v1beta/openai/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gemini-4-carbon',
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+  })
+  let fErrored = false
+  try {
+    await respF.text()
+  } catch {
+    fErrored = true
+  }
+  ok(fErrored, 'premature EOF: body rejects instead of ending as end_turn')
+
+  // ── Test G: 传输中途抛错必须报错 ─────────────────────────────────
+  console.log('Test G: mid-stream transport error surfaces')
+  const fetchG = createOpenAIChatFetch({
+    baseUrl: 'https://example.test/v1beta/openai',
+    apiKey: 'KEY',
+    innerFetch: (async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`,
+              ),
+            )
+            c.error(new Error('socket connection was closed unexpectedly'))
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )) as typeof globalThis.fetch,
+  })
+  const respG = await fetchG('https://example.test/v1beta/openai/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gemini-4-carbon',
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+  })
+  let gErrored = false
+  try {
+    await respG.text()
+  } catch {
+    gErrored = true
+  }
+  ok(gErrored, 'mid-stream error: body rejects')
+
   if (process.argv.includes('--live')) await live()
 
   console.log(`\n${pass} passed, ${fail} failed`)

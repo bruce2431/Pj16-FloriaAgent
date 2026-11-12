@@ -350,6 +350,7 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
       const toolIndexByOai = new Map<number, number>()
       let hadToolCalls = false
       let finishReason: string | null = null
+      let sawDone = false
       let inputTokens = 0
       let outputTokens = 0
       let approxOutput = 0
@@ -397,7 +398,11 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
             const line = rawLine.trim()
             if (!line.startsWith('data:')) continue
             const dataStr = line.slice(5).trim()
-            if (!dataStr || dataStr === '[DONE]') continue
+            if (!dataStr) continue
+            if (dataStr === '[DONE]') {
+              sawDone = true
+              continue
+            }
 
             let chunk: OpenAIChatStreamChunk
             try {
@@ -478,20 +483,26 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
           }
         }
       } catch (err) {
-        // Surface the error inside a text block so the stream stays well-formed.
-        if (textIndex === null) {
-          textIndex = nextIndex++
-          emit('content_block_start', {
-            type: 'content_block_start',
-            index: textIndex,
-            content_block: { type: 'text', text: '' },
-          })
-        }
-        emit('content_block_delta', {
-          type: 'content_block_delta',
-          index: textIndex,
-          delta: { type: 'text_delta', text: `\n\n[Error: ${String(err)}]` },
-        })
+        // A mid-stream failure must not masquerade as a completed turn: the
+        // core only retries/falls back when the stream itself errors. Turning
+        // it into a text block marked `end_turn` swallowed the failure (seen
+        // with Gemini when a long tool-call generation goes silent and the
+        // connection drops) and left the turn dead with no retry.
+        controller.error(err)
+        return
+      }
+
+      // A well-formed OpenAI stream always ends with a finish_reason or
+      // `data: [DONE]`. EOF without either means the upstream connection was
+      // cut while the response was still being generated (Gemini compat does
+      // this when the model spends too long producing a large function call).
+      if (!sawDone && finishReason === null) {
+        controller.error(
+          new Error(
+            'OpenAI chat stream ended prematurely: no finish_reason and no [DONE]',
+          ),
+        )
+        return
       }
 
       closeOpenBlocks()

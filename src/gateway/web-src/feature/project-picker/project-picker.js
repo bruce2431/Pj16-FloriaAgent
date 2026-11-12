@@ -6,11 +6,27 @@
 // 旧底栏 projList 由 ALL 派生，只出「有会话的项目」，与 work 下拉的项目数对不上（2026-11-06 根因）。
 import { esc } from '../../core/util.js'
 import { I } from '../../core/icons.js'
-import { state } from '../../engine/state.js'
+import { state, ALL } from '../../engine/state.js'
 /* @module feature/project-picker/project-picker.js */
 
+  // 项目排序（2026-11-12 用户定案）：按该项目「最新一次会话的时间」降序，无会话的项目排末尾
+  // （保持 findProjects 的目录枚举序）。时间取会话 updatedAt（最近活跃），缺省回退 createdAt。
+  function projectLatestAt() {
+    const at = new Map()
+    for (const s of ALL) {
+      const label = s.projectLabel
+      if (!label) continue
+      const t = s.updatedAt || s.createdAt || 0
+      if (!(at.get(label) >= t)) at.set(label, t)
+    }
+    return at
+  }
+
   function projectPickerGroups() {
-    return (state.projects || []).filter((g) => g && g.label && g.scope === 'project')
+    const at = projectLatestAt()
+    return (state.projects || [])
+      .filter((g) => g && g.label && g.scope === 'project')
+      .sort((a, b) => (at.get(b.label) || 0) - (at.get(a.label) || 0))
   }
 
   function createProjectPicker(opts) {
