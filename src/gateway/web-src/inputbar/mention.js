@@ -223,19 +223,26 @@ import { pickEnter } from './toolbar/pick.js'
     syncGwSend()
   }
 
-  // doc/选区变化：检测 @ 触发 / 维护已打开的 @查询（光标前是 @ 则开浮窗）。锚点 = '@' 的 doc 位置
-  function onInputMention() {
+  // doc/选区变化：检测 @ 触发 / 维护已打开的 @查询。锚点 = '@' 的 doc 位置。
+  // update = CM 事务（{docChanged, selectionSet, …}），compositionend 的补判传 null + force=true。
+  // **开窗只认「本次事务插入了文本」**：只用「光标前一字符是 @」判定时，光标停在底栏里任意一个
+  // 已存在的 @ 后面都会重新开窗（用户实报「底栏存在 @ 时工具栏总展开」，且重开会把查询词清空）。
+  function onInputMention(update, force) {
     if (!GATEWAY || gateAwait || state.mgr || !cmView) { closeMentionPop(); return }
     const st = cmView.state
-    const pos = st.selection.main.from
+    const pos = st.selection.main.head
     // IME 组合期（中文键盘敲字母即进入组合）：组合中的 doc 文本是**临时拼音/候选**，
     // 选区也不可信——拿它过滤会把浮窗筛空并按「无结果」关掉，或按选区判定误杀。
     // 组合期一律不判不动（不开、不更新查询、不关），等 compositionend 上屏后的 doc 事务
-    // 走正常判定。`composing` 是 CM6 EditorView 的真实组合态字段（旧写法 compositionStarted
-    // 根本不存在 ⇒ 守卫恒为假，查询词跟着组合中的临时文本乱跳）。组合结束由 onCompositionEnd
-    // 再按最终 doc 判定一次，避免末次事务缺失时浮窗停在空查询的旧结果上。
-    if (cmView.composing) return
-    if (st.selection.main.from !== st.selection.main.to || !st.selection.main.empty) { if (mention.open) closeMentionPop(); return }
+    // 走正常判定。force = compositionend 的补判：CM 在 compositionend 当拍的 composing 可能
+    // 仍为 true，若不绕过就会永远漏掉上屏后的查询词（表现为打完 git 浮窗停在旧列表）。
+    if (cmView.composing && !force) return
+    if (st.selection.main.from !== st.selection.main.to || !st.selection.main.empty) {
+      // IME 上屏的最后一拍可能带瞬态选区（输入法把刚上屏的字选中）：补判时按光标端继续维护
+      // 查询、不关窗；用户真正拖选文本（非补判）仍按原语义收起浮窗。
+      if (!force) { if (mention.open) closeMentionPop(); return }
+      if (!mention.open) return
+    }
     if (mention.open) {
       // 「+」唤起：锚点处无 '@'，其后全文即查询；@ 唤起：跳过前导 '@'。查询区间被删到锚点
       // 之前（或跨行）即收起。
@@ -247,14 +254,17 @@ import { pickEnter } from './toolbar/pick.js'
       if (q !== mention.q) { mention.q = q; if (cmd.open) renderCmdPop() }
       return
     }
-    if (pos > 0 && st.doc.sliceString(pos - 1, pos) === '@') openMentionPopAtCaret()
+    // 没有事务 = 旧 input 链 / 组合结束补判，允许开窗；有事务则必须是插入文本的那一拍。
+    if ((!update || update.docChanged) && pos > 0 && st.doc.sliceString(pos - 1, pos) === '@') openMentionPopAtCaret()
   }
   function onInputChange() { syncGwSend(); onInputMention() }
   // IME 组合结束：CM 在 compositionend 后可能不再派发 doc/selection 事务（组合文本已在组合期
   // 进 doc），此时 @ 查询词仍是组合期旧值 ⇒ 浮窗停在空查询的全量列表。延后一拍按最终 doc 重判。
   function onCompositionEnd() {
     if (!cmView) return
-    setTimeout(() => { if (cmView) onInputMention() }, 0)
+    // force：绕过 composing 早退——compositionend 当拍 CM 的 composing 可能仍为 true，
+    // 旧写法（普通早退）会让上屏后的查询词永远不落地，浮窗停在空查询的旧列表。
+    setTimeout(() => { if (cmView) onInputMention(null, true) }, 0)
   }
 
 export {

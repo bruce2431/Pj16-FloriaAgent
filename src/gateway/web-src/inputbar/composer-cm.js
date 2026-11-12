@@ -36,7 +36,8 @@ import { activateMention, mentionTargetFromSpec } from '../feature/mention-nav.j
       move: (d) => moveMentionSel(d),
       select: () => selectMention(),
       close: () => closeMentionPop(),
-      update: () => onInputMention(),
+      // 透传 CM 事务对象（docChanged / selectionSet）：开窗判据需要它区分「插入 @」与「移动光标」
+      update: (u) => onInputMention(u),
       compositionEnd: () => onCompositionEnd(),
     },
     chips: {
