@@ -57,6 +57,16 @@ import { esc } from './util.js'
   function mentionPathToken(p, ptype) {
     return `[@${ptype === 'dir' ? '目录' : '文件'}:${escapeMentionPath(p)}]`
   }
+  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用令牌。
+  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
+  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」）都走这一处。
+  function fileLinkMarkdown(p) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop()
+    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    return '[\u0060' + base + '\u0060](' + url + ')'
+  }
 
   // chip HTML（name 为已转义文本：mdInline/addUser 入口已 esc，这里不再二次转义）
   // 消息内渲染=透明胶囊（无图标），仅保留名称文本（用户要求「只要一个白色浮窗似的胶囊」→ 透明胶囊）
@@ -178,6 +188,7 @@ export {
   decodeQuoteBody,
   encodeQuoteBody,
   escapeMentionPath,
+  fileLinkMarkdown,
   foldQuoteBodies,
   mentionChipHtml,
   mentionPathToken,

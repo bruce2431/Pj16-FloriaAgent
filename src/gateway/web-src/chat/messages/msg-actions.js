@@ -6,7 +6,7 @@ import { messagesEl, live, state } from '../../engine/state.js'
 import { findSession } from '../../engine/sessions.js'
 import { quoteBodiesAsMarkdown } from '../../inputbar/mention.js'
 import { composerAppendToken, composerFocus } from '../../inputbar/composer-cm.js'
-import { mentionPathToken, unescapeMentionPath } from '../../core/mention-syntax.js'
+import { fileLinkMarkdown, mentionPathToken, unescapeMentionPath } from '../../core/mention-syntax.js'
 import { activateMention, mentionAbsolutePath, mentionTargetFromChip, revealMentionPath } from '../../feature/mention-nav.js'
 import { ICON_COPY, writeClipboard } from './usage.js'
 /* @module chat/messages/msg-actions.js */
@@ -80,8 +80,9 @@ import { ICON_COPY, writeClipboard } from './usage.js'
       writeClipboard(abs).then((ok) => toast(ok ? '已复制路径' : '复制失败'))
       return
     }
-    // raw 是已转义的令牌原文：先还原再走唯一的令牌序列化口，避免二次转义
-    composerAppendToken(mentionPathToken(unescapeMentionPath(raw), ptype))
+    // raw 是已转义的令牌原文：先还原再走唯一的序列化口（文件 = Markdown 行内链接，目录 = 令牌），避免二次转义
+    const p = unescapeMentionPath(raw)
+    composerAppendToken(ptype === 'dir' ? mentionPathToken(p, 'dir') : fileLinkMarkdown(p))
     composerFocus()
   }
   function openChipMenu(chip, x, y) {

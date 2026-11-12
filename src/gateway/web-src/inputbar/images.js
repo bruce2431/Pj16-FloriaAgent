@@ -12,7 +12,7 @@
 // images base64 视觉上行 / [文件:占位] 相对化上行），与正文是否插引用无关。
 import { toast, esc } from '../core/util.js'
 import { syncGwSend } from './send.js'
-import { mentionPathToken } from '../core/mention-syntax.js'
+import { fileLinkMarkdown } from '../core/mention-syntax.js'
 import { composerAppendToken } from './composer-cm.js'
 /* @module inputbar/images.js */
   // ---------- 视觉上行内部态 ----------
@@ -143,7 +143,7 @@ import { composerAppendToken } from './composer-cm.js'
       if (!att) continue
       if (toComposer) {
         // 底栏文件 = 正文里的一枚路径引用 chip（可点跳转、可右键），上传本身与落盘不变。
-        composerAppendToken(mentionPathToken(att.relativePath, 'file'))
+        composerAppendToken(fileLinkMarkdown(att.relativePath))
       } else if (att.reference) {
         insertUploadReference(tgtEd, att)
       } else {

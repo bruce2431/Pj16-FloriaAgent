@@ -4,7 +4,7 @@
 
 import { GATEWAY, gateAwait } from '../engine/gateway.js'
 import { I, fileIcon } from '../core/icons.js'
-import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
+import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, fileLinkMarkdown, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
 import { sessionCwd } from '../engine/sessions.js'
 import { state } from '../engine/state.js'
 import { esc } from '../core/util.js'
@@ -207,16 +207,6 @@ import { pickEnter } from './toolbar/pick.js'
     if (cmd.open) { cmdSelect(); return }
     const it = mention.items[mention.sel]
     if (it) selectMentionItem(it)
-  }
-
-  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用 [@目录:] 令牌。
-  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
-  function fileLinkMarkdown(p) {
-    const s = String(p == null ? '' : p)
-    const base = s.split('/').pop()
-    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
-    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
-    return '[\u0060' + base + '\u0060](' + url + ')'
   }
 
   // 选中项 → 令牌 + 尾随空格替换 @查询区间（[mention.anchor, 光标]），光标到空格后。sid 仅会话

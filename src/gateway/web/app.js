@@ -514,6 +514,16 @@ function setConnUp(v) { connUp = v }
   function mentionPathToken(p, ptype) {
     return `[@${ptype === 'dir' ? '目录' : '文件'}:${escapeMentionPath(p)}]`
   }
+  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用令牌。
+  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
+  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」）都走这一处。
+  function fileLinkMarkdown(p) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop()
+    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    return '[\u0060' + base + '\u0060](' + url + ')'
+  }
 
   // chip HTML（name 为已转义文本：mdInline/addUser 入口已 esc，这里不再二次转义）
   // 消息内渲染=透明胶囊（无图标），仅保留名称文本（用户要求「只要一个白色浮窗似的胶囊」→ 透明胶囊）
@@ -3184,8 +3194,9 @@ function setLastNavHash(v) { lastNavHash = v }
       writeClipboard(abs).then((ok) => toast(ok ? '已复制路径' : '复制失败'))
       return
     }
-    // raw 是已转义的令牌原文：先还原再走唯一的令牌序列化口，避免二次转义
-    composerAppendToken(mentionPathToken(unescapeMentionPath(raw), ptype))
+    // raw 是已转义的令牌原文：先还原再走唯一的序列化口（文件 = Markdown 行内链接，目录 = 令牌），避免二次转义
+    const p = unescapeMentionPath(raw)
+    composerAppendToken(ptype === 'dir' ? mentionPathToken(p, 'dir') : fileLinkMarkdown(p))
     composerFocus()
   }
   function openChipMenu(chip, x, y) {
@@ -14227,16 +14238,6 @@ function wkMerge3(base, local, remote) {
     if (it) selectMentionItem(it)
   }
 
-  // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用 [@目录:] 令牌。
-  // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
-  function fileLinkMarkdown(p) {
-    const s = String(p == null ? '' : p)
-    const base = s.split('/').pop()
-    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
-    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
-    return '[\u0060' + base + '\u0060](' + url + ')'
-  }
-
   // 选中项 → 令牌 + 尾随空格替换 @查询区间（[mention.anchor, 光标]），光标到空格后。sid 仅会话
   // chip 有（寻址键，序列化为 `[会话:标题|sid]`；插件/技能无 sid）。
   function insertMention(kind, name, sid, ptype) {
@@ -16680,7 +16681,7 @@ function setAuthPorts(p) { authUi = p.ui; authData = p.data; authSend = p.send }
       if (!att) continue
       if (toComposer) {
         // 底栏文件 = 正文里的一枚路径引用 chip（可点跳转、可右键），上传本身与落盘不变。
-        composerAppendToken(mentionPathToken(att.relativePath, 'file'))
+        composerAppendToken(fileLinkMarkdown(att.relativePath))
       } else if (att.reference) {
         insertUploadReference(tgtEd, att)
       } else {
