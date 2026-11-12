@@ -17,6 +17,15 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     }
   }
 
+  // ---------- 编译报错行标记（Pj18 日志卡 src-mark 上报，2026-11-12） ----------
+  // 存储 { path, marks }：path 匹配当前文件才显示——切到别的文件/重渲不残留上一批；空 marks = 清标记。
+  // 应用口径只在「上报时（wkEdSetErrMarks）」与「切文件/重渲时（renderEdBody）」两处收口。
+  let wkEdErrMarkStore = { path: '', marks: [] }
+  function wkEdSetErrMarks(path, marks) {
+    wkEdErrMarkStore = { path: path || '', marks: Array.isArray(marks) ? marks : [] }
+    wkEdApplyErrMarks(wkEdErrMarkStore.path === state.workFile ? wkEdErrMarkStore.marks : [])
+  }
+
   // 顶部「保存态」文本落地（唯一写点）：conflict > saving > dirty > 空。传 (txt, cls) 则原样落。
   // 该行不再显示文件名，空态即整行隐藏（.wk-ed-head 的显示与否由这里统一收口）。
   function wkEdState(txt, cls) {
@@ -228,6 +237,7 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     }
     wkEditor.measure()
     cmtApplyMarks() // 评论标记：被批注的行加高亮
+    wkEdApplyErrMarks(wkEdErrMarkStore.path === state.workFile ? wkEdErrMarkStore.marks : []) // 编译报错标记
     wkEdState()
     if (fresh) wkEdRestoreScroll() // 换文件重载 → 写回该文件上次的滚动位置（同文件切回不丢位置）
   }

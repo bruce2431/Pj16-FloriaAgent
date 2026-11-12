@@ -19,6 +19,16 @@ import { resetWorkPreviewOnBoot } from '../../core/storage.js'
         if (line) wkEdScrollToLine(line)
       },
     })
+    // 编译日志卡 → 宿主：src-mark 上报报错行（Pj18 编译失败时）。空 marks = 清上一批标记（**不切文件**，
+    // 用户可能正看别处）；非空 = 打开源文件、标红、滚到首个报错行居中。门禁（work 模式 / 当前项目）在总线内。
+    cardBus.setSourceMarker({
+      mark: async (p, marks) => {
+        if (!marks.length) { wkEdSetErrMarks('', []); return }
+        await openWorkFile(p)
+        wkEdSetErrMarks(p, marks)
+        wkEdScrollToLine(marks[0].l0)
+      },
+    })
     // work 编辑区对宿主/其它卡的公开动词（2026-10-21）：scroll{path,line} = 打开文件并滚到行。
     // 门禁与 src-open 同口径（只在 work 模式、只认当前工作项目）——「文件内引用跳转仅在 work 模式下」。
     // 路径口径 = 项目根相对 POSIX（与 src-open 一致）；令牌跨项目时带 `<项目 label>/` 前缀，剥掉再用。

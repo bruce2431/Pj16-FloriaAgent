@@ -71,6 +71,7 @@
   // 外部磁盘内容落进编辑器（最小段替换 + 不进 undo 栈 + 不记脏）；false = IME 组合中，调用方下轮重试
   function wkEdApplyRemote(text) { return wkEditor.applyRemote(text) }
   function wkEdApplyMarks(marks) { wkEditor.applyMarks(marks) }
+  function wkEdApplyErrMarks(marks) { wkEditor.applyErrMarks(marks) }
   function wkEdScrollToLine(n) { wkEditor.scrollToLine(n) }
   function wkEdQuoteLines(range) { return wkEditor.quoteLines(range) }
   function wkEdInvalidatePathCache() { wkEditor.invalidatePathCache() }

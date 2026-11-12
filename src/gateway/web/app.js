@@ -1337,6 +1337,7 @@ const cardBus = (function () {
   // 「开 + 定位」只给宿主**一个**口 open(path, line)：载入是异步的（读文件 → 灌编辑器），何时能定位是
   // 宿主自己的时序，总线不揣测（旧写法 open() 完就滚，会滚在尚未换掉的上一份文档上）。
   let sourceOpener = null
+  let sourceMarker = null
   function handleSrcOpen(f, d) {
     if (!sourceOpener) return
     const path = typeof d.path === 'string' ? d.path : ''
@@ -1348,6 +1349,31 @@ const cardBus = (function () {
     const n = Number(d.line)
     Promise.resolve(sourceOpener.open(path, Number.isFinite(n) && n > 0 ? n : 0))
       .catch(() => { /* 文件打不开：静默（编辑器自会提示） */ })
+  }
+
+  // 上报色值的安全白名单：hex(#rgb/#rgba/#rrggbb/#rrggbbaa) / 具名色 / rgb|rgba|hsl|hsla(数值)。
+  // color 会进 line 元素的 CSS 变量，必须在边界挡掉 ; / url( / 表达式等注入面。
+  const SRC_MARK_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(?:rgb|rgba|hsl|hsla)\([0-9.,%\s]+\))$/
+  // 标准事件：src-mark（编译日志卡上报报错行 → 宿主在编辑区标红）。门禁与 src-open 同口径
+  // （只在 work 模式、只认当前工作项目的帧）；与 src-open 不同，越界/无效一律**静默忽略**——
+  // 报错标记是辅助信息，不应因别的项目日志卡打扰当前用户。
+  function handleSrcMark(f, d) {
+    if (!sourceMarker) return
+    const path = typeof d.path === 'string' ? d.path : ''
+    if (!path) return
+    if (state.sbMode !== 'work' || !state.workProj || f.label !== state.workProj) return
+    // 归一化：只保留 l0/l1 均为有限数字且 l0<=l1 的条目（1 基行号）；去重/上限 50 由上报侧保证。
+    // 每条可带 color（自定义标记色）与 msg（悬停文案）：color 非法/缺省 = 空串 ⇒ 渲染侧回落默认红。
+    const marks = (Array.isArray(d.marks) ? d.marks : [])
+      .filter((m) => m && typeof m === 'object')
+      .map((m) => ({
+        l0: Number(m.l0),
+        l1: Number(m.l1),
+        msg: typeof m.msg === 'string' ? m.msg : '',
+        color: typeof m.color === 'string' && SRC_MARK_COLOR_RE.test(m.color.trim()) ? m.color.trim() : '',
+      }))
+      .filter((m) => Number.isFinite(m.l0) && Number.isFinite(m.l1) && m.l0 <= m.l1)
+    Promise.resolve(sourceMarker.mark(path, marks)).catch(() => { /* 标红失败：静默 */ })
   }
 
   // ---------- 宿主→卡 广播（一事实、多收听者）----------
@@ -1420,6 +1446,7 @@ const cardBus = (function () {
     }
     if (ev === 'state') { f.latestState = d; f.updatedAt = Date.now() }
     if (ev === 'src-open') { handleSrcOpen(f, d); return }
+    if (ev === 'src-mark') { handleSrcMark(f, d); return }
     emitEvent(ev, d, f)
   }
 
@@ -1446,6 +1473,9 @@ const cardBus = (function () {
   }
   function setSourceOpener(o) {
     sourceOpener = o && typeof o.open === 'function' ? o : null
+  }
+  function setSourceMarker(o) {
+    sourceMarker = o && typeof o.mark === 'function' ? o : null
   }
 
   // ---------- agent 指令入口（gateway.js 的 gws.onmessage 调）----------
@@ -1477,6 +1507,7 @@ const cardBus = (function () {
     setGatewaySender,
     setSlotHost,
     setSourceOpener,
+    setSourceMarker,
     unregisterFrame,
   }
 })()
@@ -8532,6 +8563,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 外部磁盘内容落进编辑器（最小段替换 + 不进 undo 栈 + 不记脏）；false = IME 组合中，调用方下轮重试
   function wkEdApplyRemote(text) { return wkEditor.applyRemote(text) }
   function wkEdApplyMarks(marks) { wkEditor.applyMarks(marks) }
+  function wkEdApplyErrMarks(marks) { wkEditor.applyErrMarks(marks) }
   function wkEdScrollToLine(n) { wkEditor.scrollToLine(n) }
   function wkEdQuoteLines(range) { return wkEditor.quoteLines(range) }
   function wkEdInvalidatePathCache() { wkEditor.invalidatePathCache() }
@@ -11624,6 +11656,15 @@ function wkMerge3(base, local, remote) {
     }
   }
 
+  // ---------- 编译报错行标记（Pj18 日志卡 src-mark 上报，2026-11-12） ----------
+  // 存储 { path, marks }：path 匹配当前文件才显示——切到别的文件/重渲不残留上一批；空 marks = 清标记。
+  // 应用口径只在「上报时（wkEdSetErrMarks）」与「切文件/重渲时（renderEdBody）」两处收口。
+  let wkEdErrMarkStore = { path: '', marks: [] }
+  function wkEdSetErrMarks(path, marks) {
+    wkEdErrMarkStore = { path: path || '', marks: Array.isArray(marks) ? marks : [] }
+    wkEdApplyErrMarks(wkEdErrMarkStore.path === state.workFile ? wkEdErrMarkStore.marks : [])
+  }
+
   // 顶部「保存态」文本落地（唯一写点）：conflict > saving > dirty > 空。传 (txt, cls) 则原样落。
   // 该行不再显示文件名，空态即整行隐藏（.wk-ed-head 的显示与否由这里统一收口）。
   function wkEdState(txt, cls) {
@@ -11835,6 +11876,7 @@ function wkMerge3(base, local, remote) {
     }
     wkEditor.measure()
     cmtApplyMarks() // 评论标记：被批注的行加高亮
+    wkEdApplyErrMarks(wkEdErrMarkStore.path === state.workFile ? wkEdErrMarkStore.marks : []) // 编译报错标记
     wkEdState()
     if (fresh) wkEdRestoreScroll() // 换文件重载 → 写回该文件上次的滚动位置（同文件切回不丢位置）
   }
@@ -12771,6 +12813,16 @@ function wkMerge3(base, local, remote) {
       open: async (p, line) => {
         await openWorkFile(p)
         if (line) wkEdScrollToLine(line)
+      },
+    })
+    // 编译日志卡 → 宿主：src-mark 上报报错行（Pj18 编译失败时）。空 marks = 清上一批标记（**不切文件**，
+    // 用户可能正看别处）；非空 = 打开源文件、标红、滚到首个报错行居中。门禁（work 模式 / 当前项目）在总线内。
+    cardBus.setSourceMarker({
+      mark: async (p, marks) => {
+        if (!marks.length) { wkEdSetErrMarks('', []); return }
+        await openWorkFile(p)
+        wkEdSetErrMarks(p, marks)
+        wkEdScrollToLine(marks[0].l0)
       },
     })
     // work 编辑区对宿主/其它卡的公开动词（2026-10-21）：scroll{path,line} = 打开文件并滚到行。
