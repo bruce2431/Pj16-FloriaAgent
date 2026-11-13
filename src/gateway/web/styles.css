@@ -2359,16 +2359,21 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 .wk-tb-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; min-width: 96px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-3); font-size: 13px; max-width: 220px; flex: none; }
 .wk-tb-pill:hover { background: var(--hover); color: var(--text-2); }
 .wk-tb-pill.on { background: var(--chat-bg); border-color: var(--border); color: var(--text); }
-/* 顶栏工具栏胶囊 #wk-tb-tool：形制对齐 Prism 的「工具」胶囊——**中性抬升面 + 细描边 + 常规文字色**，
-   不是主色实心块（蓝底白字过艳、与 Prism 深色胶囊不符）。取色只走语义令牌，日夜随动：
-   暗色 = --field-2 面 / --border 线 / --text 字（≈ Prism #1f1f1f 胶囊浮在 #141414 底板上）；
-   浅色 = 灰白面 + 深字。全圆角（999px）与 Prism 同形；作用域 = 本 id，聊天/文件 pill 规则不动。 */
-#wk-tb-tool { background: var(--field-2); border-color: var(--border); color: var(--text); border-radius: 999px; }
+/* 顶栏工具栏胶囊 #wk-tb-tool：**轻量描边态**——静息无底、细描边 + --text-2，悬停才浮起浅底；
+   在场（.on）用 --field-2 实面 + --border 线区分，避免静息就压一块深色。取色只走语义令牌：
+   暗色 = 透明面 / --border-soft 线 / --text-2 字；浅色 = 透明面 + 深字。全圆角（999px）；
+   高度 28px、无最小宽（宽度随文案），比聊天/文件 pill（30px / min 96px）收一档。
+   鼠标点击不留焦点圈（全局 `button:focus-visible` 的 2px 蓝框会常驻在开关态上，很脏）；
+   键盘聚焦改软描边阴影，`:focus-visible` 只在键盘导航时出现。 */
+#wk-tb-tool { min-width: 0; height: 28px; padding: 0 11px 0 10px; gap: 5px; border: 1px solid var(--border-soft); border-radius: 999px; background: transparent; color: var(--text-2); font-size: 12.5px; transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
 /* 临时项目（根级时间戳任务区）不渲染工具栏胶囊：`.wk-tb-pill` 的 display:inline-flex 会盖掉 UA 的
    `[hidden]`，必须显式声明（2026-10-30）。 */
 #wk-tb-tool[hidden] { display: none; }
-#wk-tb-tool:hover { background: var(--active); border-color: var(--border); color: var(--text); }
-#wk-tb-tool.on { background: var(--active); border-color: var(--border); color: var(--text); }
+#wk-tb-tool:hover { background: var(--hover); border-color: var(--border); color: var(--text); }
+#wk-tb-tool.on { background: var(--field-2); border-color: var(--border); color: var(--text); }
+#wk-tb-tool:focus { outline: none; }
+#wk-tb-tool:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 28%, transparent); }
+#wk-tb-tool .wk-tb-ico svg { width: 13px; height: 13px; }
 .wk-tb-ico { display: flex; flex: none; }
 .wk-tb-ico svg { width: 14px; height: 14px; display: block; }
 .wk-tb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

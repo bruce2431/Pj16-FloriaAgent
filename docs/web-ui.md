@@ -1026,7 +1026,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 ### 68.3 CM6 宿主暗色令牌桥 + 工具栏胶囊底色（待办 4/18）
 
 - **vendor 令牌桥**（`web/styles.css`）：`codemirror-live-markdown`（随 `@floria/cm6` 内联）的主题按 shadcn 命名读 `--foreground`/`--muted`/`--muted-foreground`/`--primary`/`--background`，本项目一个都不定义 ⇒ 浅色回落值在暗色下全数生效（底栏 CM6 接管后无逐类覆写）。桥按项目令牌给出 **HSL 三元组**（`hsl()` 只吃三元组），`:root` 与 `html[data-theme="dark"]` 各一遍 ⇒ **两 CM6 宿主（`#work-editor`/`#cm-host`）一次随动**。例外：`--border` 与项目同名令牌相撞（桥不含），读它的 5 个库类逐类覆写。
-- **工具栏胶囊**（`#wk-tb-tool`）：形制对齐 Prism「工具」胶囊——**中性抬升面 + 细描边 + 常规文字色**（暗色 `--field-2` 面 / `--border` 线 / `--text` 字，≈ Prism `#1f1f1f` 胶囊浮在 `#141414` 底板上），全圆角 `999px`；hover/`.on` 抬到 `--active`。**不用主色实心蓝**（蓝底白字过艳，与 Prism 深色胶囊不符）。作用域锁 id ⇒ 顶栏聊天/文件 pill 像素不变。
+- **工具栏胶囊**（`#wk-tb-tool`）：轻量描边胶囊——静息 = 透明底 + `1px solid var(--border-soft)` + `--text-2` 字；hover = `--hover` 面 + `--border` 线 + `--text` 字；`.on`（右栏在场）= `--field-2` 面 + `--border` 线 + `--text` 字。全圆角 `999px`，高 28px、内衬 `0 11px 0 10px`、gap 5px、字 12.5px、图标 13px，`min-width:0`（不随聊天 pill 的 96px 基线撑宽）。**不用主色实心蓝**。鼠标点击不显焦点环（`:focus{outline:none}`），仅键盘 `:focus-visible` 给 `0 0 0 2px` 的 28% 透明蓝柔光——避免全局 2px 蓝描边在胶囊外再叠一圈双框。作用域锁 id ⇒ 顶栏聊天/文件 pill 像素不变。
 
 **探针锚点**：`probes/probe-work-slot.ts`（58 断言，含 J1–J4 真跑切项目）、`probes/probe-composer-align.ts`、`probes/probe-work-canvas.ts`。基线红（**本底陈旧，非本轮引入**，属独立「探针重构」任务）：`probe-work-scope.ts`（底层断言块状回填/半透明底期望已随样式演进失真）、`probe-chart.ts`（harness 未随 mention 拆件更新 `MENTION_PATH_RE`）。
 
@@ -1049,7 +1049,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 ### 69.3 底栏会话态高度收紧 + 工具栏 pill 定宽（待办 4/18 视觉收口）
 
 - 会话态（`#input-wrap.docked`）底栏几何（`web/styles.css:1066`）：`#input-bar { padding-top:14px; gap:24px }` + `#cm-host .cm-content` 收 `padding-top:0`——对齐量图参考 110px（①顶垫 14：字上方 = 1 边框 + 14 + 半行距 ≈ 19.5；②gap 24：字下沿到控件行 ≈ 28.5）。**真源**：会话态「文本行与控件行之间一条空带」= vendor `live-markdown` 给 `.cm-content` 留的 16px 下垫，由 **`#input-bar .cm-content { padding-bottom:0 }`**（`styles.css:1055`）承担（抹下垫恢复 `cmThemeSpec` 底 0；水平 16px 内缩仍由 vendor `.cm-line` padding 提供）。**回正记录**：前两轮误把 `padding-top/gap` 收到 4/6（整栏 98→82，比参考矮 28px），已按量图回正为 14/24——「空带」不由这两值承担，勿再收 gap/顶垫治它。**空态 hero 几何由 `styles.css:1019` 基础规则承担**（hero 无 `.docked`，不受本组规则影响）；行数增长行为不变。
-- 顶栏 `.wk-tb-pill` 统一 `min-width:96px`（三枚 pill 等宽基线）；`#wk-tb-tool` 为中性抬升面 + 细描边（`--field-2`/`--border`，全圆角，§68.3）。
+- 顶栏 `.wk-tb-pill` 统一 `min-width:96px`（三枚 pill 等宽基线）；`#wk-tb-tool` 覆写 `min-width:0`，为轻量描边胶囊（静息透明底 + `--border-soft` 线，`.on` 填 `--field-2`，全圆角，§68.3）。
 
 **探针锚点**：`probes/probe-math-render.ts`、`probes/probe-md-protocol.ts`（真跑 `mdHtml` 求值）、`probes/probe-md-image.ts`、`probes/probe-quote-ref.ts`、`probes/probe-user-bubble-parity.ts`（组2 本轮由红转绿）。后端 label 化落点无专属探针，由真实浏览器回归项覆盖（切换项目 / 工作区根文件树 / 写链）。
 
