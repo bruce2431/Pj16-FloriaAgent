@@ -33,8 +33,8 @@
     changesCardHtml,
   } = window.FloriaWeb
 
-  // ---------- 管理视图数据源（2026-08-15 起接后端 /gateway/plugins：真实已安装插件/技能 + 官方市场） ----------
-  // 结构镜像后端返回：{ plugins:{personal,public}, skills:{personal,public} }，每项 {n, d, v, inst}。
+  // ---------- 管理视图数据源（2026-08-15 起接后端 /gateway/plugins：只列本地已安装插件/技能） ----------
+  // 结构镜像后端返回：{ plugins:{personal}, skills:{personal} }，每项 {n, d, v, k, en}。
   // 首次进入管理视图 fetch，刷新按钮 force 重新拉取；失败显示错误 + 重试（不回落假数据）。
   let MGR = null
   let MGR_LOADING = false
@@ -186,7 +186,7 @@
   // panelOpen = 侧栏**此刻可见**（含左缘悬停预览式唤出）；panelPinned = 侧栏**被主动打开**（汉堡/视图浮层
   // 开关，鼠标移出不自动收）。二者不同源：悬停唤出只置 panelOpen，故「侧边栏」开关的真源是 panelPinned
   // ——开关亮 = 侧栏常在，不是「此刻恰好露出」（见 sidebar/recent.js setPanel、sidebar/work.js paneOn）。
-  const state = { mode: 'list', pt: 'projects', panelOpen: false, panelPinned: false, currentHash: '', mgr: null, preview: null, previewMounted: null, newProject: null, mgrView: { kind: 'plugins', cat: 'public', q: '' },
+  const state = { mode: 'list', pt: 'projects', panelOpen: false, panelPinned: false, currentHash: '', mgr: null, preview: null, previewMounted: null, newProject: null, mgrView: { kind: 'plugins', q: '' },
     // work 模式（2026-09-25）：sbMode = 侧栏模式（chat=现状 / work=Prism 式工作区）；
     // projects = /gateway/sessions 的 groups（全部项目，含无会话者，chat 侧栏不用）；
     // workProj = 当前项目 label（= 槽键，见下 workSlots）；workFile = 打开的文件（项目内相对路径）。
@@ -256,7 +256,7 @@
   const sInput = $('search-input')
   const recentLabel = $('recent-label')
   const modeTabsEl = $('mode-tabs')
-  // 界面状态持久化（2026-08-16）：管理视图内部状态（mgrView：插件/技能切换、公开/个人、搜索词）
+  // 界面状态持久化（2026-08-16）：管理视图内部状态（mgrView：插件/技能切换、搜索词）
   // 存 localStorage，刷新后由 route 的 mgr 分支 loadMgrView 恢复——配合 hash 路由 #mgr/<kind>/#preview/<label>
   // 实现「刷新保持当前界面」（会话/管理/预览三态均可恢复，不再回退初始界面）。
   const UI_KEY = 'floria-ui-v1'
@@ -284,10 +284,10 @@
       const d = JSON.parse(raw)
       if (!d || !d.mgrView) return
       const m = { ...state.mgrView, ...d.mgrView }
-      // 枚举边界归一（持久化区是外部边界）：kind∈{plugins,skills,apps}、cat∈{public,personal}，
-      // 旧形态（应用曾为 cat 值）或脏值一律回落缺省，避免落成无按钮可选的空网格。
+      // 枚举边界归一（持久化区是外部边界）：kind∈{plugins,skills,apps}，脏值回落缺省；
+      // 旧版本的 cat（公开/个人）已随市场入口移除，读盘时丢弃。
       if (m.kind !== 'plugins' && m.kind !== 'skills' && m.kind !== 'apps') m.kind = 'plugins'
-      if (m.cat !== 'public' && m.cat !== 'personal') m.cat = 'public'
+      delete m.cat
       state.mgrView = m
     } catch { /* 忽略 */ }
   }
@@ -443,6 +443,41 @@ function setConnUp(v) { connUp = v }
 
   const esc = (s) =>
     String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+  const ICON_EXT_RE = /\.(svg|png|jpe?g|webp|gif|ico)$/i
+  function isIconPath(spec) {
+    if (typeof spec !== 'string' || !spec || spec.length > 200) return false
+    if (!ICON_EXT_RE.test(spec)) return false
+    if (spec.startsWith('/') || spec.includes('\\') || spec.includes('?') || spec.includes('#')) return false
+    if (spec.includes(':')) return false
+    return spec.split('/').every((s) => s && s !== '.' && s !== '..')
+  }
+  // 图标 HTML：表键 → 现成 SVG 字符串；相对图片 → <img class="app-ico">（base = /preview/<label>/<目录>/）。
+  // 空 spec / 非法路径 → plug。
+  function iconHtml(spec, base) {
+    if (typeof spec === 'string' && Object.prototype.hasOwnProperty.call(I, spec) && I[spec]) return I[spec]
+    if (isIconPath(spec) && typeof base === 'string' && base) {
+      const src = base + spec.split('/').map(encodeURIComponent).join('/')
+      return `<img class="app-ico" src="${src}" alt="">`
+    }
+    return I.plug
+  }
+  // preview.json 卡（path 相对 preview 根）→ 图标目录前缀：与卡页同目录。
+  function iconBaseFor(label, relPath) {
+    if (!label) return ''
+    const raw = typeof relPath === 'string' ? relPath : ''
+    const i = raw.indexOf('#')
+    const file = i >= 0 ? raw.slice(0, i) : raw
+    const segs = file.split('/')
+    segs.pop() // 去掉文件名，保留其所在目录
+    const dir = segs.filter(Boolean).map(encodeURIComponent).join('/')
+    return `/preview/${encodeURIComponent(label)}/${dir ? dir + '/' : ''}`
+  }
+  // card.json 卡（目录即卡）→ 图标目录前缀。
+  function iconBaseForCardDir(label, cardId) {
+    if (!label || !cardId) return ''
+    return `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardId)}/`
+  }
 
   // 一元素一所有者：本模块自持 #char 句柄（原取 engine/state.js ⇒ core→engine 逆向边）。
   const charEl = $('char')
@@ -1083,7 +1118,7 @@ function setConnUp(v) { connUp = v }
   }
 
   // 临时项目 = 根级时间戳任务区（`<YYYYMMDDHHMMSS>-名称`，后端 findProjects 一并产出为 scope='project'）。
-  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、工具栏胶囊不渲染、新建会话也落
+  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、右缘抽屉把手不渲染、新建会话也落
   // 全局根（2026-10-30 用户定案）。判据只认 label 形态这一条，不新增 scope 值。
   const TEMP_PROJ_RE = /^\d{8,14}-/
   const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')
@@ -4982,7 +5017,9 @@ function setFirstSendHash(v) { firstSendHash = v }
         id,
         title: c.title,
         tip: `${c.title} · ${label}`,
-        icon: I[c.icon] ? c.icon : 'plug',
+        // icon 原值透传（表键或 preview 内相对图片路径），渲染收口 core/icon-spec.js 的 iconHtml
+        icon: c.icon,
+        iconBase: iconBaseFor(label, c.path),
         tab: c.tab,
         mount: (body) => extRender(body, label, c),
       })
@@ -5101,7 +5138,8 @@ function setFirstSendHash(v) { firstSendHash = v }
       id: `app:${c.id}`,
       title: c.title,
       tip: `${c.title} · 应用（工作区根）`,
-      icon: I[c.icon] ? c.icon : 'plug',
+      icon: c.icon,
+      iconBase: iconBaseFor(GLOBAL_LABEL, c.path),
       tab: c.tab,
       mount: (body) => extRender(body, GLOBAL_LABEL, c),
     }))
@@ -5196,7 +5234,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     if (!box) return
     const html = CARDS.concat(appTabs(), extTabs())
       .filter((v) => v.tab && isCardAllowedInContext(v.id, state))
-      .map((v) => `<button class="mgr-tab" data-mgr="${v.id}" title="${esc(v.tip)}">${I[v.icon]}<span>${v.title}</span></button>`)
+      .map((v) => `<button class="mgr-tab" data-mgr="${v.id}" title="${esc(v.tip)}">${iconHtml(v.icon, v.iconBase)}<span>${v.title}</span></button>`)
       .join('')
     if (html === mgrTabsHtml) return
     mgrTabsHtml = html
@@ -5621,7 +5659,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   registerCard(pluginsCardDef)
 
   // 卡公开 API（@ 插件/技能 chip 的跳转落点）：openDetail{name} = 打开该条目的详情页。
-  // 名字命中顺序固定（插件先于技能、个人先于公开）——令牌不区分插件与技能，顺序即语义。
+  // 名字命中顺序固定（插件先于技能）——令牌不区分插件与技能，顺序即语义。
   // 全局清单里没有 → 抛错（调用方据此回落到当前项目的 work 插件页）。
   cardBus.registerInlineCard({
     instanceId: 'floria-plugins',
@@ -5632,13 +5670,9 @@ function setFirstSendHash(v) { firstSendHash = v }
 
   function findMgrEntry(name) {
     for (const kind of ['plugins', 'skills']) {
-      const groups = (MGR && MGR[kind]) || {}
-      for (const cat of ['personal', 'public']) {
-        const arr = groups[cat]
-        if (!Array.isArray(arr)) continue
-        const row = arr.find((x) => x && x.n === name)
-        if (row) return { kind, cat }
-      }
+      const arr = (MGR && MGR[kind] && MGR[kind].personal) || []
+      const row = arr.find((x) => x && x.n === name)
+      if (row) return { kind }
     }
     return null
   }
@@ -5652,7 +5686,6 @@ function setFirstSendHash(v) { firstSendHash = v }
     const hit = findMgrEntry(n)
     if (!hit) throw new Error('未找到插件/技能：' + n)
     state.mgrView.kind = hit.kind
-    state.mgrView.cat = hit.cat
     state.mgrView.q = ''
     saveMgrView()
     MGR_DETAIL = { kind: hit.kind, key: n }
@@ -5669,7 +5702,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const kindName = isApps ? '应用' : v.kind === 'skills' ? '技能' : '插件'
     // 不传 sub / foot：插件 tab 不展示「申报说明」「数据源」这类提示文案（2026-11-02 用户定案）。
     MgrUI.browse(body, {
-      // 顶层切换＝「插件 / 技能 / 应用」三态：应用与插件/技能同轴，故并入同一段控件（原在公开/个人行）
+      // 顶层切换＝「插件 / 技能 / 应用」三态；插件/技能只列本地已安装项，无公开市场与「公开/个人」分段。
       kinds: [
         { id: 'plugins', label: '插件' },
         { id: 'skills', label: '技能' },
@@ -5681,11 +5714,7 @@ function setFirstSendHash(v) { firstSendHash = v }
         placeholder: isApps ? '搜索应用…' : v.kind === 'skills' ? '搜索技能…' : '搜索插件…',
         value: v.q,
       },
-      // 公开/个人只对「插件 / 技能」轴有意义，应用态不显示该行
-      cats: isApps ? [] : [{ id: 'public', label: '公开' }, { id: 'personal', label: '个人' }],
-      cat: v.cat,
       onKind(id) { v.kind = id; saveMgrView(); ctx.rerender() },
-      onCat(id) { v.cat = id; saveMgrView(); ctx.rerender() },
       onSearch(q) { v.q = q; saveMgrView(); renderMgrGrid() },
       onItem(key) { openDetail(key) },
       onAction(key) { onRowAction(key) },
@@ -5696,7 +5725,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // ---------- 列表 ----------
-  // 插件/技能/应用卡片网格（按 kind + cat + 搜索词过滤；应用数据源 = registry 的 APP_CATALOG）
+  // 插件/技能/应用卡片网格（按 kind + 搜索词过滤；应用数据源 = registry 的 APP_CATALOG）
   function renderMgrGrid() {
     if (PLUGINS_BODY) MgrUI.grid(PLUGINS_BODY, gridOpts())
   }
@@ -5718,15 +5747,15 @@ function setFirstSendHash(v) { firstSendHash = v }
     const label = v.kind === 'skills' ? '技能' : '插件'
     if (MGR_LOADING) return { loading: '加载真实清单中…' }
     if (MGR_ERR) return { error: { message: MGR_ERR }, onRetry: () => loadMgrData(true) }
-    const src = (MGR && MGR[v.kind] && MGR[v.kind][v.cat]) || []
+    const src = (MGR && MGR[v.kind] && MGR[v.kind].personal) || []
     const q = (v.q || '').trim().toLowerCase()
     const rows = q ? src.filter((x) => x.n.toLowerCase().includes(q) || (x.d || '').toLowerCase().includes(q)) : src
     return {
       items: rows.map(pluginItem),
       empty: `没有匹配的${label}`,
       onItem: openDetail,
-      // 个人行动作位是启停开关（无 action.key 的公开市场行不会调到 onAction）；
-      // 网格重渲走本函数，onAction 必须在这里给，否则点了只会 stopPropagation、什么也不发生。
+      // 行动作位是启停开关；网格重渲走本函数，onAction 必须在这里给，
+      // 否则点了只会 stopPropagation、什么也不发生。
       onAction: onRowAction,
     }
   }
@@ -5737,53 +5766,46 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // 应用卡片：动作位是真开关。图标 = 应用自己申报的 `icon`（preview.json → normExtCards → APP_CATALOG，
-  // 见 ext-decl.js）；不按 id 上色块、不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
+  // 见 ext-decl.js）：图标表键或应用目录内相对图片，解析收口 core/icon-spec.js；不按 id 上色块、
+  // 不取标题首字（2026-10-17 用户定案：模型/神经/本地媒体资源库各用自己的 icon）。
+  function appIcon(a) {
+    return iconHtml(a.icon, iconBaseFor(globalLabel(), a.path))
+  }
   function appItem(a) {
     const on = isAppEnabled(a.id)
     return {
       key: a.id,
       name: a.title,
       desc: a.path,
-      icon: I[a.icon] || '',
+      icon: appIcon(a),
       action: { on, key: a.id, title: on ? '已启用（点击停用）' : '未启用（点击启用）' },
     }
   }
 
-  // 插件/技能行：{n 名称, d 描述, v 版本, inst 是否已安装, k 目录名, en 启用态}。
-  // 个人（本地已安装）行 = 真开关（key 存在 → MgrUI 走 onAction）；公开市场行无 k，仍是纯状态指示。
+  // 插件/技能行：{n 名称, d 描述, v 版本, k 目录名, en 启用态}（只列本地已安装项）。
+  // 行 = 真开关（key 存在 → MgrUI 走 onAction）。
   function pluginItem(x) {
-    const toggleable = !!x.k
-    const on = toggleable ? x.en !== 0 : !!x.inst
+    const on = x.en !== 0
     return {
       key: x.n,
       name: x.n,
       desc: x.d || '暂无描述',
-      action: toggleable
-        ? { on, key: x.n, title: on ? '已启用（点击停用）' : '已停用（点击启用）' }
-        : { on, title: x.inst ? '已安装' : '未安装' },
+      action: { on, key: x.n, title: on ? '已启用（点击停用）' : '已停用（点击启用）' },
     }
   }
 
-  // 行内动作分发：应用 → 应用启停；插件/技能个人行 → 目录标记启停；其余（公开市场）无动作。
+  // 行内动作分发：应用 → 应用启停；插件/技能 → 目录标记启停。
   function onRowAction(key) {
     const v = state.mgrView
     if (v.kind === 'apps') { toggleApp(key); return }
     toggleCustomization(v.kind, key)
   }
 
-  // 按名称找可启停的个人行：先查当前 cat，再兜底遍历该 kind 的全部 cat。
-  // 搜索/切 cat 与网格重渲之间可能短暂错位，找不到就明说（不静默 return——静默会让点击看起来毫无反应）。
+  // 按名称找可启停行（只有 personal 一份清单）。找不到就明说——
+  // 静默 return 会让点击看起来毫无反应。
   function findTogglableRow(kind, key) {
-    const groups = (MGR && MGR[kind]) || {}
-    const v = state.mgrView
-    const order = [v.cat, ...Object.keys(groups).filter((c) => c !== v.cat)]
-    for (const cat of order) {
-      const arr = groups[cat]
-      if (!Array.isArray(arr)) continue
-      const hit = arr.find((r) => r.n === key && r.k)
-      if (hit) return hit
-    }
-    return null
+    const arr = (MGR && MGR[kind] && MGR[kind].personal) || []
+    return arr.find((r) => r.n === key && r.k) || null
   }
 
   // 插件/技能启停：状态 = 目录内 .disabled 标记（后端 POST /gateway/plugins/enable 落/删）。
@@ -5793,16 +5815,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const x = findTogglableRow(kind, key)
     if (!x) { toast('未找到该条目（请刷新页面后重试）'); return }
     const next = x.en === 0
-    // 同一个安装目录同时出现在「公开」（已安装）与「个人」两份清单里，两份都要同步，
-    // 否则切完回个人页看到的还是旧状态。
-    const setEn = (val) => {
-      const groups = (MGR && MGR[kind]) || {}
-      for (const cat of Object.keys(groups)) {
-        const arr = groups[cat]
-        if (!Array.isArray(arr)) continue
-        for (const r of arr) if (r.k === x.k) r.en = val
-      }
-    }
+    const setEn = (val) => { x.en = val ? 1 : 0 }
     setEn(next ? 1 : 0)
     if (MGR_DETAIL) { if (PLUGINS_CTX) PLUGINS_CTX.rerender() } else renderMgrGrid()
     try {
@@ -5843,33 +5856,27 @@ function setFirstSendHash(v) { firstSendHash = v }
       if (!a) return null
       const on = isAppEnabled(a.id)
       return {
-        kind, key, ico: I[a.icon] || '', color: MgrUI.color(a.id), initial: (a.title[0] || '?').toUpperCase(),
+        kind, key, ico: appIcon(a), color: MgrUI.color(a.id), initial: (a.title[0] || '?').toUpperCase(),
         name: a.title, desc: '', ver: cachedRepoVersion(a.repo), inst: on,
         typeLabel: '应用', sourceLabel: '工作区根 .claude/preview 申报',
         app: a, installedLabel: on ? '已启用' : '未启用',
         repo: a.repo || '',
       }
     }
-    const v = state.mgrView
-    const src = (MGR && MGR[kind] && MGR[kind][v.cat]) || []
+    const src = (MGR && MGR[kind] && MGR[kind].personal) || []
     const x = src.find((r) => r.n === key)
     if (!x) return null
     const isSkill = kind === 'skills'
-    const personal = v.cat === 'personal'
-    // 个人行带 k（目录名）= 可启停；状态语义从「已安装」换成「已启用/已停用」。
-    const toggleable = !!x.k
-    const enabled = toggleable ? x.en !== 0 : !!x.inst
+    const enabled = x.en !== 0
     const repo = x.repo || ''
-    // sub = 市场条目的仓库内子目录（git-subdir / 市场自带 ./plugins/x）；README 取子目录里的那份。
-    const sub = x.sub || ''
     return {
       kind, key, ico: '', color: MgrUI.color(x.n), initial: (x.n[0] || '?').toUpperCase(),
-      name: x.n, desc: x.d || '', ver: sub ? '' : (cachedRepoVersion(repo) || x.v || ''), inst: enabled, toggleable,
-      repo, sub,
+      name: x.n, desc: x.d || '', ver: cachedRepoVersion(repo) || x.v || '', inst: enabled,
+      repo,
       typeLabel: isSkill ? '技能' : '插件',
-      sourceLabel: personal ? '本地已安装' : '公开市场',
-      path: personal ? `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}` : '',
-      installedLabel: toggleable ? (enabled ? '已启用' : '已停用') : (x.inst ? '已安装' : '未安装'),
+      sourceLabel: '本地已安装',
+      path: `.claude/${isSkill ? 'skills' : 'plugins'}/${x.k || x.n}`,
+      installedLabel: enabled ? '已启用' : '已停用',
     }
   }
 
@@ -5884,13 +5891,10 @@ function setFirstSendHash(v) { firstSendHash = v }
       info.push(['状态', it.installedLabel])
       if (it.path) info.push(['位置', it.path])
     }
-    // 详情头动作位：应用 = 真开关（key = 应用 id）；个人插件/技能 = 真开关（key = 名称）；
-    // 公开市场条目 = 纯状态指示（无 key，不可点）。
+    // 详情头动作位：应用 = 真开关（key = 应用 id）；插件/技能 = 真开关（key = 名称）。
     const action = it.app
       ? { on: it.inst, key: it.key, title: it.inst ? '已启用（点击停用）' : '未启用（点击启用）' }
-      : it.toggleable
-        ? { on: it.inst, key: it.name, title: it.inst ? '已启用（点击停用）' : '已停用（点击启用）' }
-        : { on: it.inst, title: it.installedLabel }
+      : { on: it.inst, key: it.name, title: it.inst ? '已启用（点击停用）' : '已停用（点击启用）' }
     MgrUI.detail(body, {
       typeLabel: it.typeLabel,
       name: it.name,
@@ -5907,8 +5911,8 @@ function setFirstSendHash(v) { firstSendHash = v }
       onMounted(host) {
         const live = it
         // 介绍排在信息表下方：有上游仓库时渲染 README，否则回退卡片自带 desc。
-        renderRepoIntro(host, live.repo, live.desc, live.sub)
-        if (!live.repo || live.sub) return
+        renderRepoIntro(host, live.repo, live.desc, '')
+        if (!live.repo) return
         fillVersionRow(host, live.repo)
         ensureRepoVersion(live.repo, () => {
           if (MGR_DETAIL && MGR_DETAIL.key === live.key) fillVersionRow(host, live.repo)
@@ -6387,7 +6391,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // 当前项目有没有可视预览：**已启用**的预览卡（.claude/preview/<id>/card.json）或传统单页
-  // .claude/preview/index.html。停用卡不产生预览页签（工具栏胶囊里也不出现、服务器不拉起）。
+  // .claude/preview/index.html。停用卡不产生预览页签（右栏 tab 条里也不出现、服务器不拉起）。
   // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
   function wkPreviewAvailable(label) {
     return !!label && (enabledPreviewCardsFor(label).length > 0 || previewHasIndexPage(label))
@@ -6992,12 +6996,12 @@ function setFirstSendHash(v) { firstSendHash = v }
   //   文件树   → GET /gateway/project?label=  的 files（walkProjectTree，无固定深度 / 每层 200 / 总预算 8000）
   //   单文件   → GET /gateway/file?label=&path=（只读原始字节，带路径穿越防护 + 4MB 上限）
   // 主区：sbMode=work → #chat-area 加 .work（CSS Grid 三列 = 下沉区 | 分界条 | 右栏卡）。下沉区顶部一条
-  // .wk-topbar tab 顶栏（[+] [聊天胶囊×N] [文件 pill×N] [工具栏]）：聊天胶囊 = 开放集 state.wkChats 一会话
+  // .wk-topbar tab 顶栏（[+] [聊天胶囊×N] [文件 pill×N]）：聊天胶囊 = 开放集 state.wkChats 一会话
   // 一枚（命名 = 会话标题），文件 pill = 开放集 state.wkFiles 一路径一枚（命名 = 项目内相对路径，两族 ×
   // 都关掉；开放集纯运行时、切项目重置）；同一时刻只显一个内容（#session-card = 聊天 / #work-editor =
   // 文件）；右栏（#work-preview，与下沉区同属 #chat-area 三列之一）两态由 state.wkPvTab 定：'' = 预览态
-  // （挂项目预览帧）/ 工具 id = 工具态（顶 tab 条 + 该工具 pane，注册表 sidebar/work-tools.js），顶栏
-  // 「工具栏」胶囊切这两态（工具态时变「关闭」）。不变量 = 聊天 / 文件 / 右栏 **至少一栏在场**，唯一
+  // （挂项目预览帧）/ 工具 id = 工具态（顶 tab 条 + 该工具 pane，注册表 sidebar/work-tools.js）。
+  // 右栏开合 = 顶栏「工具栏」胶囊 #wk-tb-tool；也可把分界条拖窄到收敛阈值。不变量 = 聊天 / 文件 / 右栏 **至少一栏在场**，唯一
   // 判定点 applyPanes。与「管理/预览卡」互斥：route.js 进 mgr/preview 时 setSbMode('chat')。
 
   const IMG_EXT = /\.(png|jpe?g|webp|gif|svg|bmp|ico|avif)$/i
@@ -7220,7 +7224,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const willFile = state.sbMode === 'work' && wkShownTab() === 'file'
     if (wasFile && !willFile) wkEdCaptureScroll()
     if (state.sbMode === 'work') {
-      // 临时项目（根级时间戳任务区）不提供右栏：工具栏胶囊不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
+      // 临时项目（根级时间戳任务区）不提供右栏：顶栏工具栏胶囊 #wk-tb-tool 不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
       // 切项目留在场就是悬空态。归一只在这一处（布局落地 = 唯一写口），状态直接写、不再嵌套 applyPanes。
       if (isTempProjLabel(state.workProj) && state.wkPreview) {
         state.wkPreview = false
@@ -7273,7 +7277,8 @@ function setFirstSendHash(v) { firstSendHash = v }
 
   // 右栏 UI 落地（唯一处，纯渲染、不挂帧）：预览态 → 显 #wk-pv-body、隐全部工具 pane；工具态 → 隐预览帧、
   // 显该注册工具 pane（其余 pane 恒隐）。tab 条随栏在场常驻（预览页签只在项目确有可视预览时渲染）。
-  // 顶栏「工具栏」胶囊跟着走：栏不在场 = 「工具栏」+ 插件图标（点它开栏），在场 = 「关闭」+ ✕（点它收栏）。
+  // 右缘抽屉把手只在栏不在场时显示（插件图标 +「工具栏」，点它开栏）；栏在场时把手整体不渲染——
+  // 收起不走按钮，只靠把分界条拖窄到收敛阈值（见 work-assist.js bindGutter）。
   // 未注册的 wkPvTab（旧持久化值 / 工具被摘）落成「无 pane 在场」，切一次 tab 即归一。
   function applyPvTab() {
     // tab 条随数据对账：项目列表 / 预览卡表异步落地后，页签集合可能变化（卡出现或消失）。
@@ -7319,7 +7324,7 @@ function setFirstSendHash(v) { firstSendHash = v }
 
   // 右栏页态唯一写口（两维一次写）：on = 这一列在不在场；page = 省略则保持当前页，'' = 回预览页，
   // id = 工具页。两个入口一律经此：setPvTab（右栏 tab 条，含首枚「预览」页签）与 setPane('workspace')（顶栏
-  // 「工具栏」胶囊，work-files.js）——顶栏不另立链路，故两条入口行为必然同源。
+  // 「工具栏」胶囊 #wk-tb-tool，work-files.js）——不另立链路，故两条入口行为必然同源。
   // 注：page !== '' 时才走 wkToolNormId（未注册 id 会回落到首枚工具，不能拿它表达「回预览态」）。
   // 工具栏一打开就预热该项目后端：卡 tab 首次点击才 spawn 会空等，PDF 卡 / 日志卡切换尤其明显。
   // 预热范围 = 项目级 backend（旧链）+ 每个**已启用且有 backend**的卡（卡级 chain）；
@@ -7335,9 +7340,16 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   function setPvPane(on, page) {
+    const was = state.wkPreview
     state.wkPreview = !!on
-    if (!on) state.wkPvTab = ''
-    else if (page !== undefined) state.wkPvTab = page === '' ? '' : wkToolNormId(page)
+    // 列宽状态不跨开合：关闭即清零回默认，打开（关→开）也写一次——两边都成立才算「打开必是默认大小」。
+    if (!on) {
+      state.wkPrevW = wkDefaultPrevW()
+      state.wkPvTab = ''
+    } else {
+      if (!was) state.wkPrevW = wkDefaultPrevW()
+      if (page !== undefined) state.wkPvTab = page === '' ? '' : wkToolNormId(page)
+    }
     // 卡表已在时归一激活卡（表未就绪不能归一：会把持久化的卡 id 冲成 ''）；
     // 未就绪由 renderWorkPreview 拉完申报后再归一。
     if (on && enabledPreviewCardsFor(state.workProj).length) state.wkPvCard = wkCardNormId()
@@ -7520,9 +7532,18 @@ function setFirstSendHash(v) { firstSendHash = v }
   }
 
   // 拖动分界条：只改预览列宽（条往左拉 = 预览变宽），左侧下沉区自适应吃掉余量。
-  // 地板 WK_PREV_MIN；上限 = 主区宽的 70%（拖不出一屏只剩预览）。
+  // 常规下限 WK_PREV_MIN；上限 = 主区宽的 70%（拖不出一屏只剩预览）。
+  // 收敛：条往右拖到比 WK_PREV_COLLAPSE 更窄 ⇒ 右栏直接收掉（拖拽即关闭，不必再找关闭钮）。
   const WK_PREV_MIN = 260
   const WK_PREV_MAX_RATIO = 0.7
+  const WK_PREV_COLLAPSE = 220
+  // 默认列宽 = 主区宽的一半（窄窗回退 420）——固定 420 在宽屏上太窄。每次打开都回到它。
+  const WK_PREV_DEFAULT_RATIO = 0.5
+  const WK_PREV_DEFAULT_FALLBACK = 420
+  function wkDefaultPrevW() {
+    const w = chatArea.getBoundingClientRect().width
+    return w > 0 ? Math.round(w * WK_PREV_DEFAULT_RATIO) : WK_PREV_DEFAULT_FALLBACK
+  }
   function bindGutter(g) {
     g.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return
@@ -7535,17 +7556,23 @@ function setFirstSendHash(v) { firstSendHash = v }
       g.classList.add('dragging')
       document.body.classList.add('wk-resizing')
       e.preventDefault()
-      const move = (ev) => {
-        state.wkPrevW = Math.max(WK_PREV_MIN, Math.min(maxW, Math.round(right - ev.clientX)))
-        applyWorkCols()
-      }
-      g.addEventListener('pointermove', move)
       const done = () => {
         g.removeEventListener('pointermove', move)
         g.classList.remove('dragging')
         document.body.classList.remove('wk-resizing')
         saveWork()
       }
+      const move = (ev) => {
+        const w = Math.round(right - ev.clientX)
+        if (w <= WK_PREV_COLLAPSE) {
+          done()
+          setPane('workspace', false) // 收敛：拖到很窄即收掉右栏，不再压在硬地板上
+          return
+        }
+        state.wkPrevW = Math.min(maxW, Math.max(WK_PREV_COLLAPSE, w))
+        applyWorkCols()
+      }
+      g.addEventListener('pointermove', move)
       g.addEventListener('pointerup', done, { once: true })
       g.addEventListener('pointercancel', done, { once: true })
     })
@@ -7756,7 +7783,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       return
     }
     if (k === 'workspace') {
-      // 右栏开/关的**唯一 api**（顶栏「工具栏」胶囊直调此处，见 work-mount.js）：只管在场维，页态归
+      // 右栏开/关的**唯一 api**（顶栏「工具栏」胶囊 #wk-tb-tool 直调此处，见 work-mount.js）：只管在场维，页态归
       // work-preview.js 的 setPvPane。省略 page ⇒ 保持当前页；关栏时 setPvPane 内部顺带回预览态
       // （不留「栏不在场却停在工具态」的悬空页态）。
       // 评论内容不随开关走：cmtLoad/cmtRender 在选项目（selectProject）与事后补拉（ensureWork）
@@ -8125,7 +8152,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     { id: 'skills', label: '技能' },
     { id: 'apps', label: '应用' },
   ]
-  const WPL_VIEW = { kind: 'plugins', q: '' } // 项目侧无公开市场，cat 恒 personal（不进视图态）
+  const WPL_VIEW = { kind: 'plugins', q: '' }
   let WPL_DETAIL = null // { kind, key }
   let WPL_BODY = null // 当前 #wk-plugins-pane 元素（重渲落点）
   let WPL_LABEL = '' // WPL_DATA 所属项目
@@ -8239,8 +8266,6 @@ function setFirstSendHash(v) { firstSendHash = v }
         placeholder: isApps ? '搜索应用…' : WPL_VIEW.kind === 'skills' ? '搜索技能…' : '搜索插件…',
         value: WPL_VIEW.q,
       },
-      cats: isApps ? [] : [{ id: 'personal', label: '个人' }],
-      cat: 'personal',
       onKind(id) {
         if (WPL_VIEW.kind === id) return
         WPL_VIEW.kind = id
@@ -8248,7 +8273,6 @@ function setFirstSendHash(v) { firstSendHash = v }
         WPL_DETAIL = null
         renderWpl()
       },
-      onCat() { /* 项目侧只有个人项，无公开/个人切换 */ },
       onSearch(q) { WPL_VIEW.q = q; renderWplGrid() }, // 只重渲网格，不重建壳（输入焦点不丢）
       onItem(key) { WPL_DETAIL = { kind: WPL_VIEW.kind, key }; renderWpl() },
       onAction(key) { if (WPL_VIEW.kind === 'apps') toggleWplApp(key); else toggleWplCustom(WPL_VIEW.kind, key) },
@@ -8316,13 +8340,17 @@ function setFirstSendHash(v) { firstSendHash = v }
     }
   }
 
-  // 应用行：卡自身申报的 icon；有卡级后端时副标题标出服务器名（用户据此判断工具栏会拉起谁）
+  // 应用行：卡自身申报的 icon（图标表键或卡目录内相对图片，解析收口 core/icon-spec.js）；
+  // 有卡级后端时副标题标出服务器名（用户据此判断工具栏会拉起谁）
+  function wplAppIcon(c) {
+    return iconHtml(c.icon, iconBaseForCardDir(WPL_LABEL, c.id))
+  }
   function wplAppItem(c) {
     return {
       key: c.id,
       name: c.title,
       desc: c.hasBackend ? `服务器 · ${c.backendName || c.id}` : '静态页面',
-      icon: I[c.icon] || '',
+      icon: wplAppIcon(c),
       action: {
         on: c.enabled,
         key: c.id,
@@ -8417,7 +8445,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       const legacy = c.id === '__index__'
       return {
         kind, key,
-        ico: I[c.icon] || '',
+        ico: wplAppIcon(c),
         color: MgrUI.color(c.id),
         initial: (c.title[0] || '?').toUpperCase(),
         name: c.title,
@@ -12880,8 +12908,7 @@ function wkMerge3(base, local, remote) {
     $('wk-new').innerHTML = I.dshPlus
     // 视图开关图标与 chat 的 #panel-collapse 同款（I.collapse，2026-10-10 用户定案：两模式第三槽同图标）
     $('wk-view').innerHTML = I.collapse
-    // 顶栏「工具栏」胶囊的图标/文字由 applyPvTab 按「右栏在不在场」写（不在场 = 插件图标 + 「工具栏」，
-    // 在场 = ✕ + 「关闭」），此处不预置——applySbMode → applyPanes → applyPvTab 在 mountWork 之后立刻落一次。
+    // 顶栏「工具栏」胶囊（#wk-tb-tool）直接调侧栏 setPane，不开浮层。
     // 右栏工具 tab 的「评论」由评论卡自注册（views/cards/comment/comment-card.js）——宿主不再知道
     // 该工具的存在，只注入它需要的能力回调（下一行起）。
     // 评论卡 ↔ work 解耦：注册回调（点评论定位开文件 / 选区添加评论时切到评论工具页 /
@@ -12894,9 +12921,10 @@ function wkMerge3(base, local, remote) {
       ensurePane: () => setPvTab('comments'), // 切评论工具页（含开栏 + 拉内容）
       refreshMarks: cmtApplyMarks,
     })
-    // 顶栏三种 pill 的点击一律**直调侧栏那条同一个函数**，不在此自写 state（顶栏不另立链路）。
-    // 「工具栏」胶囊 = 右栏整列开/关：调 setPane('workspace', on)（其内落 setPvPane：在场维 + 关栏时
-    // 顺带回预览态）。文件 pill（可多枚）= 见下面 data-wkftab 分支（调 openWorkFile / closeWkFile）。
+    // 顶栏 pill 的点击一律**直调侧栏那条同一个函数**，不在此自写 state（顶栏不另立链路）。
+    // 文件 pill（可多枚）= 见下面 data-wkftab 分支（调 openWorkFile / closeWkFile）。
+    // 顶栏「工具栏」胶囊（#wk-tb-tool）= 右栏整列开/关：直调侧栏既有 api setPane('workspace', on)，
+    // 不另立链路（图标/文字/active 由 applyPvTab 写）。
     $('wk-tb-tool').addEventListener('click', () => setPane('workspace', !state.wkPreview))
     // 右栏工具 tab 条：唯一切换口 = setPvTab（渲染 + 内容补挂 + 持久化都在其内）。tab 条由
     // work-tools.js 的 renderWkToolTabs 重渲 → 事件必须委托在容器上（逐钮绑定会被下次重渲抹掉）。
@@ -14109,6 +14137,42 @@ function wkMerge3(base, local, remote) {
     ensurePickAll().catch(() => {})
     loadPickPath(pickAll.root).then((ok) => { if (ok && after) after() })
   }
+  // 按上下文缓存（'' = 全局）：{list, loaded, loading, err}。同一 label 只发一次请求，
+  // 在途复用同一 Promise，失败记 err 并在下次调用时重试——与 mgr-data 的项目技能缓存同范式。
+  const PROJ_ELEMENTS = new Map()
+  function projElementsOf(label) {
+    const key = label || ''
+    let r = PROJ_ELEMENTS.get(key)
+    if (!r) {
+      r = { list: [], loaded: false, loading: false, err: '' }
+      PROJ_ELEMENTS.set(key, r)
+    }
+    return r
+  }
+  function ensureProjectElements(label) {
+    const r = projElementsOf(label)
+    if (r.loaded || r.loading || needToken()) return Promise.resolve(r.list)
+    r.loading = true
+    r.err = ''
+    const qs = label ? '?label=' + encodeURIComponent(label) : ''
+    return fetch(apiUrl('/gateway/mention-elements' + qs))
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data || !Array.isArray(data.elements)) throw new Error((data && data.error) || 'bad response')
+        r.list = data.elements
+        r.loaded = true
+        return r.list
+      })
+      .catch((e) => {
+        r.err = (e && e.message) || String(e)
+        return r.list
+      })
+      .then((list) => {
+        r.loading = false
+        return list
+      })
+  }
+
   // ---------- @ 提及（2026-08-15）：输入 @ 弹出同一工具栏（2026-09-18 会话区提前），选中插入内联 chip ----------
   // 消息文本中 chip 序列化为 [插件:名称] / [会话:名称] 令牌（CLI 终端渲染为 [名称]，遥测端渲染为 chip；
   // 令牌保留 kind 供两端差异化渲染 + 未来插件激活扩展）。
@@ -14279,6 +14343,21 @@ function wkMerge3(base, local, remote) {
     if (it.kind === 'attref') {
       const pos = cmView ? cmView.state.selection.main.from : mention.anchor
       composerReplaceRange(mention.anchor, pos, it.md + ' ')
+      closeMentionPop()
+      syncGwSend()
+      return
+    }
+    // 预览页声明的元素（2026-11-13）：落地形态完全由声明 insert 决定，前端不解释语义。
+    // text / token = 原文写入；path = 与文件/目录引用同一形态（fileLinkMarkdown / 目录令牌）。
+    if (it.kind === 'element') {
+      const ins = it.el && it.el.insert
+      if (!ins) return
+      const text = ins.type === 'path'
+        ? (ins.pathType === 'dir' ? mentionPathToken(ins.path, 'dir') : fileLinkMarkdown(ins.path))
+        : ins.type === 'token' ? ins.token : ins.text
+      if (!text) return
+      const pos = cmView ? cmView.state.selection.main.from : mention.anchor
+      composerReplaceRange(mention.anchor, pos, text + (/[\s\n]$/.test(text) ? '' : ' '))
       closeMentionPop()
       syncGwSend()
       return
@@ -14630,6 +14709,15 @@ function wkMerge3(base, local, remote) {
     { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
     { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
   ]
+  // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
+  // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
+  function cmdViews() {
+    const out = CMD_VIEWS.slice()
+    if (projElementsOf(pickHome()).list.length) {
+      out.push({ view: 'element', name: '元素', desc: '引用预览页声明的元素', icon: I.chip })
+    }
+    return out
+  }
   // 过滤查询唯一来源 = 锚点（`@` 位置 / 「+」点击时的光标）到光标的文本 = `mention.q`。
   // 弃独立搜索框（2026-10-14 待办 20 返修）：旧框每次 input 都 innerHTML 重渲并**重建框自身**，
   // IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，中文 IME 正常。
@@ -14686,6 +14774,11 @@ function wkMerge3(base, local, remote) {
         items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
       }
     }
+    // 元素 = 当前上下文的预览声明（2026-11-13，与「+ → 元素」同源）：@ 搜索可直接命中。
+    for (const el of projElementsOf(home).list) {
+      if (!match(el.name) && !match(el.desc)) continue
+      items.push({ kind: 'element', name: el.name, desc: el.desc, el, t: 0 })
+    }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
     if (globalSearch) {
@@ -14737,6 +14830,16 @@ function wkMerge3(base, local, remote) {
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
+  // 元素行 = 当前上下文（pickHome，'' = 全局预览根）的预览声明；选中后按声明 insert 落地，
+  // 前端不解释元素语义。数据层与 @ 跨类搜索同源（toolbar/elements.js 的 projElementsOf）。
+  function cmdElementRows(match, grp) {
+    const out = []
+    for (const el of projElementsOf(pickHome()).list) {
+      if (match && !match(el.name) && !match(el.desc)) continue
+      out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp })
+    }
+    return out
+  }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
   // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
   function pickProgressRenders() {
@@ -14768,6 +14871,7 @@ function wkMerge3(base, local, remote) {
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, '元素'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {
@@ -14798,7 +14902,7 @@ function wkMerge3(base, local, remote) {
     // （images.js uploadedMentionItems），只列行不渲缩略图（2026-10-22 定案：缩略图只在底栏胶囊）。
     items.push(...uploadedMentionItems().map((it) => ({ ...it, desc: it.attKind === 'img' ? '插入图片引用' : '插入文件引用', grp: '上传' })))
     // 首屏四个入口是导航不是数据：底栏有文字也不过滤（否则「有文字点 +」会只剩上传两行，像坏了）
-    for (const v of CMD_VIEWS) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
+    for (const v of cmdViews()) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
     return items
   }
   function currentChoice() {
@@ -15073,6 +15177,8 @@ function setModelUserPicked(v) { modelUserPicked = v }
       loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
       // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
       ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      // 预览页声明的元素（同按上下文缓存）：落地后首屏决定是否出现「元素」入口。
+      ensureProjectElements(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
       refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
     }
   }
@@ -15135,7 +15241,7 @@ function setModelUserPicked(v) { modelUserPicked = v }
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype, it.path) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file', '') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'element' ? (I[it.el.icon] || I.chip) : it.kind === 'back' ? MENTION_UP_ICON :it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype, it.path) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file', '') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''
@@ -17656,7 +17762,8 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
     const nav = railNav()
     if (!nav) return
     const area = document.getElementById('chat-area')
-    const inSession = !!area && area.classList.contains('in-session') && !area.classList.contains('work')
+    // 显示门 = 在会话内（chat / work 两模式都显示；work 模式轨贴会话区左缘，见 styles.css）。
+    const inSession = !!area && area.classList.contains('in-session')
     railItems = railCollect()
     if (!inSession || railItems.length < 2 || window.innerWidth <= RAIL_NARROW) {
       nav.hidden = true

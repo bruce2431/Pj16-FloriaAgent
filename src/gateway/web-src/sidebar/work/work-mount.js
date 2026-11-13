@@ -84,8 +84,7 @@ import { resetWorkPreviewOnBoot } from '../../core/storage.js'
     $('wk-new').innerHTML = I.dshPlus
     // 视图开关图标与 chat 的 #panel-collapse 同款（I.collapse，2026-10-10 用户定案：两模式第三槽同图标）
     $('wk-view').innerHTML = I.collapse
-    // 顶栏「工具栏」胶囊的图标/文字由 applyPvTab 按「右栏在不在场」写（不在场 = 插件图标 + 「工具栏」，
-    // 在场 = ✕ + 「关闭」），此处不预置——applySbMode → applyPanes → applyPvTab 在 mountWork 之后立刻落一次。
+    // 顶栏「工具栏」胶囊（#wk-tb-tool）直接调侧栏 setPane，不开浮层。
     // 右栏工具 tab 的「评论」由评论卡自注册（views/cards/comment/comment-card.js）——宿主不再知道
     // 该工具的存在，只注入它需要的能力回调（下一行起）。
     // 评论卡 ↔ work 解耦：注册回调（点评论定位开文件 / 选区添加评论时切到评论工具页 /
@@ -98,9 +97,10 @@ import { resetWorkPreviewOnBoot } from '../../core/storage.js'
       ensurePane: () => setPvTab('comments'), // 切评论工具页（含开栏 + 拉内容）
       refreshMarks: cmtApplyMarks,
     })
-    // 顶栏三种 pill 的点击一律**直调侧栏那条同一个函数**，不在此自写 state（顶栏不另立链路）。
-    // 「工具栏」胶囊 = 右栏整列开/关：调 setPane('workspace', on)（其内落 setPvPane：在场维 + 关栏时
-    // 顺带回预览态）。文件 pill（可多枚）= 见下面 data-wkftab 分支（调 openWorkFile / closeWkFile）。
+    // 顶栏 pill 的点击一律**直调侧栏那条同一个函数**，不在此自写 state（顶栏不另立链路）。
+    // 文件 pill（可多枚）= 见下面 data-wkftab 分支（调 openWorkFile / closeWkFile）。
+    // 顶栏「工具栏」胶囊（#wk-tb-tool）= 右栏整列开/关：直调侧栏既有 api setPane('workspace', on)，
+    // 不另立链路（图标/文字/active 由 applyPvTab 写）。
     $('wk-tb-tool').addEventListener('click', () => setPane('workspace', !state.wkPreview))
     // 右栏工具 tab 条：唯一切换口 = setPvTab（渲染 + 内容补挂 + 持久化都在其内）。tab 条由
     // work-tools.js 的 renderWkToolTabs 重渲 → 事件必须委托在容器上（逐钮绑定会被下次重渲抹掉）。

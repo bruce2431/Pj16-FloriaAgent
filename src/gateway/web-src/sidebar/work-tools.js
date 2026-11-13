@@ -1,6 +1,6 @@
 // work 工具页注册表（2026-10-07，参考 Prism；2026-10-12 单链路：开合归胶囊、页态归本 tab 条）：
 // work 右栏（#work-preview）顶部水平标签栏的登记处。**右栏开/关 = 顶栏胶囊直调侧栏 api
-// setPane('workspace', on)（唯一动作，见 work-mount.js）**；**显示哪一页 = 本 tab 条**
+// setPane('workspace', on)（唯一动作，见 work-mount.js 的 #wk-tb-tool 绑定）**；**显示哪一页 = 本 tab 条**
 // （预览页签只在项目确有可视预览时出现，其后是已注册工具）；active 与页态共用一个状态源 state.wkPvTab
 // （'' = 预览页，工具 id = 工具页）。右栏在场时 tab 条常驻（applyPvTab 按 wkPreview 显隐）。
 // 任何模块可调 registerWkTool({ id, title, pane, mount }) 挂一枚工具 tab——本表只做「注册 → 按序渲 tab →
@@ -66,7 +66,7 @@ import { enabledPreviewCardsFor, previewHasIndexPage } from '../feature/preview-
   }
 
   // 当前项目有没有可视预览：**已启用**的预览卡（.claude/preview/<id>/card.json）或传统单页
-  // .claude/preview/index.html。停用卡不产生预览页签（工具栏胶囊里也不出现、服务器不拉起）。
+  // .claude/preview/index.html。停用卡不产生预览页签（右栏 tab 条里也不出现、服务器不拉起）。
   // 数据未就绪时（项目列表 / 卡表未到）两项都为假；调用方须用 wkPreviewKnown 区分「已知没有」与「还不知道」。
   function wkPreviewAvailable(label) {
     return !!label && (enabledPreviewCardsFor(label).length > 0 || previewHasIndexPage(label))

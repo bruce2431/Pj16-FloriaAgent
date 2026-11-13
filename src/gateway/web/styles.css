@@ -90,6 +90,11 @@ a { text-decoration: none; color: inherit; }
   /* sticky 同时是绝对定位后代的包含块（覆盖层 #search-overlay 等仍以 #app 为基准）。 */
 }
 #app.work { --sunken-bg: var(--plane); background: var(--chat-bg); }
+/* 白天 work 读法与 chat 同构：灰底板 + 白内容面——#app.work 底板取 --plane（透出侧栏 ⇒ 侧栏列读作灰），
+   下沉区（#chat-area.work 本体）取白卡底 --chat-bg。--sunken-bg 随下沉区取白（顶栏渐隐板 /
+   #composer-mask 消费它）。暗色不变。 */
+html:not([data-theme="dark"]) #app.work { background: var(--plane); --sunken-bg: var(--chat-bg); }
+html:not([data-theme="dark"]) #chat-area.work { background: var(--chat-bg); }
 /* 键盘节：壳体（body / #app / 侧栏 / 顶栏 / 消息流）**没有任何随键盘变化的几何量**。键盘 reveal 时
    浏览器去滚文档（或平移可视视口）以露出输入框，#app 的 sticky 粘附把它消化在滚动机制内部 ⇒ 画面
    不动；输入栏再按实测屏坐标抬升（engine/viewport.js）。因此这里不需要、也不允许给 #app 加任何
@@ -1589,6 +1594,11 @@ body.sb-resizing { cursor: grabbing !important; user-select: none; }
 .mgr-tabs { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 10px 12px; }
 .mgr-tab { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 14px; border-radius: 9px; font-size: 14.5px; color: var(--text-2); transition: background 0.15s, color 0.15s; }
 .mgr-tab svg { width: 17px; height: 17px; flex: none; }
+/* 应用/外部卡自定义图标（icon 声明为 preview 内相对图片时由 core/icon-spec.js 渲染成 <img class="app-ico">）：
+   尺寸跟随所在图标的 SVG 口径——侧栏 tab 17px、mgr 列表 24px、mgr 详情头 30px。 */
+.mgr-tab img.app-ico { width: 17px; height: 17px; flex: none; object-fit: contain; border-radius: 4px; }
+.mgr-ic.ic img.app-ico { width: 24px; height: 24px; object-fit: contain; }
+.mgr-dl-ic.ic img.app-ico { width: 30px; height: 30px; object-fit: contain; }
 .mgr-tab:hover { background: var(--hover); color: var(--text); }
 .mgr-tab.on { background: var(--active); color: var(--text); font-weight: 600; }
 /* ===== 管理视图（2026-08-15，Codex 风格） =====
@@ -2380,7 +2390,7 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 body.wk-resizing { cursor: col-resize; user-select: none; }
 
 /* work 右栏卡（第三列，2026-10-07）：**下沉区右侧的一张白卡**——四周 2px 缝 + 圆角，浮在底板
-   （--plane，见上方 grid 规则）上故显形；开关 = 顶栏胶囊 #wk-tb-tool 或视图浮层的「预览」。
+   （--plane，见上方 grid 规则）上故显形；开关 = 顶栏「工具栏」胶囊 #wk-tb-tool。
    两态由 state.wkPvTab 定（预览态挂 #wk-pv-body / 工具态显 #wk-pv-tabs + 工具 pane）；
    关掉即隐藏不销毁（内容留着，重开零重载）。与编辑器/聊天栏同属 #chat-area 三列。 */
 #work-preview { display: none; position: relative; min-height: 0; flex-direction: column; margin: 2px; border-radius: var(--radius); background: var(--chat-bg); overflow: hidden; }
@@ -2399,7 +2409,7 @@ body.wk-resizing { cursor: col-resize; user-select: none; }
 .wk-pv-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 
 /* ============ work 右栏工具 pane：评论（feature/comment/comment-panel.js 渲染，显隐归 work.js applyPvTab）============
-   顶栏工具栏胶囊 #wk-tb-tool 的 active/图标/文字跟着页态（state.wkPvTab，落点 = work.js applyPvTab）。 */
+   顶栏「工具栏」胶囊 #wk-tb-tool 的 active/图标/文案跟着页态（state.wkPvTab，落点 = work.js applyPvTab）。 */
 /* 评论面板：顶过滤行 + 可滚列表 */
 .wk-cmt { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cmt-filters { flex: none; display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
@@ -2425,7 +2435,6 @@ body.wk-resizing { cursor: col-resize; user-select: none; }
 #recent-body, .wk-body, #wk-proj-pop, .cmt-list { scrollbar-width: none; -ms-overflow-style: none; }
 #recent-body::-webkit-scrollbar, .wk-body::-webkit-scrollbar, #wk-proj-pop::-webkit-scrollbar,
 .cmt-list::-webkit-scrollbar { display: none; }
-/* 顶栏工具栏胶囊（#wk-tb-tool）：形 = .wk-tb-pill（与聊天胶囊同款），active = 面板在场（.wk-tb-pill.on）。 */
 /* 原文评论标记（阅读态）：被批注的行/块加暖色底 + 左侧竖条；已解决 = 中性灰淡显。
    命中元素既有块级（md 标题/引用/列表项）也有行内（段落行 span、代码行 span），故只用
    background + inset 横条（不改盒模型，宽高零变化）。 */
@@ -2770,6 +2779,12 @@ body.touch .turn-rail .tr-preview { pointer-events: auto; cursor: pointer; }
 .tr-resp[hidden] { display: none; }
 @keyframes tr-preview-in { from { opacity: 0; transform: translateX(4px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 640px) { .turn-rail { display: none; } }
+/* work 模式：轨整体贴会话区**左缘**（chat 仍贴右缘）。刻度从左端向内生长，预览卡翻到轨的右侧，
+   入场动画方向同步镜像。 */
+#chat-area.work .turn-rail { right: auto; left: 10px; }
+#chat-area.work .tr-mark::before { right: auto; left: 0; transform-origin: left center; }
+#chat-area.work .tr-preview { right: auto; left: calc(100% + 10px); animation-name: tr-preview-in-left; }
+@keyframes tr-preview-in-left { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
 
 /* ---------- KaTeX 公式（2026-10-06，见 core/markdown.js 的公式预扫描） ----------
    KaTeX 输出颜色全继承父级 currentColor（其 CSS 只有 border-color/svg fill:currentColor），

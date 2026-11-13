@@ -136,12 +136,18 @@ html[data-theme="dark"] {
 
 /* 全局统一滚动条：所有滚动容器共用一套滑条——宽 8px、轨道透明、thumb 用 --sb-* 随日夜，
    不再逐容器重复定义（旧版五处各写 width+thumb、且未设 track ⇒ 夜晚露白边）。
+   默认隐藏（thumb 透明，槽位仍占 8px），鼠标进入滚动容器（含其子内容）才显形——chat 消息流、
+   编辑卡、侧栏列表等全部界面同一套；thumb 自身 hover 加深。无 hover 的触屏恒显。
    iPad/Safari 自 13 起忽略 ::-webkit-scrollbar，整条会退回原生滚动条，其日夜由
    :root / html[data-theme="dark"] 的 color-scheme 决定（表单控件与 CM6 内部滚动条同理）。 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+:hover::-webkit-scrollbar-thumb { background: var(--sb-thumb); }
 ::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+@media (hover: none) {
+  ::-webkit-scrollbar-thumb { background: var(--sb-thumb); }
+}
 
 
 

@@ -12,9 +12,18 @@
   }
 
   // 拖动分界条：只改预览列宽（条往左拉 = 预览变宽），左侧下沉区自适应吃掉余量。
-  // 地板 WK_PREV_MIN；上限 = 主区宽的 70%（拖不出一屏只剩预览）。
+  // 常规下限 WK_PREV_MIN；上限 = 主区宽的 70%（拖不出一屏只剩预览）。
+  // 收敛：条往右拖到比 WK_PREV_COLLAPSE 更窄 ⇒ 右栏直接收掉（拖拽即关闭，不必再找关闭钮）。
   const WK_PREV_MIN = 260
   const WK_PREV_MAX_RATIO = 0.7
+  const WK_PREV_COLLAPSE = 220
+  // 默认列宽 = 主区宽的一半（窄窗回退 420）——固定 420 在宽屏上太窄。每次打开都回到它。
+  const WK_PREV_DEFAULT_RATIO = 0.5
+  const WK_PREV_DEFAULT_FALLBACK = 420
+  function wkDefaultPrevW() {
+    const w = chatArea.getBoundingClientRect().width
+    return w > 0 ? Math.round(w * WK_PREV_DEFAULT_RATIO) : WK_PREV_DEFAULT_FALLBACK
+  }
   function bindGutter(g) {
     g.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return
@@ -27,17 +36,23 @@
       g.classList.add('dragging')
       document.body.classList.add('wk-resizing')
       e.preventDefault()
-      const move = (ev) => {
-        state.wkPrevW = Math.max(WK_PREV_MIN, Math.min(maxW, Math.round(right - ev.clientX)))
-        applyWorkCols()
-      }
-      g.addEventListener('pointermove', move)
       const done = () => {
         g.removeEventListener('pointermove', move)
         g.classList.remove('dragging')
         document.body.classList.remove('wk-resizing')
         saveWork()
       }
+      const move = (ev) => {
+        const w = Math.round(right - ev.clientX)
+        if (w <= WK_PREV_COLLAPSE) {
+          done()
+          setPane('workspace', false) // 收敛：拖到很窄即收掉右栏，不再压在硬地板上
+          return
+        }
+        state.wkPrevW = Math.min(maxW, Math.max(WK_PREV_COLLAPSE, w))
+        applyWorkCols()
+      }
+      g.addEventListener('pointermove', move)
       g.addEventListener('pointerup', done, { once: true })
       g.addEventListener('pointercancel', done, { once: true })
     })

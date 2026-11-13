@@ -31,7 +31,7 @@ import { cmtRender } from '../../feature/comment/comment-panel.js'
       return
     }
     if (k === 'workspace') {
-      // 右栏开/关的**唯一 api**（顶栏「工具栏」胶囊直调此处，见 work-mount.js）：只管在场维，页态归
+      // 右栏开/关的**唯一 api**（顶栏「工具栏」胶囊 #wk-tb-tool 直调此处，见 work-mount.js）：只管在场维，页态归
       // work-preview.js 的 setPvPane。省略 page ⇒ 保持当前页；关栏时 setPvPane 内部顺带回预览态
       // （不留「栏不在场却停在工具态」的悬空页态）。
       // 评论内容不随开关走：cmtLoad/cmtRender 在选项目（selectProject）与事后补拉（ensureWork）

@@ -147,7 +147,7 @@ import { isTempProjLabel } from '../../core/util.js'
     const willFile = state.sbMode === 'work' && wkShownTab() === 'file'
     if (wasFile && !willFile) wkEdCaptureScroll()
     if (state.sbMode === 'work') {
-      // 临时项目（根级时间戳任务区）不提供右栏：工具栏胶囊不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
+      // 临时项目（根级时间戳任务区）不提供右栏：顶栏工具栏胶囊 #wk-tb-tool 不渲染 ⇒ 用户无关闭入口，栏若因槽恢复或
       // 切项目留在场就是悬空态。归一只在这一处（布局落地 = 唯一写口），状态直接写、不再嵌套 applyPanes。
       if (isTempProjLabel(state.workProj) && state.wkPreview) {
         state.wkPreview = false

@@ -1,4 +1,4 @@
-// 轮次导航轨（dsh TurnNavigator 移植，2026-10-02）：会话区右侧一列短线刻度，每格=一个对话轮次
+// 轮次导航轨（dsh TurnNavigator 移植，2026-10-02）：会话区一列短线刻度（chat 贴右缘 / work 贴会话区左缘），每格=一个对话轮次
 //（=一条已提交用户气泡所辖段），出预览卡（提示词 50 字 + 回复 120 字）、跳到该轮、当前可见轮高亮。
 // 数据源=#messages 已渲染 DOM（Pj16 前端全量加载，dsh 的「未加载轮次分页」自然省略）。
 //
@@ -237,7 +237,8 @@ import { messagesEl } from '../engine/state.js'
     const nav = railNav()
     if (!nav) return
     const area = document.getElementById('chat-area')
-    const inSession = !!area && area.classList.contains('in-session') && !area.classList.contains('work')
+    // 显示门 = 在会话内（chat / work 两模式都显示；work 模式轨贴会话区左缘，见 styles.css）。
+    const inSession = !!area && area.classList.contains('in-session')
     railItems = railCollect()
     if (!inSession || railItems.length < 2 || window.innerWidth <= RAIL_NARROW) {
       nav.hidden = true
