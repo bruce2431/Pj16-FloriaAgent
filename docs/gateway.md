@@ -136,7 +136,7 @@
 ```
 
 - `GET /gateway/preview-cards?label=<label>` → `{ label, cards:[…], quoteActions:[…], previewCards:[…] }`（**同一端点一次取三份申报**，见 §6.6/§6.7）。label 未命中 / 无 preview → 404；有 preview 但 `cards` 缺失 → `[]`（空集是正常态，非错误）。**label 范围含全局根**（`全局根 · 散装对话`）：全局项的 preview 目录 = `<工作区根>/.claude/preview/`（`findProjects` 对该项 `hasPreview` 探此目录），与项目项共用同一条解析链——工作区根的卡片申报即落此处（web-ui.md §42「常驻应用卡」）。
-- 解析：`readPreviewJson(previewDir)` 是 `preview.json` 的**单一解析入口**（`readBackendCfg` 与 `readPreviewCards` 共用；`JSON.parse` 带 `try/catch`，坏 JSON / 顶层非对象一律返回 null ⇒ 空集，不抛到 `findProjects`）。`readPreviewCards` 逐条校验：`id` 匹配 `/^[a-zA-Z0-9_-]{1,32}$/` 且不重复（重复保首次）、`title` 非空、`host === 'view'`、`isPreviewRelPath(path)` 为真；不合格项**整条丢弃**（不猜、不补默认值、不回落）。`icon` 非空串即留（是否为合法图标键由前端 `I` 表判定，缺省回落 `plug`）。
+- 解析：`readPreviewJson(previewDir)` 是 `preview.json` 的**单一解析入口**（`readBackendCfg` 与 `readPreviewCards` 共用；`JSON.parse` 带 `try/catch`，坏 JSON / 顶层非对象一律返回 null ⇒ 空集，不抛到 `findProjects`）。`readPreviewCards` 逐条校验：`id` 匹配 `/^[a-zA-Z0-9_-]{1,32}$/` 且不重复（重复保首次）、`title` 非空、`host === 'view'`、`isPreviewRelPath(path)` 为真；不合格项**整条丢弃**（不猜、不补默认值、不回落）。`icon` 非空串即留（trim 后截 200 字符）；形态有两种——`@floria/web` 图标表键，或 **preview 目录内相对图片路径**（相对卡页所在目录，如 `logo.svg` / `icons/logo.png`），由前端 `core/icon-spec.js` 的白名单解析，两者都不命中回落 `plug`。
 - `repo`（可选，2026-10-30）：上游 GitHub 仓库地址，供插件卡「应用」详情页展示与编辑（web-ui.md §42）。`readPreviewCards` 只做 `trim()` + 截 500 字符透传，**不校验 URL 形态**——链接化判定在前端（仅 `http(s)://` 才渲成 `<a>`，其余按纯文本）。**写回链**：前端读 `GET /gateway/file?label=<全局根>&path=.claude/preview/preview.json`（取 ETag 毫秒 mtime 作基线）→ 改该卡 `repo` → `POST /gateway/file/write`（带 `baseMtime`，冲突 409 不覆盖）。网关不为表单新增写端点，复用既有文件读写。
 - `isPreviewRelPath`：preview 目录内相对路径 —— 拒绝对路径 / 反斜杠 / `?` / 空段 / `.` `..` 段 / 解码后越界 / 非法 `%` 序列；允许尾随 `#片段`。**同款规则在前端 `engine/ext-decl.js` `isExtPath` 再写一份**——两条外部输入（网关读的 `preview.json` / 不过网关的 `postMessage`）各自守门，不是重复实现。
 - 卡片资源**不需要新路由**：`/preview/<label>/<path>` 已托管 preview 目录内任意文件（`resolve` + `startsWith(pvDir+sep)` 越界防护 + 鉴权）；**同一条路由的 label 亦含全局根**（全局项 `pvDir` = `<工作区根>/.claude/preview`），故工作区根卡片页经 `/preview/全局根 · 散装对话/<path>` 托管。
@@ -165,7 +165,7 @@
   "backend": { "name": "PDF 服务", "cmd": ["python", "server.py"], "readyPath": "/" } }
 ```
 
-- 网关扫描 `readPreviewPaneCards(previewDir)`：只认**直接子目录**且含 `card.json`；`id` = 目录名（`/^[a-zA-Z0-9_-]{1,32}$/`）。字段校验：`title` 非空（缺失整条丢弃）、`entry` 缺省 `index.html` 且须为 `isPreviewRelPath` 安全相对路径、目标文件必须存在、`order` 数字（缺省 100，升序）、`default` 布尔、`repo` 字符串（trim 后截 500 字符，缺省 `''`）。排序 = `order` 再 `id`；**至多一张 default**（首张为准），有卡表而未标 default 时前端回落排序首张。
+- 网关扫描 `readPreviewPaneCards(previewDir)`：只认**直接子目录**且含 `card.json`；`id` = 目录名（`/^[a-zA-Z0-9_-]{1,32}$/`）。字段校验：`title` 非空（缺失整条丢弃）、`entry` 缺省 `index.html` 且须为 `isPreviewRelPath` 安全相对路径、目标文件必须存在、`order` 数字（缺省 100，升序）、`default` 布尔、`repo` 字符串（trim 后截 500 字符，缺省 `''`）、`icon` = 图标表键或**卡目录内相对图片路径**（`logo.svg` / `icons/logo.png`，前端 `core/icon-spec.js` 解析，不命中回落 `plug`）。排序 = `order` 再 `id`；**至多一张 default**（首张为准），有卡表而未标 default 时前端回落排序首张。
 - **启用态**：卡目录内 `.disabled` 存在 = 停用（判据常量 `CUSTOMIZATION_DISABLED_MARKER`，与插件/技能同一载体）。`readPreviewPaneCards` 恒返回**全部**卡（停用卡仍要在 work 插件页列出），每卡带 `enabled`；`preview.json` 的 `cards` 同规则（`enabled` 取 `<preview>/<path 首段>/.disabled`）。
 - 响应随 `/gateway/preview-cards` 的 `previewCards` 字段下发（与 `cards`/`quoteActions` 同一请求、同一生命周期）。`[]` = 无卡表 ⇒ 该项目沿用传统单页预览（`/preview/<label>/index.html`），旧项目零改动。
 - 下发字段（`publicPreviewCard`）：`{id,title,icon,entry|path,order,default,enabled,repo,backend:<bool>,backendName}`；**cmd/cwd/port/readyPath 不下发**（后端进程只由网关管理）。`repo` = 卡片上游仓库地址（GitHub https），供插件卡「应用」详情展示与版本探测。响应另带 `hasIndex`（该项目 preview 根是否有 `index.html`）与 `indexEnabled`（`<preview>/.disabled` 是否不存在），前端据此区分「传统单页预览」与「仅有卡」，并让传统页在管理页可启停。
@@ -174,6 +174,23 @@
 - **启停端点 `POST /gateway/preview-cards/enable`**（`{label, card, enabled:bool}`）：定位卡目录（pane 卡 = `<preview>/<card>`；应用卡 = `<preview>/<path 首段>`；保留 id `__index__` = 传统单页预览，`.disabled` 落 preview 根，仅在该根有 `index.html` 时成立），须落在 preview 根内，写/删 `.disabled`；响应 `{ok,label,card,enabled}`。停用卡不产生工具栏页签、不预热也不拉起其服务器；停用传统页即工具栏「预览」页签消失、无卡时预览区回空态。
 - **卡页资源不需要新路由**：`/preview/<label>/<id>/<entry>` 与后端代理 `/backend/<label>/<id>/<entry>` 均已支持嵌套路径；网关只做卡表发现，不改托管规则。
 - 前端契约（tab 条渲染、切卡、卡↔宿主消息）见 web-ui.md §58「预览多卡片」。
+
+### 6.8 预览页的 `elements` 字段（可 @ 元素申报，2026-11-13）
+
+预览页可声明「可 @ 元素」，宿主在底栏 `+` 工具栏首屏出现「元素」入口、@ 跨类搜索也可命中；元素选中后**落地形态完全由声明决定**，宿主不解释语义。两处声明源同时扫描（同一份预览目录）：
+
+```json
+// .claude/preview/preview.json（项目级）
+{ "elements": [ { "id": "fig", "name": "插图", "desc": "插入 figure 环境", "icon": "dshImage",
+                  "insert": { "type": "text", "text": "\\begin{figure}\n\n\\end{figure}" } } ] }
+// .claude/preview/<card>/card.json（卡级，另带该卡 title 作为来源标记）
+{ "title": "Report", "entry": "index.html", "elements": [ /* 同上 */ ] }
+```
+
+- 端点 `GET /gateway/mention-elements[?label=<项目>]` → `{ label, elements:[{id,name,desc,icon,card,insert}] }`；有 label 按 `findProjects` 定位项目根（`dir/../..`）的 `.claude/preview`，不存在 → 404 `{error:'project not found'}`；无 label = 便携根 `.claude/preview`（全局上下文）。
+- 解析 `readMentionElements(previewDir)`：`preview.json` 顶层 `elements[]` 在前，各**已启用**卡（目录无 `.disabled`）的 `card.json` `elements[]` 随后，`card` = 卡 `title`（顶层声明 = `''`）。逐条校验，不合格整条丢弃：`id` 匹配 `/^[a-zA-Z0-9_-]{1,64}$/` 且跨来源不重复（重复保首次并写日志）、`name` 非空、`desc` trim 后截 200 字符。
+- `insert` 是四选一（未知类型丢该条）：`{"type":"text","text":"…"}` 原文写入输入栏；`{"type":"token","token":"[@…:…]"}` 令牌原文写入（含义交后端/插件）；`{"type":"path","path":"<项目根相对路径>","pathType":"file"|"dir"}` 按文件/目录引用落地（路径须为 `isPreviewRelPath` 安全相对路径，正斜杠、不得绝对/含 `.`、`..`）。
+- `icon` = `@floria/web` 图标表键（前端不命中回落 `chip`）。前端数据层 `inputbar/toolbar/elements.js`（按上下文缓存，与项目技能缓存同范式），入口/搜索 `toolbar/entries.js`，落地 `inputbar/mention.js`（见 web-ui.md §44）。
 
 ## 7. web 独立会话进程链
 
@@ -221,15 +238,15 @@ CLI 交互权限弹窗接网关中继——`src/bridge/gatewayPermissionRelay.ts
 
 ## 10. web 插件/技能管理视图数据源（MGR）
 
-入口 = 管理视图三态之一 `/manage/plugins`（另有 projects/models），顶部「插件/技能/应用」切换 + 个人/公开分类 + 搜索过滤，卡片网格渲染（app.js fetch `/gateway/plugins`；不展示「数据源」类提示文案）。
+入口 = 管理视图三态之一 `/manage/plugins`（另有 projects/models），顶部「插件/技能/应用」切换 + 搜索过滤，卡片网格渲染（app.js fetch `/gateway/plugins`；不展示「数据源」类提示文案）。只列本地已安装项，无「公开/个人」分段。
 
 网关端点 `GET /gateway/plugins`（`localGateway.ts` `listPlugins`，每次请求便携根实时扫描、无缓存）：
 - 已安装插件 = `.claude/plugins/<name>/.claude-plugin/plugin.json`（跳过 `data`/`marketplaces`/隐藏目录）
 - 已安装技能 = `.claude/skills/<name>/SKILL.md` frontmatter（name/description）
-- 公开市场 = `.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json` 的 `plugins[]`（名称含 "skill" 归技能类）
-- 响应 `{workspace, plugins:{personal,public}, skills:{personal,public}}`，每项 `{n,d,v,repo,inst,k,en}`；`inst=1` = 已安装（市场条目按已装集合打标，前端显「已安装」徽标），列表已安装置顶 + 字母序。
+- 不读公开市场清单（`marketplaces/*/.claude-plugin/marketplace.json`）
+- 响应 `{workspace, plugins:{personal}, skills:{personal}}`，每项 `{n,d,v,repo,inst,k,en}`；`inst` 恒为 1，列表按名称字母序。
   - `repo` = 上游 GitHub 仓库：插件取 `plugin.json` 的 `repository`（对象取 `.url`；无则回落 `homepage`），技能取 `SKILL.md` frontmatter 的 `repo`/`repository`；仅接受 `https://github.com/` 前缀，无值给空串。供详情页「上游仓库 / 版本 / README 介绍」共用。
-  - `k` = 目录名（显示名 `n` 可来自 frontmatter，启停/寻址必须用 `k`）。personal 项恒有；public 项**已安装的**也按名称从 personal 反查补齐（同一目录的两份展示），未安装的 public 项没有
+  - `k` = 目录名（显示名 `n` 可来自 frontmatter，启停/寻址必须用 `k`），恒有
   - `en` = 启用态 `1/0`（同目录无 `.disabled` 标记）；**判据与加载侧共源** `utils/customizationToggle.ts`
 
 **项目变体 `GET /gateway/plugins?label=<项目>`**：供 work 右栏「技能」工具页与「插件」tab（项目自己的插件/技能/应用视角）。按 label 定位项目根（`findProjects` 命中项的 `dir/../..`），扫 `<项目根>/.claude/plugins/*/.claude-plugin/plugin.json` 与 `<项目根>/.claude/skills/*/SKILL.md`，响应 `{label, plugins:[{n,d,v,repo,inst,k,en}], skills:[{n,d,repo,inst,k,en}]}`（**只含已安装个人项，不出公开市场**；`repo` 口径同上）；项目不存在 → 404 `{error:'project not found'}`。与无 label 的便携根清单结构不同（该项目维度不产 public 分类）；两处共用同一扫描函数 `readPluginDir` / `readSkillDir`（只认含清单文件的子目录，名称/描述取清单元数据，缺省回落目录名）。

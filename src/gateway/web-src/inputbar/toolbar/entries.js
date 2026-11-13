@@ -10,6 +10,7 @@ import { MGR, projSkillsOf } from '../../sidebar/mgr-data.js'
 import { pendingImages, uploadedMentionItems } from '../images.js'
 import { MENTION_PLUGIN_ICON, MENTION_SESSION_ICON, MENTION_SKILL_ICON, mention } from '../mention.js'
 import { MOCK_COMMANDS, cmd } from '../commands.js'
+import { projElementsOf } from './elements.js'
 import { pick, pickAll, pickItems, pickSearchKick } from './pick.js'
 import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
 /* @module inputbar/toolbar/entries.js */
@@ -28,6 +29,15 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
     { view: 'skill', name: '技能', desc: '引用插件或技能', icon: MENTION_SKILL_ICON },
     { view: 'cmd', name: '指令', desc: '运行斜杠命令', icon: I.dshPlus },
   ]
+  // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
+  // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
+  function cmdViews() {
+    const out = CMD_VIEWS.slice()
+    if (projElementsOf(pickHome()).list.length) {
+      out.push({ view: 'element', name: '元素', desc: '引用预览页声明的元素', icon: I.chip })
+    }
+    return out
+  }
   // 过滤查询唯一来源 = 锚点（`@` 位置 / 「+」点击时的光标）到光标的文本 = `mention.q`。
   // 弃独立搜索框（2026-10-14 待办 20 返修）：旧框每次 input 都 innerHTML 重渲并**重建框自身**，
   // IME 组合期被打断 = 中文打不进；底栏文本驱动则渲染只碰浮窗，中文 IME 正常。
@@ -84,6 +94,11 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
         items.push({ kind: 'skill', name: s.n, desc: s.d, t: 0 })
       }
     }
+    // 元素 = 当前上下文的预览声明（2026-11-13，与「+ → 元素」同源）：@ 搜索可直接命中。
+    for (const el of projElementsOf(home).list) {
+      if (!match(el.name) && !match(el.desc)) continue
+      items.push({ kind: 'element', name: el.name, desc: el.desc, el, t: 0 })
+    }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
     if (globalSearch) {
@@ -135,6 +150,16 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
     for (const p of (MGR.plugins && MGR.plugins.personal) || []) if (!match || match(p.n) || match(p.d)) out.push({ kind: 'plugin', name: p.n, desc: p.d, grp })
     return out
   }
+  // 元素行 = 当前上下文（pickHome，'' = 全局预览根）的预览声明；选中后按声明 insert 落地，
+  // 前端不解释元素语义。数据层与 @ 跨类搜索同源（toolbar/elements.js 的 projElementsOf）。
+  function cmdElementRows(match, grp) {
+    const out = []
+    for (const el of projElementsOf(pickHome()).list) {
+      if (match && !match(el.name) && !match(el.desc)) continue
+      out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp })
+    }
+    return out
+  }
   // 文件索引（pickAll）流式进度只影响「正在展示文件结果」的视图（文件视图 / @ 跨类搜索）；
   // 其余视图（技能/会话/指令/首屏）不因索引进度整块重渲。
   function pickProgressRenders() {
@@ -166,6 +191,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, '元素'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {
@@ -196,6 +222,6 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
     // （images.js uploadedMentionItems），只列行不渲缩略图（2026-10-22 定案：缩略图只在底栏胶囊）。
     items.push(...uploadedMentionItems().map((it) => ({ ...it, desc: it.attKind === 'img' ? '插入图片引用' : '插入文件引用', grp: '上传' })))
     // 首屏四个入口是导航不是数据：底栏有文字也不过滤（否则「有文字点 +」会只剩上传两行，像坏了）
-    for (const v of CMD_VIEWS) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
+    for (const v of cmdViews()) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
     return items
   }

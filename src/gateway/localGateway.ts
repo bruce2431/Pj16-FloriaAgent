@@ -161,7 +161,7 @@ interface BackendCfg {
 interface PreviewCard {
   id: string
   title: string
-  icon: string // core/icons.js I 表键（前端校验），缺省 plug
+  icon: string // @floria/web 图标表键，或 preview 目录内相对图片路径（相对卡页目录）；前端 core/icon-spec.js 校验，缺省 plug
   path: string // preview 目录内相对路径，可带 #片段（同页自我定位）
   host: 'view' // 渲染位置，由 preview 声明；本版只定义 view（主区独立视图卡）
   tab: boolean // host=view 时是否上侧栏 tab，缺省 true
@@ -177,7 +177,7 @@ interface PreviewCard {
 interface PreviewPaneCard {
   id: string
   title: string
-  icon: string // core/icons.js I 表键（前端校验），缺省 plug
+  icon: string // @floria/web 图标表键，或卡目录内相对图片路径；前端 core/icon-spec.js 校验，缺省 plug
   entry: string // 卡目录内相对路径，默认 index.html
   order: number // tab 排序（小在前），缺省 100
   default: boolean // 默认激活卡（至多一张；无声明时取排序首张）
@@ -186,6 +186,22 @@ interface PreviewPaneCard {
   enabled: boolean
   backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
   backendCfg?: BackendCfg // 卡级后端声明（card.json 的 backend；cwd 相对卡目录解析）
+}
+// 元素声明（2026-11-13）：预览页向宿主申报的「可 @ 元素」，扫描源 = preview.json 顶层 elements[] 与
+// 各卡 card.json 的 elements[]。insert 是落地唯一语义（宿主只按声明执行，不在前端硬编码元素含义）：
+//   text  → 原文写入输入栏；token → 令牌原文写入（交后端/插件解读）；path → 项目根相对文件路径引用。
+// path 用正斜杠、不得绝对、不得含 `.`/`..` 段（与预览资源同一路径校验）。
+type MentionElementInsert =
+  | { type: 'text'; text: string }
+  | { type: 'token'; token: string }
+  | { type: 'path'; path: string; pathType: 'file' | 'dir' }
+interface MentionElement {
+  id: string // ^[a-zA-Z0-9_-]{1,64}$，跨来源不重名
+  name: string
+  desc: string
+  icon: string // @floria/web 图标表键，缺省 chip
+  card: string // 声明来源卡标题（preview.json 顶层声明 = ''）
+  insert: MentionElementInsert
 }
 // preview.json 的 quoteActions 声明（2026-09-28）：与 backend / cards 并列的第三种「项目向宿主申报
 // 界面能力」清单——宿主选中引用浮窗（.quote-pop）里追加的动作行。动作是**纯数据**（无 path、不指向
@@ -2099,7 +2115,7 @@ function readPreviewCards(previewDir: string): PreviewCard[] {
     out.push({
       id,
       title,
-      icon: typeof c.icon === 'string' && c.icon ? c.icon : 'plug',
+      icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 200) : 'plug',
       path,
       host: 'view',
       tab: c.tab !== false,
@@ -2148,7 +2164,7 @@ function readPreviewPaneCards(previewDir: string): PreviewPaneCard[] {
     out.push({
       id: e.name,
       title,
-      icon: typeof c.icon === 'string' && c.icon ? c.icon : 'plug',
+      icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 200) : 'plug',
       entry,
       order: typeof c.order === 'number' && Number.isFinite(c.order) ? c.order : 100,
       default: c.default === true,
@@ -2165,6 +2181,77 @@ function readPreviewPaneCards(previewDir: string): PreviewPaneCard[] {
     else c.default = false
   }
   if (!claimed && out.length) out[0].default = true
+  return out
+}
+
+// 单条元素声明校验（不猜不兜底）：id 非法 / name 空 / insert 类型未知或缺内容 → 丢该条。
+function validateMentionElement(raw: unknown, card: string): MentionElement | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const e = raw as Record<string, unknown>
+  const id = typeof e.id === 'string' ? e.id.trim() : ''
+  const name = typeof e.name === 'string' ? e.name.trim() : ''
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id) || !name) return null
+  const desc = typeof e.desc === 'string' ? e.desc.trim().slice(0, 200) : ''
+  const icon = typeof e.icon === 'string' ? e.icon.trim() : ''
+  const ins = e.insert
+  if (!ins || typeof ins !== 'object' || Array.isArray(ins)) return null
+  const i = ins as Record<string, unknown>
+  let insert: MentionElementInsert | null = null
+  if (i.type === 'text' && typeof i.text === 'string' && i.text) insert = { type: 'text', text: i.text }
+  else if (i.type === 'token' && typeof i.token === 'string' && i.token.trim()) insert = { type: 'token', token: i.token.trim() }
+  else if (i.type === 'path' && typeof i.path === 'string' && isPreviewRelPath(i.path.trim())) {
+    insert = { type: 'path', path: i.path.trim(), pathType: i.pathType === 'dir' ? 'dir' : 'file' }
+  }
+  if (!insert) return null
+  return { id, name, desc, icon, card, insert }
+}
+
+// 扫描 <previewDir> 的元素声明（2026-11-13）：preview.json 顶层 elements[] 在前，各已启用卡 card.json
+// 的 elements[] 随后（卡标题入 card 字段）；id 全局唯一，重复者保留首个并写日志（不静默覆盖）。
+// 停用卡（目录内 .disabled）不参与。声明整份缺失 = 空集；坏文件不抛（每次请求都跑）。
+export function readMentionElements(previewDir: string): MentionElement[] {
+  const out: MentionElement[] = []
+  const seen = new Set<string>()
+  const take = (list: unknown, card: string) => {
+    if (!Array.isArray(list)) return
+    for (const raw of list) {
+      const el = validateMentionElement(raw, card)
+      if (!el) {
+        console.log(`[gateway] 元素声明丢弃非法条目：${JSON.stringify(raw).slice(0, 200)}`)
+        continue
+      }
+      if (seen.has(el.id)) {
+        console.log(`[gateway] 元素声明 id 重复，保留首个：${el.id}（${card || '项目级'}）`)
+        continue
+      }
+      seen.add(el.id)
+      out.push(el)
+    }
+  }
+  take(readPreviewJson(previewDir)?.elements, '')
+  let ents: Dirent[]
+  try {
+    ents = readdirSync(previewDir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const e of ents) {
+    if (!e.isDirectory() || !/^[a-zA-Z0-9_-]{1,32}$/.test(e.name)) continue
+    const dir = join(previewDir, e.name)
+    if (existsSync(join(dir, CUSTOMIZATION_DISABLED_MARKER))) continue
+    const mf = join(dir, 'card.json')
+    if (!existsSync(mf)) continue
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(mf, 'utf-8'))
+    } catch {
+      continue
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const c = raw as Record<string, unknown>
+    const title = typeof c.title === 'string' ? c.title.trim() : ''
+    take(c.elements, title)
+  }
   return out
 }
 
@@ -2959,8 +3046,7 @@ function deriveProjectDescription(readme: string | null, label: string): string 
 // 插件/技能清单（便携根扫描；供 MGR 管理视图 GET /gateway/plugins）
 //  - 已安装插件：.claude/plugins/<name>/.claude-plugin/plugin.json
 //  - 已安装技能：.claude/skills/<name>/SKILL.md 的 frontmatter（name/description）
-//  - 公开市场：.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json 的 plugins[]
-//    （技能类条目按名称含 "skill" 归类；inst=1 表示已安装，便于前端打「已安装」徽标）
+// 不读公开市场清单（marketplaces/）：管理视图只列本地已安装项。
 // ============================================================================
 function readJsonObject(p: string): Record<string, unknown> | null {
   try {
@@ -3039,31 +3125,6 @@ function readPluginDir(pluginsDir: string): Array<Record<string, unknown>> {
   return out
 }
 
-// GitHub 仓库地址归一：接受 https://github.com/o/r(.git)、带路径/查询的链接，输出 https://github.com/o/r。
-function githubRepoUrl(raw: unknown): string {
-  const s = String(raw || '').trim()
-  const m = /^https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:[/#?].*)?$/i.exec(s)
-  return m ? `https://github.com/${m[1]}/${m[2]}` : ''
-}
-
-// 市场条目 → { repo, sub }：src 对象（url / git-subdir.url）取仓库，git-subdir 的 path 记子目录；
-// 相对 source（./plugins/x，随市场仓库一起分发）取市场仓库本身 + 该相对路径。
-function marketSource(it: Record<string, unknown>, marketplaceRepo: string): { repo: string; sub: string } {
-  const src = it.source as unknown
-  let repo = ''
-  let sub = ''
-  if (src && typeof src === 'object') {
-    const o = src as Record<string, unknown>
-    repo = githubRepoUrl(o.url)
-    if (o.source === 'git-subdir' && typeof o.path === 'string') sub = o.path.replace(/^\.?\//, '')
-  } else if (typeof src === 'string' && src.startsWith('.')) {
-    repo = marketplaceRepo
-    sub = src.replace(/^\.?\//, '')
-  }
-  if (!repo) repo = githubRepoUrl(it.homepage)
-  return { repo, sub }
-}
-
 function listPlugins(root: string): Record<string, unknown> {
   const pluginsDir = join(root, '.claude', 'plugins')
   const skillsDir = join(root, '.claude', 'skills')
@@ -3074,56 +3135,16 @@ function listPlugins(root: string): Record<string, unknown> {
   // 已安装技能（只有带 SKILL.md 的目录才算技能）
   const personalSkills = readSkillDir(skillsDir)
 
-  // 公开市场（官方 marketplace.json 的 plugins[]；技能条目按名称含 skill 归类）
-  const marketPlugins: Array<Record<string, unknown>> = []
-  const marketSkills: Array<Record<string, unknown>> = []
-  // 已安装项的 k/en：公开市场里「已安装」的条目就是 personal 里那份目录，
-  // 补齐 k/en 后公开页的勾也能直接启停（否则那一排 ✓ 全是点了没反应的死按钮）。
-  const installedByName = new Map<string, Record<string, unknown>>()
-  for (const p of [...personalPlugins, ...personalSkills]) installedByName.set(String(p.n), p)
-  const mktDir = join(pluginsDir, 'marketplaces')
-  if (isDir(mktDir)) {
-    for (const e of readdirSync(mktDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue
-      const m = readJsonObject(join(mktDir, e.name, '.claude-plugin', 'marketplace.json'))
-      // 市场自身的 GitHub 仓库（known_marketplaces.json 的 source.repo）：相对 source 条目（./plugins/x）
-      // 属于该仓库，详情页「上游仓库 / README」要指向它。
-      const km = readJsonObject(join(pluginsDir, 'known_marketplaces.json'))
-      const kmSrc = km && typeof km[e.name] === 'object' ? ((km[e.name] as Record<string, unknown>).source as Record<string, unknown> | undefined) : undefined
-      const marketplaceRepo = githubRepoUrl(kmSrc?.repo ? `https://github.com/${kmSrc.repo}` : '')
-      const items = Array.isArray(m?.plugins) ? (m.plugins as Array<{ name?: unknown; description?: unknown }>) : []
-      for (const it of items) {
-        const name = String(it?.name || '')
-        if (!name) continue
-        const local = installedByName.get(name)
-        const rec: Record<string, unknown> = { n: name, d: String(it?.description || ''), inst: local ? 1 : 0 }
-        const { repo: srcRepo, sub } = marketSource(it as Record<string, unknown>, marketplaceRepo)
-        if (srcRepo) rec.repo = srcRepo
-        if (sub) rec.sub = sub
-        if (local) {
-          rec.k = local.k
-          rec.en = local.en
-          // 已安装项自身申报过仓库（plugin.json / SKILL.md frontmatter）时以它为准（市场源可能只是打包仓）。
-          if (local.repo) { rec.repo = local.repo; delete rec.sub }
-        }
-        if (/skill/i.test(name)) marketSkills.push(rec)
-        else marketPlugins.push(rec)
-      }
-    }
-  }
-
-  // 已安装置顶（inst 降序优先），同安装状态按名称字母序
+  // 按名称字母序
   const sortN = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-    (Number(b.inst) - Number(a.inst)) || String(a.n).localeCompare(String(b.n))
+    String(a.n).localeCompare(String(b.n))
   personalPlugins.sort(sortN)
   personalSkills.sort(sortN)
-  marketPlugins.sort(sortN)
-  marketSkills.sort(sortN)
 
   return {
     workspace: root,
-    plugins: { personal: personalPlugins, public: marketPlugins },
-    skills: { personal: personalSkills, public: marketSkills },
+    plugins: { personal: personalPlugins },
+    skills: { personal: personalSkills },
   }
 }
 
@@ -3557,6 +3578,29 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   if (req.method === 'GET' && url.pathname === '/gateway/sessions') {
     try {
       sendJson(res, 200, await listSessions(root))
+    } catch (e) {
+      sendError(res, e)
+    }
+    return
+  }
+  // 元素清单（2026-11-13）：扫描预览声明（preview.json 顶层 elements[] + 各卡 card.json 的 elements[]），
+  // 供「+」工具栏「元素」入口与 @ 跨类搜索。有 label = 该项目 preview 目录；无 label = 便携根 preview
+  // （全局上下文，与 chat 侧应用卡同源）。项目不存在 → 404（与 /gateway/plugins?label= 同口径）。
+  if (req.method === 'GET' && url.pathname === '/gateway/mention-elements') {
+    const elLabel = (url.searchParams.get('label') || '').trim()
+    try {
+      let previewDir: string
+      if (elLabel) {
+        const proj = findProjects(root).find((g) => g.label === elLabel)
+        if (!proj) {
+          sendJson(res, 404, { error: 'project not found' })
+          return
+        }
+        previewDir = join(resolve(proj.dir, '..', '..'), '.claude', 'preview')
+      } else {
+        previewDir = join(root, '.claude', 'preview')
+      }
+      sendJson(res, 200, { label: elLabel, elements: readMentionElements(previewDir) })
     } catch (e) {
       sendError(res, e)
     }

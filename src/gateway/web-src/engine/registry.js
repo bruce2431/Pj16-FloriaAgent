@@ -11,7 +11,7 @@
 // 壳渲染经 setExtCardRenderer 注入（实现留 views/cards/ext/ext-card.js），外部永不获得在宿主 DOM 执行
 // 的能力（SPEC-视图卡化 §7 边界）。外部申报的取回/校验/缓存全部归 ext-runtime，本件不认识 preview.json。
 
-import { I } from '../core/icons.js'
+import { iconHtml } from '../core/icon-spec.js'
 import { chatArea, sessionCard, state } from './state.js'
 import { esc } from '../core/util.js'
 import { appTabs, extLabel, extTabs, isGlobalLabel, setTabRefresh } from './ext-runtime.js'
@@ -75,7 +75,7 @@ import { appTabs, extLabel, extTabs, isGlobalLabel, setTabRefresh } from './ext-
     if (!box) return
     const html = CARDS.concat(appTabs(), extTabs())
       .filter((v) => v.tab && isCardAllowedInContext(v.id, state))
-      .map((v) => `<button class="mgr-tab" data-mgr="${v.id}" title="${esc(v.tip)}">${I[v.icon]}<span>${v.title}</span></button>`)
+      .map((v) => `<button class="mgr-tab" data-mgr="${v.id}" title="${esc(v.tip)}">${iconHtml(v.icon, v.iconBase)}<span>${v.title}</span></button>`)
       .join('')
     if (html === mgrTabsHtml) return
     mgrTabsHtml = html

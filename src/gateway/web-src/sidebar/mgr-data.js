@@ -8,8 +8,8 @@ import { loadModelCur, saveModelCur, applySessionEffort, MODEL_CUR, renderModelS
 import { state } from '../engine/state.js'
 import { refreshCard } from '../engine/registry.js'
 /* @module sidebar/mgr-data.js */
-  // ---------- 管理视图数据源（2026-08-15 起接后端 /gateway/plugins：真实已安装插件/技能 + 官方市场） ----------
-  // 结构镜像后端返回：{ plugins:{personal,public}, skills:{personal,public} }，每项 {n, d, v, inst}。
+  // ---------- 管理视图数据源（2026-08-15 起接后端 /gateway/plugins：只列本地已安装插件/技能） ----------
+  // 结构镜像后端返回：{ plugins:{personal}, skills:{personal} }，每项 {n, d, v, k, en}。
   // 首次进入管理视图 fetch，刷新按钮 force 重新拉取；失败显示错误 + 重试（不回落假数据）。
   let MGR = null
   let MGR_LOADING = false

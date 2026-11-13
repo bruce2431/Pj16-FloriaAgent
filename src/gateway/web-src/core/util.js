@@ -20,7 +20,7 @@ import { state } from './ui-state.js'
   }
 
   // 临时项目 = 根级时间戳任务区（`<YYYYMMDDHHMMSS>-名称`，后端 findProjects 一并产出为 scope='project'）。
-  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、工具栏胶囊不渲染、新建会话也落
+  // 它不承载自有会话与预览：work 模式下聊天列表展示**全局根散装会话**、右缘抽屉把手不渲染、新建会话也落
   // 全局根（2026-10-30 用户定案）。判据只认 label 形态这一条，不新增 scope 值。
   const TEMP_PROJ_RE = /^\d{8,14}-/
   const isTempProjLabel = (label) => TEMP_PROJ_RE.test(label || '')

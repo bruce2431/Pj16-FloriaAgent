@@ -6,7 +6,7 @@
 // （cardOf / renderMgrTabs 经下方 extTabs()/appTabs() 只读取用）。依赖方向单向：registry → 本件，
 // 本件不 import registry（表变更后的重渲经 setTabRefresh 注入的回调触发，同 setExtCardRenderer 手法）。
 
-import { I } from '../core/icons.js'
+import { iconBaseFor } from '../core/icon-spec.js'
 import { gToken } from './gateway.js'
 import { patchUI, readUI } from '../core/storage.js'
 import { normExtCards, normQuoteActions } from './ext-decl.js'
@@ -52,7 +52,9 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
         id,
         title: c.title,
         tip: `${c.title} · ${label}`,
-        icon: I[c.icon] ? c.icon : 'plug',
+        // icon 原值透传（表键或 preview 内相对图片路径），渲染收口 core/icon-spec.js 的 iconHtml
+        icon: c.icon,
+        iconBase: iconBaseFor(label, c.path),
         tab: c.tab,
         mount: (body) => extRender(body, label, c),
       })
@@ -171,7 +173,8 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
       id: `app:${c.id}`,
       title: c.title,
       tip: `${c.title} · 应用（工作区根）`,
-      icon: I[c.icon] ? c.icon : 'plug',
+      icon: c.icon,
+      iconBase: iconBaseFor(GLOBAL_LABEL, c.path),
       tab: c.tab,
       mount: (body) => extRender(body, GLOBAL_LABEL, c),
     }))

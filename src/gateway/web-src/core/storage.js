@@ -2,7 +2,7 @@
 
 import { state } from './ui-state.js'
 /* @module core/storage.js */
-  // 界面状态持久化（2026-08-16）：管理视图内部状态（mgrView：插件/技能切换、公开/个人、搜索词）
+  // 界面状态持久化（2026-08-16）：管理视图内部状态（mgrView：插件/技能切换、搜索词）
   // 存 localStorage，刷新后由 route 的 mgr 分支 loadMgrView 恢复——配合 hash 路由 #mgr/<kind>/#preview/<label>
   // 实现「刷新保持当前界面」（会话/管理/预览三态均可恢复，不再回退初始界面）。
   const UI_KEY = 'floria-ui-v1'
@@ -30,10 +30,10 @@ import { state } from './ui-state.js'
       const d = JSON.parse(raw)
       if (!d || !d.mgrView) return
       const m = { ...state.mgrView, ...d.mgrView }
-      // 枚举边界归一（持久化区是外部边界）：kind∈{plugins,skills,apps}、cat∈{public,personal}，
-      // 旧形态（应用曾为 cat 值）或脏值一律回落缺省，避免落成无按钮可选的空网格。
+      // 枚举边界归一（持久化区是外部边界）：kind∈{plugins,skills,apps}，脏值回落缺省；
+      // 旧版本的 cat（公开/个人）已随市场入口移除，读盘时丢弃。
       if (m.kind !== 'plugins' && m.kind !== 'skills' && m.kind !== 'apps') m.kind = 'plugins'
-      if (m.cat !== 'public' && m.cat !== 'personal') m.cat = 'public'
+      delete m.cat
       state.mgrView = m
     } catch { /* 忽略 */ }
   }

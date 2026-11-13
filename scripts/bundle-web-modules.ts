@@ -31,6 +31,9 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'core/storage.js', part: 1 },
   { file: 'engine/state.js', part: 2 },
   { file: 'core/util.js', part: 1 },
+  // 图标解析（表键 / preview 内相对图片路径，2026-11-13）：只依赖 core/icons.js，须先于全部消费方
+  // （engine/registry.js、engine/ext-runtime.js、插件页 / work 插件页的应用条目）。
+  { file: 'core/icon-spec.js', part: 1 },
   { file: 'core/char.js', part: 1 },
   // @ 提及/引用令牌纯符号层（2026-10-10 自 inputbar/mention.js 下移）：core/markdown.js 渲染内联 chip 只依赖
   // 此层（断开 core→feature 成环）；只依赖 core/icons.js，须排在其后、core/markdown.js 之前。
@@ -154,6 +157,9 @@ const PIECES: { file: string; part: number }[] = [
   // entries 的 `const GROUP_OF/CMD_VIEWS` 供 commands.js#3 的渲染用，故排在 commands.js 中间段之后。
   { file: 'inputbar/toolbar/scope.js', part: 1 },
   { file: 'inputbar/toolbar/pick.js', part: 1 },
+  // 元素声明数据层（2026-11-13）：按上下文缓存 GET /gateway/mention-elements；entries.js（入口/搜索）
+  // 与 commands.js（开窗预取）共用。顶层只有 Map 状态，须先于两处消费方。
+  { file: 'inputbar/toolbar/elements.js', part: 1 },
   { file: 'inputbar/mention.js', part: 1 },
   // CM6 接管底栏（2026-10-14 #17 B 口径）：须在 mention.js 后（挂载读 #cm-host / inputEl 已声明；
   // 运行期函数跨 IIFE 提升，序位按 eval 期依赖就近）。

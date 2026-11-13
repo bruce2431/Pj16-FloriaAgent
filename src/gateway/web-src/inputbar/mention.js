@@ -186,6 +186,21 @@ import { pickEnter } from './toolbar/pick.js'
       syncGwSend()
       return
     }
+    // 预览页声明的元素（2026-11-13）：落地形态完全由声明 insert 决定，前端不解释语义。
+    // text / token = 原文写入；path = 与文件/目录引用同一形态（fileLinkMarkdown / 目录令牌）。
+    if (it.kind === 'element') {
+      const ins = it.el && it.el.insert
+      if (!ins) return
+      const text = ins.type === 'path'
+        ? (ins.pathType === 'dir' ? mentionPathToken(ins.path, 'dir') : fileLinkMarkdown(ins.path))
+        : ins.type === 'token' ? ins.token : ins.text
+      if (!text) return
+      const pos = cmView ? cmView.state.selection.main.from : mention.anchor
+      composerReplaceRange(mention.anchor, pos, text + (/[\s\n]$/.test(text) ? '' : ' '))
+      closeMentionPop()
+      syncGwSend()
+      return
+    }
     if (it.kind === 'path') insertMention('path', it.path, '', it.ptype === 'dir' ? 'dir' : 'file')
     else insertMention(it.kind, it.name, it.sid)
   }

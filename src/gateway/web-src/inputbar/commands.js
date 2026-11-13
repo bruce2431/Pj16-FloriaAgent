@@ -13,6 +13,7 @@ import { syncGwSend } from './send.js'
 import { renderTaskDock } from './approval.js'
 import { ensureProjectSkills, loadMgrData, MODELS } from '../sidebar/mgr-data.js'
 import { cmdEntries, cmdViewKey, groupOf, pickProgressRenders, projTag } from './toolbar/entries.js'
+import { ensureProjectElements } from './toolbar/elements.js'
 import { pickEnter, pickLabel, refreshPick } from './toolbar/pick.js'
 import { pickHome } from './toolbar/scope.js'
 /* @module inputbar/commands.js */
@@ -145,6 +146,8 @@ import { pickHome } from './toolbar/scope.js'
       loadMgrData().then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
       // 当前项目自己的技能（按 label 缓存，同一项目只拉一次）：落地后重渲技能组。
       ensureProjectSkills(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
+      // 预览页声明的元素（同按上下文缓存）：落地后首屏决定是否出现「元素」入口。
+      ensureProjectElements(pickHome()).then(() => { if (cmd.open) renderCmdPop() }).catch(() => {})
       refreshPick(() => { if (cmd.open && pickProgressRenders()) renderCmdPop() })
     }
   }
@@ -207,7 +210,7 @@ import { pickHome } from './toolbar/scope.js'
         const gh = flat || it.kind === 'back' || grp === lastGrp ? '' : `<div class="grp">${esc(grp)}</div>`
         if (it.kind !== 'back') lastGrp = grp
         const on = i === cmd.active ? ' rowActive' : ''
-        const ico = it.kind === 'entry' ? it.icon : it.kind === 'back' ? MENTION_UP_ICON : it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype, it.path) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file', '') : (CMD_ICON[it.name] || I.dshPlus)
+        const ico = it.kind === 'entry' ? it.icon : it.kind === 'element' ? (I[it.el.icon] || I.chip) : it.kind === 'back' ? MENTION_UP_ICON :it.kind === 'attref' ? (it.attKind === 'img' ? I.dshImage : I.dshPaperclip) : it.kind === 'imgpick' ? I.dshImage : it.kind === 'filepick' ? I.dshPaperclip : it.kind === 'plugin' ? MENTION_PLUGIN_ICON : it.kind === 'skill' ? MENTION_SKILL_ICON : it.kind === 'session' ? MENTION_SESSION_ICON : it.kind === 'pathup' ? MENTION_UP_ICON : it.kind === 'path' ? mentionChipIcon('path', it.ptype, it.path) : it.kind === 'pathwait' ? mentionChipIcon('path', 'file', '') : (CMD_ICON[it.name] || I.dshPlus)
         const label = it.kind === 'cmd' ? `/${it.name}` : it.name
         const detail = it.kind === 'path' ? it.path : it.desc
         const tag = it.proj ? `<span class="projTag">${esc(projTag(it.proj))}</span>` : ''

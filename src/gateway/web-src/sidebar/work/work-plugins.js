@@ -4,9 +4,9 @@
 //   - 插件 / 技能：项目根 .claude/{plugins,skills} 的已安装个人项，启停 = 目录内 .disabled（同一端点）。
 //   - 应用：项目 .claude/preview/<id>/card.json 的预览卡（含停用卡），启停 = 卡目录 .disabled，
 //     直接决定 work 右栏工具栏的预览页签与「打开工具栏即拉起哪些卡服务器」。
-// 无公开市场：项目侧只列已安装项，cat 恒「个人」。
+// 无公开市场：只列已安装项。
 
-import { I } from '../../core/icons.js'
+import { iconBaseForCardDir, iconHtml } from '../../core/icon-spec.js'
 import { MgrUI } from '../../core/mgr-ui.js'
 import { toast } from '../../core/util.js'
 import { apiUrl } from '../../engine/gateway.js'
@@ -24,7 +24,7 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
     { id: 'skills', label: '技能' },
     { id: 'apps', label: '应用' },
   ]
-  const WPL_VIEW = { kind: 'plugins', q: '' } // 项目侧无公开市场，cat 恒 personal（不进视图态）
+  const WPL_VIEW = { kind: 'plugins', q: '' }
   let WPL_DETAIL = null // { kind, key }
   let WPL_BODY = null // 当前 #wk-plugins-pane 元素（重渲落点）
   let WPL_LABEL = '' // WPL_DATA 所属项目
@@ -138,8 +138,6 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
         placeholder: isApps ? '搜索应用…' : WPL_VIEW.kind === 'skills' ? '搜索技能…' : '搜索插件…',
         value: WPL_VIEW.q,
       },
-      cats: isApps ? [] : [{ id: 'personal', label: '个人' }],
-      cat: 'personal',
       onKind(id) {
         if (WPL_VIEW.kind === id) return
         WPL_VIEW.kind = id
@@ -147,7 +145,6 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
         WPL_DETAIL = null
         renderWpl()
       },
-      onCat() { /* 项目侧只有个人项，无公开/个人切换 */ },
       onSearch(q) { WPL_VIEW.q = q; renderWplGrid() }, // 只重渲网格，不重建壳（输入焦点不丢）
       onItem(key) { WPL_DETAIL = { kind: WPL_VIEW.kind, key }; renderWpl() },
       onAction(key) { if (WPL_VIEW.kind === 'apps') toggleWplApp(key); else toggleWplCustom(WPL_VIEW.kind, key) },
@@ -215,13 +212,17 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
     }
   }
 
-  // 应用行：卡自身申报的 icon；有卡级后端时副标题标出服务器名（用户据此判断工具栏会拉起谁）
+  // 应用行：卡自身申报的 icon（图标表键或卡目录内相对图片，解析收口 core/icon-spec.js）；
+  // 有卡级后端时副标题标出服务器名（用户据此判断工具栏会拉起谁）
+  function wplAppIcon(c) {
+    return iconHtml(c.icon, iconBaseForCardDir(WPL_LABEL, c.id))
+  }
   function wplAppItem(c) {
     return {
       key: c.id,
       name: c.title,
       desc: c.hasBackend ? `服务器 · ${c.backendName || c.id}` : '静态页面',
-      icon: I[c.icon] || '',
+      icon: wplAppIcon(c),
       action: {
         on: c.enabled,
         key: c.id,
@@ -316,7 +317,7 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
       const legacy = c.id === '__index__'
       return {
         kind, key,
-        ico: I[c.icon] || '',
+        ico: wplAppIcon(c),
         color: MgrUI.color(c.id),
         initial: (c.title[0] || '?').toUpperCase(),
         name: c.title,
