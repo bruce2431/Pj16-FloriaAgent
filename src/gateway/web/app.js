@@ -1740,6 +1740,7 @@ function setSessionCwd(v) { sessionCwd = v }
   // 启动入口（app.js 启动序列 + hideGate 解锁后调用）。已在监督态（live.es 在场 = watchdog 已启）不重复；
   // 否则建连 + 启 watchdog。此后 SSE 重建/联动一律走监督者（noteWsOpen/noteWsClosed/rebuildEs）。
   function initLive() {
+    if (window.__FLORIA_DEMO__) return // ?demo=1 离线演示：无后端，不建 SSE/看门狗
     if (!('EventSource' in window)) return
     if (live.es) return // 防重建（hideGate 每次 WS 重连都会跑）：重复 new 泄漏旧 SSE 连接+事件双发
     rebuildEs()
@@ -14714,7 +14715,7 @@ function wkMerge3(base, local, remote) {
   function cmdViews() {
     const out = CMD_VIEWS.slice()
     if (projElementsOf(pickHome()).list.length) {
-      out.push({ view: 'element', name: '元素', desc: '引用预览页声明的元素', icon: I.chip })
+      out.push({ view: 'element', name: 'Floria组件', desc: '引用 Floria 界面组件（预览页声明）', icon: I.chip })
     }
     return out
   }
@@ -14871,7 +14872,7 @@ function wkMerge3(base, local, remote) {
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      else if (cmd.view === 'element') items.push(...cmdElementRows(match, '元素'))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, 'Floria组件'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {
@@ -17878,6 +17879,7 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
     initWork()
     route()
     if (GATEWAY) initGateway()
+    else if (window.__FLORIA_DEMO__) composerPlaceholder('输入消息，Enter 发送') // ?demo=1：无后端但界面按可编辑态展示
     else { composerSetEditable(false); composerPlaceholder('只读查看 · 无法发送') } // 只读查看器：输入不可编辑
     if (HOT_RELOAD) {
       // 开发审阅热重载：server.mjs HOT_RELOAD=1 时，public/ 文件变化经 SSE 通知 → 自动刷新

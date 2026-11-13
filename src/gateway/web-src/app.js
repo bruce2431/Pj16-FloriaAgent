@@ -182,6 +182,7 @@ import { renderCtxMeter } from './inputbar/ctx-meter.js'
     initWork()
     route()
     if (GATEWAY) initGateway()
+    else if (window.__FLORIA_DEMO__) composerPlaceholder('输入消息，Enter 发送') // ?demo=1：无后端但界面按可编辑态展示
     else { composerSetEditable(false); composerPlaceholder('只读查看 · 无法发送') } // 只读查看器：输入不可编辑
     if (HOT_RELOAD) {
       // 开发审阅热重载：server.mjs HOT_RELOAD=1 时，public/ 文件变化经 SSE 通知 → 自动刷新

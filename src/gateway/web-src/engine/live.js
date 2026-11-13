@@ -121,6 +121,7 @@ import { toast } from '../core/util.js'
   // 启动入口（app.js 启动序列 + hideGate 解锁后调用）。已在监督态（live.es 在场 = watchdog 已启）不重复；
   // 否则建连 + 启 watchdog。此后 SSE 重建/联动一律走监督者（noteWsOpen/noteWsClosed/rebuildEs）。
   function initLive() {
+    if (window.__FLORIA_DEMO__) return // ?demo=1 离线演示：无后端，不建 SSE/看门狗
     if (!('EventSource' in window)) return
     if (live.es) return // 防重建（hideGate 每次 WS 重连都会跑）：重复 new 泄漏旧 SSE 连接+事件双发
     rebuildEs()

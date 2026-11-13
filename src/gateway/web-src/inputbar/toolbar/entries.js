@@ -34,7 +34,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   function cmdViews() {
     const out = CMD_VIEWS.slice()
     if (projElementsOf(pickHome()).list.length) {
-      out.push({ view: 'element', name: '元素', desc: '引用预览页声明的元素', icon: I.chip })
+      out.push({ view: 'element', name: 'Floria组件', desc: '引用 Floria 界面组件（预览页声明）', icon: I.chip })
     }
     return out
   }
@@ -191,7 +191,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      else if (cmd.view === 'element') items.push(...cmdElementRows(match, '元素'))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, 'Floria组件'))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {
