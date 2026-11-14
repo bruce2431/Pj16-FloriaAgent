@@ -181,15 +181,16 @@
 
 ```json
 // .claude/preview/preview.json（项目级）
-{ "elementsTitle": "GitHub 仓库",
+{ "elementsTitle": "GitHub 仓库", "elementsIcon": "github",
   "elements": [ { "id": "fig", "name": "插图", "desc": "插入 figure 环境", "icon": "dshImage",
                   "insert": { "type": "text", "text": "\\begin{figure}\n\n\\end{figure}" } } ] }
 // .claude/preview/<card>/card.json（卡级，另带该卡 title 作为来源标记）
 { "title": "Report", "entry": "index.html", "elements": [ /* 同上 */ ] }
 ```
 
-- 端点 `GET /gateway/mention-elements[?label=<项目>]` → `{ label, title, elements:[{id,name,desc,icon,card,insert}] }`；有 label 按 `findProjects` 定位项目根（`dir/../..`）的 `.claude/preview`，不存在 → 404 `{error:'project not found'}`；无 label = 便携根 `.claude/preview`（全局上下文）。
+- 端点 `GET /gateway/mention-elements[?label=<项目>]` → `{ label, title, icon, elements:[{id,name,desc,icon,card,insert}] }`；有 label 按 `findProjects` 定位项目根（`dir/../..`）的 `.claude/preview`，不存在 → 404 `{error:'project not found'}`；无 label = 便携根 `.claude/preview`（全局上下文）。
 - `elementsTitle`（`preview.json` 顶层，可选）：元素入口与下钻分组名的显示文案，`readMentionElementsTitle` 读为 trim 后截 200 的字符串，未声明/空白 → `''`；响应 `title` 与同源。前端消费 = `title || '元素'`（见 web-ui.md §44）。
+- `elementsIcon`（`preview.json` 顶层，可选）：元素入口图标 = `@floria/web` 图标表键，`readMentionElementsIcon` 读为 trim 后截 100 的字符串，未声明/空白 → `''`；响应 `icon` 与同源。前端消费 = `I[icon] || I.chip`，只作用于入口；元素行仍用各条 `el.icon`。
 - 解析 `readMentionElements(previewDir)`：`preview.json` 顶层 `elements[]` 在前，各**已启用**卡（目录无 `.disabled`）的 `card.json` `elements[]` 随后，`card` = 卡 `title`（顶层声明 = `''`）。逐条校验，不合格整条丢弃：`id` 匹配 `/^[a-zA-Z0-9_-]{1,64}$/` 且跨来源不重复（重复保首次并写日志）、`name` 非空、`desc` trim 后截 200 字符。
 - `insert` 是三选一（未知类型丢该条）：`{"type":"text","text":"…"}` 原文写入输入栏；`{"type":"token","token":"[@…:…]"}` 令牌原文写入（含义交后端/插件）；`{"type":"path","path":"<项目根相对路径>","pathType":"file"|"dir"}` 按文件/目录引用落地（路径须为 `isPreviewRelPath` 安全相对路径，正斜杠、不得绝对/含 `.`、`..`）。
 - `icon` = `@floria/web` 图标表键（前端不命中回落 `chip`）。前端数据层 `inputbar/toolbar/elements.js`（按上下文缓存，与项目技能缓存同范式），入口/搜索 `toolbar/entries.js`，落地 `inputbar/mention.js`（见 web-ui.md §44）。

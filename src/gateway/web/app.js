@@ -14138,15 +14138,16 @@ function wkMerge3(base, local, remote) {
     ensurePickAll().catch(() => {})
     loadPickPath(pickAll.root).then((ok) => { if (ok && after) after() })
   }
-  // 按上下文缓存（'' = 全局）：{list, title, loaded, loading, err}。同一 label 只发一次请求，
+  // 按上下文缓存（'' = 全局）：{list, title, icon, loaded, loading, err}。同一 label 只发一次请求，
   // 在途复用同一 Promise，失败记 err 并在下次调用时重试——与 mgr-data 的项目技能缓存同范式。
-  // title = 预览页声明的入口名（preview.json 的 elementsTitle），空串由消费点回落「元素」。
+  // title / icon = 预览页声明的入口名与图标（preview.json 的 elementsTitle / elementsIcon），
+  // 空串由消费点回落「元素」/ chip。
   const PROJ_ELEMENTS = new Map()
   function projElementsOf(label) {
     const key = label || ''
     let r = PROJ_ELEMENTS.get(key)
     if (!r) {
-      r = { list: [], title: '', loaded: false, loading: false, err: '' }
+      r = { list: [], title: '', icon: '', loaded: false, loading: false, err: '' }
       PROJ_ELEMENTS.set(key, r)
     }
     return r
@@ -14163,6 +14164,7 @@ function wkMerge3(base, local, remote) {
         if (!data || !Array.isArray(data.elements)) throw new Error((data && data.error) || 'bad response')
         r.list = data.elements
         r.title = typeof data.title === 'string' ? data.title : ''
+        r.icon = typeof data.icon === 'string' ? data.icon : ''
         r.loaded = true
         return r.list
       })
@@ -14714,14 +14716,21 @@ function wkMerge3(base, local, remote) {
   ]
   // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
   // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
-  // 入口名与下钻分组名由声明决定（preview.json 的 elementsTitle），未声明回落「元素」。
+  // 入口名 / 图标与下钻分组名由声明决定（preview.json 的 elementsTitle / elementsIcon），
+  // 未声明回落「元素」/ chip。元素行本身仍用各条 el.icon，不参与回落。
   function elementTitle() {
     return projElementsOf(pickHome()).title || '元素'
   }
   function cmdViews() {
     const out = CMD_VIEWS.slice()
-    if (projElementsOf(pickHome()).list.length) {
-      out.push({ view: 'element', name: elementTitle(), desc: '引用' + elementTitle() + '（预览页声明）', icon: I.chip })
+    const els = projElementsOf(pickHome())
+    if (els.list.length) {
+      out.push({
+        view: 'element',
+        name: elementTitle(),
+        desc: '引用' + elementTitle() + '（预览页声明）',
+        icon: I[els.icon] || I.chip,
+      })
     }
     return out
   }

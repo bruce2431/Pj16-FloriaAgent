@@ -31,14 +31,21 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   ]
   // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
   // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
-  // 入口名与下钻分组名由声明决定（preview.json 的 elementsTitle），未声明回落「元素」。
+  // 入口名 / 图标与下钻分组名由声明决定（preview.json 的 elementsTitle / elementsIcon），
+  // 未声明回落「元素」/ chip。元素行本身仍用各条 el.icon，不参与回落。
   function elementTitle() {
     return projElementsOf(pickHome()).title || '元素'
   }
   function cmdViews() {
     const out = CMD_VIEWS.slice()
-    if (projElementsOf(pickHome()).list.length) {
-      out.push({ view: 'element', name: elementTitle(), desc: '引用' + elementTitle() + '（预览页声明）', icon: I.chip })
+    const els = projElementsOf(pickHome())
+    if (els.list.length) {
+      out.push({
+        view: 'element',
+        name: elementTitle(),
+        desc: '引用' + elementTitle() + '（预览页声明）',
+        icon: I[els.icon] || I.chip,
+      })
     }
     return out
   }

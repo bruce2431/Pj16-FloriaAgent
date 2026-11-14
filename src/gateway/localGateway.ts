@@ -2216,6 +2216,13 @@ export function readMentionElementsTitle(previewDir: string): string {
   return typeof raw === 'string' ? raw.trim().slice(0, 200) : ''
 }
 
+// 元素入口图标（可选）：preview.json 顶层 elementsIcon = @floria/web 图标表键；未声明 / 空白 → ''
+// （前端回落 chip）。只控制入口图标，元素行仍用各条 el.icon。
+export function readMentionElementsIcon(previewDir: string): string {
+  const raw = readPreviewJson(previewDir)?.elementsIcon
+  return typeof raw === 'string' ? raw.trim().slice(0, 100) : ''
+}
+
 export function readMentionElements(previewDir: string): MentionElement[] {
   const out: MentionElement[] = []
   const seen = new Set<string>()
@@ -3610,6 +3617,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       sendJson(res, 200, {
         label: elLabel,
         title: readMentionElementsTitle(previewDir),
+        icon: readMentionElementsIcon(previewDir),
         elements: readMentionElements(previewDir),
       })
     } catch (e) {
