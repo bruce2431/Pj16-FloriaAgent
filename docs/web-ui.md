@@ -1114,3 +1114,18 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
   3. `localStorage` / `sessionStorage`：内存实现顶替——演示帧与真实 UI 同源，直接写会改写用户的模式/主题/槽状态。
 - **前端守卫**：`engine/live.js` 的 `initLive()` 在 `__FLORIA_DEMO__` 下直接返回（不建 SSE/看门狗）；`app.js` 启动序 `GATEWAY` 为假时，演示态走 `composerPlaceholder('输入消息，Enter 发送')`（按可编辑态展示），只读查看器仍走不可编辑分支。健康响应 `mode:'demo'` ⇒ `GATEWAY=false`，`needToken()` 恒假，无 token 门。
 - **不变量**：演示态只换数据来源，页面骨架 / 组件布局 / 样式全部是真实前端；任何布局改动自动反映到内嵌缩略图，无需另维护一份图。
+
+## 74. 上下文占用面板（`#ctx-meter` / `#ctx-panel`）
+
+底栏上下文圆环（14px/2px 环，`aria-expanded` 开合）点击弹出明细面板。数据全来自 `/gateway/session` 的 `context`（字段契约见 gateway.md §22），前端**不重算** token；唯一手改处 `inputbar/ctx-meter.js`。
+
+- **两组口径刻意不 reconcile**：provider 精确的 `percent` / `~used/window` 是环与面板的 headline；`breakdown` 七类是 4 字符/token 启发式估算，**每项一律带 `~` 前缀**，并与精确总量各说各的——dsh 同口径，禁止把估算行按比例缩放到精确总量（会伪造精度）。
+- **面板结构（自上而下）**：header（`上下文已用` + 精确百分比 + `~used / window`）→ 6px 分段条 + 阈值线 → 分类图例 → 自动压缩阈值脚注 → 「输入明细」→「Top 工具」→「Top 附件」。
+- **分段条**：总长恒等于精确 `percent`（条的空余部分才是真正未用的窗口），内部按各类估算占比分色；某类宽度算出来为 0 时**不渲染该段**（`.ctx-segment` 有 min-width，0% 会画出实心细条）。颜色唯一色源 = `styles.css` 的 `.s-system/.s-user/…/.s-attach` 一组，图例色块与条段共用。
+- **阈值线**：`.ctx-mark` 绝对定位在 `autoCompactThreshold / contextWindow` 处，阈值缺失或 ≥窗口时不画；脚注同行显示数值与占窗口百分比。
+- **分类行**：键序固定 `fixed / user / assistant / thinking / toolCall / toolResult / attachment`，值为 0 的类不进图例（条与图例同源过滤），行尾 `~tokens` + 占窗口百分比（<1% 显示 `<1%`）。
+- **`fixed` = 「系统与工具」**：系统提示与工具 schema 不在转录里，取不到分项，该行 = 精确总量 − 消息估算和（网关侧已钳 ≥0），不许标成「其他」或拆成假的子类。
+- **输入明细**：provider 精确 usage 的三项（缓存命中 / 缓存写入 / 新鲜输入），不带 `~`。
+- **Top 工具 / Top 附件**：各取前 5，估算带 `~`；工具名经 `esc()` 转义（名字来自转录，属不可信文本），过长省略号。
+- **无数据即隐藏**：无 `context`、`usedTokens` 非法或 `contextWindow ≤ 0` 时圆环 `hidden` 且面板收合。
+- **高度**：面板沿用底栏弹层统一上限 `max-height: min(420px, var(--bar-room, 420px))`（`--bar-room` 口径见底栏子件同源收口），超限自身滚动。

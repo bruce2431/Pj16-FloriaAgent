@@ -13482,19 +13482,92 @@ function wkMerge3(base, local, remote) {
     if (ctx.open) ctxPanelEl.hidden = false
   }
 
-  // dsh ContextMeter panel：headline「上下文已用」+ 百分比（primary）+ ~used/window（figures）+
-  // 单段占比条（transcript 无 system/tools/messages 分解，对齐 dsh breakdown 缺失时的单段回落）
+  // dsh ContextMeter 面板形态：headline「上下文已用」+ 百分比（primary）+ ~used/window（figures）+
+  // 分类分段条 + 图例行（分类估算带 `~`，与 provider 精确总量不强行对齐——dsh 同口径）。
+  // 分类键与顺序固定；`fixed` = 系统提示 + 工具 schema（转录取不到，取用量与消息估算的差值）。
+  const CTX_ROWS = [
+    ['fixed', '系统与工具', 's-system'],
+    ['user', '用户消息', 's-user'],
+    ['assistant', '助手回复', 's-assistant'],
+    ['thinking', '思考', 's-thinking'],
+    ['toolCall', '工具调用', 's-toolcall'],
+    ['toolResult', '工具结果', 's-toolresult'],
+    ['attachment', '附件', 's-attach'],
+  ]
+  const pctOfWindow = (tokens, contextWindow) => {
+    if (!(contextWindow > 0)) return '0%'
+    const p = (tokens / contextWindow) * 100
+    return p < 1 && p > 0 ? '<1%' : Math.round(p) + '%'
+  }
+
   function ctxPanelHtml(context, percent, reading) {
-    const figures = '~' + formatTokensCompact(context.usedTokens) + ' / ' + formatTokensCompact(context.contextWindow)
-    // 0% 不渲染段（对齐 dsh parts.filter(width>0)：空上下文显示空轨道，不被 .ctx-segment 的 min-width 画出填充）
-    const seg = percent > 0 ? '<div class="ctx-segment" style="width:' + percent + '%"></div>' : ''
+    const fmt = formatTokensCompact
+    const figures = '~' + fmt(context.usedTokens) + ' / ' + fmt(context.contextWindow)
+    const b = context.breakdown
+    const rows = b ? CTX_ROWS.filter(([k]) => (b[k] || 0) > 0) : []
+    const total = rows.reduce((sum, [k]) => sum + (b[k] || 0), 0)
+
+    // 分段条：总长 = provider 精确 percent，内部按估算比例分色（dsh parts.filter(width>0)：
+    // 0 宽段不渲染，避免 .ctx-segment 的 min-width 在空上下文画出填充）。
+    let segs = ''
+    if (b && total > 0) {
+      segs = rows.map(([k, , cls]) => {
+        const width = percent * (b[k] || 0) / total
+        return '<div class="ctx-segment ' + cls + '" style="width:' + width.toFixed(3) + '%"></div>'
+      }).join('')
+    } else if (percent > 0) {
+      segs = '<div class="ctx-segment" style="width:' + percent + '%"></div>'
+    }
+
+    // 自动压缩阈值线（未配置阈值/超出窗口不画）。
+    const th = context.autoCompactThreshold
+    const markLeft = th > 0 && th < context.contextWindow ? (th / context.contextWindow) * 100 : 0
+    const mark = markLeft > 0
+      ? '<div class="ctx-mark" style="left:' + markLeft.toFixed(2) + '%" title="自动压缩阈值"></div>'
+      : ''
+
+    const legend = rows.length
+      ? '<div class="ctx-rows">' + rows.map(([k, label, cls]) =>
+          '<div class="ctx-row"><span class="ctx-sw ' + cls + '"></span>' +
+          '<span class="ctx-name">' + label + '</span>' +
+          '<span class="ctx-val">~' + fmt(b[k] || 0) +
+          '<em>' + pctOfWindow(b[k] || 0, context.contextWindow) + '</em></span></div>',
+        ).join('') + '</div>'
+      : ''
+
+    // 输入明细（provider 精确 usage）：缓存命中 / 缓存写入 / 新鲜输入。
+    const u = context.usage
+    const usageHtml = u
+      ? '<div class="ctx-block"><div class="ctx-sub">输入明细</div>' +
+        '<div class="ctx-kv"><span>缓存命中</span><span>' + fmt(u.cacheRead || 0) + '</span></div>' +
+        '<div class="ctx-kv"><span>缓存写入</span><span>' + fmt(u.cacheCreate || 0) + '</span></div>' +
+        '<div class="ctx-kv"><span>新鲜输入</span><span>' + fmt(u.input || 0) + '</span></div>' +
+        '</div>'
+      : ''
+
+    // Top 工具/附件消耗（转录估算）：排名前 5。
+    const topList = (items) => items.slice(0, 5).map((it) =>
+      '<div class="ctx-kv"><span class="ctx-ellip">' + esc(it.name) + '</span><span>~' + fmt(it.tokens) + '</span></div>',
+    ).join('')
+    const topTools = context.topTools && context.topTools.length
+      ? '<div class="ctx-block"><div class="ctx-sub">Top 工具</div>' + topList(context.topTools) + '</div>'
+      : ''
+    const topAtts = context.topAttachments && context.topAttachments.length
+      ? '<div class="ctx-block"><div class="ctx-sub">Top 附件</div>' + topList(context.topAttachments) + '</div>'
+      : ''
+
+    const foot = th > 0
+      ? '<div class="ctx-foot">自动压缩阈值 ~' + fmt(th) + ' · ' +
+        pctOfWindow(th, context.contextWindow) + '</div>'
+      : ''
+
     return '<div class="ctx-header">' +
       '<span class="ctx-headline">上下文已用</span>' +
       '<span class="ctx-percent">' + reading + '</span>' +
-      '<span class="ctx-headline"></span>' +
       '<span class="ctx-figures">' + figures + '</span>' +
       '</div>' +
-      '<div class="ctx-bar">' + seg + '</div>'
+      '<div class="ctx-bar">' + segs + mark + '</div>' +
+      legend + foot + usageHtml + topTools + topAtts
   }
 
   function setCtxOpen(open) {

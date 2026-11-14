@@ -1088,10 +1088,10 @@ body.kb-open #input-wrap { transition: none; }
 #ctx-btn .ctx-fill { fill: none; stroke: var(--ink-4); stroke-width: 2; stroke-linecap: round; }
 #ctx-panel {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20;
-  box-sizing: border-box; width: 264px; padding: 12px;
+  box-sizing: border-box; width: 300px; padding: 12px;
   /* 上限收 --bar-room（键盘节）：面板常态只 ~110px（设计上限 240px 常态不生效），此上限只为
      键盘把可视区压到极矮时不越出可视区顶 */
-  max-height: min(240px, var(--bar-room, 240px)); overflow-y: auto;
+  max-height: min(420px, var(--bar-room, 420px)); overflow-y: auto;
   border: 1px solid var(--hairline-2); border-radius: 12px; background: var(--bg);
   box-shadow: var(--shadow-sm), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
   font-size: 12px; line-height: 20px; color: var(--ink-2); cursor: default;
@@ -1102,8 +1102,29 @@ body.kb-open #input-wrap { transition: none; }
 #ctx-panel .ctx-headline:empty { display: none; }
 #ctx-panel .ctx-percent { font-weight: 500; color: var(--ink); }
 #ctx-panel .ctx-figures { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--ink); }
-#ctx-panel .ctx-bar { display: flex; gap: 1px; margin: 10px 0 12px; height: 4px; border-radius: 999px; background: var(--hover-ink); overflow: hidden; }
+#ctx-panel .ctx-bar { position: relative; display: flex; gap: 1px; margin: 10px 0 12px; height: 6px; border-radius: 999px; background: var(--hover-ink); overflow: hidden; }
 #ctx-panel .ctx-segment { flex: none; min-width: 2px; height: 100%; border-radius: 1px; background: var(--ink-4); }
+/* 自动压缩阈值线（超出条范围不画） */
+#ctx-panel .ctx-mark { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--blue); opacity: .8; }
+/* 分类图例：色块与分段条共用同一组颜色类（唯一色源） */
+#ctx-panel .ctx-rows { display: flex; flex-direction: column; gap: 1px; }
+#ctx-panel .ctx-row { display: flex; align-items: center; gap: 6px; }
+#ctx-panel .ctx-sw { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+#ctx-panel .ctx-name { color: var(--ink-3); }
+#ctx-panel .ctx-val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink); }
+#ctx-panel .ctx-val em { margin-left: 6px; font-style: normal; color: var(--ink-4); }
+#ctx-panel .s-system { background: var(--blue); }
+#ctx-panel .s-user { background: var(--ink-2); }
+#ctx-panel .s-assistant { background: var(--ink-3); }
+#ctx-panel .s-thinking { background: var(--ink-4); }
+#ctx-panel .s-toolcall { background: color-mix(in srgb, var(--ink-2) 55%, transparent); }
+#ctx-panel .s-toolresult { background: color-mix(in srgb, var(--ink-3) 50%, transparent); }
+#ctx-panel .s-attach { background: var(--border-soft); }
+#ctx-panel .ctx-foot { margin-top: 6px; color: var(--ink-4); }
+#ctx-panel .ctx-block { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+#ctx-panel .ctx-sub { margin-bottom: 3px; color: var(--ink-4); }
+#ctx-panel .ctx-kv { display: flex; justify-content: space-between; gap: 10px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+#ctx-panel .ctx-kv .ctx-ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* @ 提及浮窗样式已退役（2026-10-25）：输入 @ 直接唤起 #cmd-pop（工具栏是唯一弹窗），
    搜索结果扁平按时间排列，不再有独立浮窗与分组标题 */

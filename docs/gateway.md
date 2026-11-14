@@ -457,3 +457,17 @@ work 文件树 / 顶栏文件 pill 行菜单「下载」的唯一取件口。与
 - **收尾序列**：①向所有 `/clients` 连接发 `{type:'shutdown'}`（CLI 侧 `exit 0`，WT 自动收 tab）→ ②最多等 4s 仍未断开者按 pid `killTreeExcept(pid, 网关自身)` 树杀（pid 源：`webSessions` → `cli-hello` 上报的 `cliPids` → `sessionActivity`；豁免网关自身，因其常是某个会话的子进程）→ ③逐个 `killBackend` 停全部卡片后端（含收养的 child=null 条目），再按 `.claude/gateway/backends.json` 补杀本代未收养的遗留 pid 并清空注册表 → ④`stopSseWatches` → `stopLocalGateway` + `process.exit(0)`。
 - **不变量**：接受 eject 后 `ejecting` 置位，`spawnWebSession` 直接拒绝、`gatewayStopping` 提前置位阻断新后端就绪探测——卷上不再产生新进程。pid 未知且不响应 shutdown 的旧 exe 会话可能残留，由调用方在卷停稳后核对进程表。
 - **配套脚本**：`Neuron-Pj16/l3.raw/files/20261110183000-safe-eject.ts`（在工作区外执行：读 `.claude/gateway/{token,port}` → POST → 轮询端口关闭 → 扫描残留进程并给出「可弹出」结论）。
+
+## 22. 会话上下文用量（`GET /gateway/session` 的 `context` 字段）
+
+`/gateway/session` 响应新增 `context`（无可计价 usage 时为 `null`），供底栏上下文占用环与明细面板消费。**总量精确、分类启发式**——两组数刻意不强行对齐。
+
+- **精确总量**：取转录中最后一条带 `message.usage` 的 assistant 记录，`usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`；`contextWindow = getContextWindowForModel(model)`（未知模型 → `null`）；`percent = min(100, round(usedTokens / contextWindow * 100))`。
+- **`usage`**：同一份原始计数原样下发 `{input, cacheCreate, cacheRead, output}`，前端据此拆「缓存命中 / 缓存写入 / 新鲜输入」。
+- **`breakdown`**（七个键，单位 token）：`fixed / user / assistant / thinking / toolCall / toolResult / attachment`。**只统计最后一条 `compact_boundary` 之后的记录**（压缩前的历史不再占当前窗口，与 `getMessagesAfterCompactBoundary` 同义）。计价 = `roughTokenCountEstimation`（固定 4 字符/token）+ 每块 `BLOCK_OVERHEAD`；image 块只计 `{type,source:{type,media_type}}` 结构（剥离 base64 字节）。assistant 侧按块分流（`thinking` / `tool_use` → toolCall / 其余 → assistant），user 侧 `tool_result` 块归 toolResult（按 `tool_use_id` 归属到发起工具），`type:'attachment'` 记录归 attachment。
+- **`fixed` = 差额项**：`max(0, usedTokens − 六类消息估算和)`。系统提示与工具 schema 在转录里不存在，无法单独拆分；此键即「provider 报的精确总量 − 可估消息」，前端如实标为「系统与工具」。这是唯一一处把启发式与精确值相减的地方，其含义 = 未被转录解释的部分。
+- **`autoCompactThreshold`**：`min(contextWindow, getEffectiveContextWindowSize(model) − AUTOCOMPACT_BUFFER_TOKENS)`，与 CLI 自动压缩同一常量来源；面板据此在占比条上画阈值线。
+- **`topTools` / `topAttachments`**：`[{name,tokens}]` 各取前 6（tokens > 0 降序）。工具名由 `tool_use_id → name` 映射，toolCall 与 toolResult 合并计数；附件名取记录 `attachment.type`。
+- **不变量**：`breakdown` 七键之和恒等于 `fixed + 消息估算`，其中 `fixed` 被钳在 ≥0——估算超过 provider 精确值时（CJK/代码偏贵），超出部分仍只落在消息分类，不做负值回填。
+
+前端消费见 web-ui.md §74。

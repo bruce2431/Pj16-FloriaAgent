@@ -73,6 +73,11 @@ import { buildNeuronGraph, listNeuronsForGateway } from './neuronViz.js'
 import { getCwdRoot, getGlobalRoot } from '../tools/neturon/config.js'
 // 上下文占用（dsh ContextMeter 数据源）：复用 auto-compact 同源的模型上下文窗口解析，不本地复刻。
 import { getContextWindowForModel } from '../utils/context.js'
+// 上下文分类估算（dsh contextBreakdown 形态）：固定密度启发式复用源码唯一实现
+// （roughTokenCountEstimation = 字符数 / 4），不本地另立一套估算口径。
+import { roughTokenCountEstimation } from '../services/tokenEstimation.js'
+// 自动压缩阈值与 auto-compact 自身同源（effective window − 预留缓冲），不本地抄常量。
+import { AUTOCOMPACT_BUFFER_TOKENS, getEffectiveContextWindowSize } from '../services/compact/autoCompact.js'
 // 会话重命名（2026-08-24 修复）：直接复用 CLI /rename 的落盘函数（saveCustomTitle + saveAgentName），
 // 不本地复刻写盘格式——与 CLI 完全同路径，保证含 sessionId、CLI resume 能读到、退出不回退。
 import { saveAgentName, saveCustomTitle } from '../utils/sessionStorage.js'
@@ -2911,9 +2916,148 @@ function resolveUploadSession(id: string, root: string): { root: string; dirKey:
   return null
 }
 
-// 上下文占用（2026-08-23 dsh ContextMeter 移植数据源）：取转录最后一条 assistant 的 message.usage，
-// usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens（该轮发送的完整
-// 上下文 token 数），除以 getContextWindowForModel(model)（auto-compact 同源窗口）。无 usage 返回 null。
+// 上下文分类估算的固定密度口径（与 dsh token-meter/estimate 同法）：字符数 / 4，
+// 每个块 4 tokens 结构开销、每条消息 4 tokens role 开销。图片按引用结构估价（剥离 base64 载荷）——
+// 真实请求价格由路由/供应商决定，转录取不到，强行按 base64 长度会把它估算成几十万 tokens。
+const CTX_BLOCK_OVERHEAD = 4
+const CTX_ROLE_OVERHEAD = 4
+
+function ctxPriceValue(v: unknown): number {
+  if (v == null) return 0
+  if (typeof v === 'string') return roughTokenCountEstimation(v)
+  if (typeof v === 'number' || typeof v === 'boolean') return roughTokenCountEstimation(String(v))
+  if (Array.isArray(v)) {
+    return v.reduce<number>((sum, item) => sum + ctxPriceValue(item), 0) + CTX_BLOCK_OVERHEAD
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    if (o.type === 'image') {
+      const src = (o.source ?? {}) as Record<string, unknown>
+      return CTX_BLOCK_OVERHEAD + roughTokenCountEstimation(
+        JSON.stringify({ type: 'image', source: { type: src.type, media_type: src.media_type } }),
+      )
+    }
+    let sum = 0
+    for (const [k, x] of Object.entries(o)) sum += ctxPriceValue(k) + ctxPriceValue(x)
+    return sum + CTX_BLOCK_OVERHEAD
+  }
+  return 0
+}
+
+type CtxBreakdown = {
+  fixed: number
+  user: number
+  assistant: number
+  thinking: number
+  toolCall: number
+  toolResult: number
+  attachment: number
+}
+
+/**
+ * 上下文构成估算（dsh contextBreakdown 的移植，2026-11-14）：按 block 分类定价最后一条
+ * compact_boundary 之后的转录。系统提示与工具 schema 不落转录 ⇒ 二者合并为 fixed =
+ * provider 用量 − 消息估算（≤0 归零），与 dsh「启发式只分比例、不强行对齐精确总量」同口径。
+ */
+function estimateContextBreakdown(records: Record<string, unknown>[]): {
+  breakdown: CtxBreakdown
+  topTools: Array<{ name: string; tokens: number }>
+  topAttachments: Array<{ name: string; tokens: number }>
+} {
+  const breakdown: CtxBreakdown = {
+    fixed: 0, user: 0, assistant: 0, thinking: 0, toolCall: 0, toolResult: 0, attachment: 0,
+  }
+  const tools = new Map<string, number>()
+  const attachments = new Map<string, number>()
+
+  // 压缩点之前的内容已不在当前上下文窗口里（与 getMessagesAfterCompactBoundary 同义）。
+  let start = 0
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i]
+    if (r && r.type === 'system' && r.subtype === 'compact_boundary') { start = i + 1; break }
+  }
+  const scope = records.slice(start)
+
+  // tool_use_id → 工具名（tool_result 归属到发起它的工具）。
+  const toolNames = new Map<string, string>()
+  for (const r of scope) {
+    if (!r || r.type !== 'assistant') continue
+    const content = (r.message as Record<string, unknown> | undefined)?.content
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      const b = block as Record<string, unknown>
+      if (b?.type === 'tool_use' && typeof b.id === 'string') {
+        toolNames.set(b.id, typeof b.name === 'string' ? b.name : 'unknown')
+      }
+    }
+  }
+
+  const addTool = (name: string, tokens: number): void => {
+    tools.set(name, (tools.get(name) ?? 0) + tokens)
+  }
+
+  for (const r of scope) {
+    if (!r) continue
+    if (r.type === 'assistant') {
+      const content = (r.message as Record<string, unknown> | undefined)?.content
+      if (typeof content === 'string') {
+        breakdown.assistant += ctxPriceValue(content) + CTX_ROLE_OVERHEAD
+        continue
+      }
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        const b = block as Record<string, unknown>
+        const tokens = ctxPriceValue(b) + CTX_ROLE_OVERHEAD
+        if (b?.type === 'tool_use') {
+          breakdown.toolCall += tokens
+          addTool(typeof b.name === 'string' ? b.name : 'unknown', tokens)
+        } else if (b?.type === 'thinking') {
+          breakdown.thinking += tokens
+        } else {
+          breakdown.assistant += tokens
+        }
+      }
+    } else if (r.type === 'user') {
+      const content = (r.message as Record<string, unknown> | undefined)?.content
+      if (typeof content === 'string') {
+        breakdown.user += ctxPriceValue(content) + CTX_ROLE_OVERHEAD
+        continue
+      }
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        const b = block as Record<string, unknown>
+        const tokens = ctxPriceValue(b)
+        if (b?.type === 'tool_result') {
+          breakdown.toolResult += tokens
+          const name = typeof b.tool_use_id === 'string' ? toolNames.get(b.tool_use_id) : undefined
+          addTool(name ?? 'unknown', tokens)
+        } else {
+          breakdown.user += tokens
+        }
+      }
+    } else if (r.type === 'attachment') {
+      const att = r.attachment as Record<string, unknown> | undefined
+      const tokens = ctxPriceValue(att)
+      breakdown.attachment += tokens
+      const name = typeof att?.type === 'string' ? att.type : 'unknown'
+      attachments.set(name, (attachments.get(name) ?? 0) + tokens)
+    }
+  }
+
+  const top = (m: Map<string, number>): Array<{ name: string; tokens: number }> =>
+    [...m.entries()]
+      .filter(([, tokens]) => tokens > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, tokens]) => ({ name, tokens }))
+
+  return { breakdown, topTools: top(tools), topAttachments: top(attachments) }
+}
+
+// 上下文占用（2026-08-23 dsh ContextMeter 移植数据源；2026-11-14 扩展 breakdown）：取转录最后一条
+// assistant 的 message.usage，usedTokens = input_tokens + cache_creation_input_tokens +
+// cache_read_input_tokens（该轮发送的完整上下文 token 数），除以 getContextWindowForModel(model)
+// （auto-compact 同源窗口）。附 usage 明细、分类估算、自动压缩阈值。无 usage 返回 null。
 function extractContextUsage(records: Record<string, unknown>[]): Record<string, unknown> | null {
   for (let i = records.length - 1; i >= 0; i--) {
     const r = records[i]
@@ -2930,7 +3074,33 @@ function extractContextUsage(records: Record<string, unknown>[]): Record<string,
     if (!contextWindow) continue
     const usedTokens = input + cacheCreate + cacheRead
     const percent = Math.min(100, Math.round((usedTokens / contextWindow) * 100))
-    return { usedTokens, contextWindow, percent, model }
+
+    const { breakdown, topTools, topAttachments } = estimateContextBreakdown(records)
+    const estimatedMessages = breakdown.user + breakdown.assistant + breakdown.thinking +
+      breakdown.toolCall + breakdown.toolResult + breakdown.attachment
+    breakdown.fixed = Math.max(0, usedTokens - estimatedMessages)
+
+    const autoCompactThreshold = Math.min(
+      contextWindow,
+      Math.max(0, getEffectiveContextWindowSize(model) - AUTOCOMPACT_BUFFER_TOKENS),
+    )
+
+    return {
+      usedTokens,
+      contextWindow,
+      percent,
+      model,
+      autoCompactThreshold,
+      usage: {
+        input,
+        cacheCreate,
+        cacheRead,
+        output: Number(usage.output_tokens) || 0,
+      },
+      breakdown,
+      topTools,
+      topAttachments,
+    }
   }
   return null
 }
