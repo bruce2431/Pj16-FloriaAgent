@@ -5,14 +5,15 @@
 
 import { needToken, apiUrl } from '../../engine/gateway.js'
 /* @module inputbar/toolbar/elements.js */
-  // 按上下文缓存（'' = 全局）：{list, loaded, loading, err}。同一 label 只发一次请求，
+  // 按上下文缓存（'' = 全局）：{list, title, loaded, loading, err}。同一 label 只发一次请求，
   // 在途复用同一 Promise，失败记 err 并在下次调用时重试——与 mgr-data 的项目技能缓存同范式。
+  // title = 预览页声明的入口名（preview.json 的 elementsTitle），空串由消费点回落「元素」。
   const PROJ_ELEMENTS = new Map()
   function projElementsOf(label) {
     const key = label || ''
     let r = PROJ_ELEMENTS.get(key)
     if (!r) {
-      r = { list: [], loaded: false, loading: false, err: '' }
+      r = { list: [], title: '', loaded: false, loading: false, err: '' }
       PROJ_ELEMENTS.set(key, r)
     }
     return r
@@ -28,6 +29,7 @@ import { needToken, apiUrl } from '../../engine/gateway.js'
       .then((data) => {
         if (!data || !Array.isArray(data.elements)) throw new Error((data && data.error) || 'bad response')
         r.list = data.elements
+        r.title = typeof data.title === 'string' ? data.title : ''
         r.loaded = true
         return r.list
       })

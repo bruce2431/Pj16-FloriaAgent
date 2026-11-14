@@ -31,10 +31,14 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   ]
   // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
   // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
+  // 入口名与下钻分组名由声明决定（preview.json 的 elementsTitle），未声明回落「元素」。
+  function elementTitle() {
+    return projElementsOf(pickHome()).title || '元素'
+  }
   function cmdViews() {
     const out = CMD_VIEWS.slice()
     if (projElementsOf(pickHome()).list.length) {
-      out.push({ view: 'element', name: 'Floria组件', desc: '引用 Floria 界面组件（预览页声明）', icon: I.chip })
+      out.push({ view: 'element', name: elementTitle(), desc: '引用' + elementTitle() + '（预览页声明）', icon: I.chip })
     }
     return out
   }
@@ -95,9 +99,10 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       }
     }
     // 元素 = 当前上下文的预览声明（2026-11-13，与「+ → 元素」同源）：@ 搜索可直接命中。
+    const elGrp = elementTitle()
     for (const el of projElementsOf(home).list) {
       if (!match(el.name) && !match(el.desc)) continue
-      items.push({ kind: 'element', name: el.name, desc: el.desc, el, t: 0 })
+      items.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: elGrp, t: 0 })
     }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
@@ -191,7 +196,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      else if (cmd.view === 'element') items.push(...cmdElementRows(match, 'Floria组件'))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, elementTitle()))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {

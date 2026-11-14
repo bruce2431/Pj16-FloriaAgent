@@ -2209,6 +2209,13 @@ function validateMentionElement(raw: unknown, card: string): MentionElement | nu
 // 扫描 <previewDir> 的元素声明（2026-11-13）：preview.json 顶层 elements[] 在前，各已启用卡 card.json
 // 的 elements[] 随后（卡标题入 card 字段）；id 全局唯一，重复者保留首个并写日志（不静默覆盖）。
 // 停用卡（目录内 .disabled）不参与。声明整份缺失 = 空集；坏文件不抛（每次请求都跑）。
+// 元素入口标题（可选）：preview.json 顶层 elementsTitle。用于「+」工具栏入口与下钻分组名；
+// 未声明 / 空白 → ''（前端回落「元素」）。纯展示名，不参与元素校验。
+export function readMentionElementsTitle(previewDir: string): string {
+  const raw = readPreviewJson(previewDir)?.elementsTitle
+  return typeof raw === 'string' ? raw.trim().slice(0, 200) : ''
+}
+
 export function readMentionElements(previewDir: string): MentionElement[] {
   const out: MentionElement[] = []
   const seen = new Set<string>()
@@ -3600,7 +3607,11 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       } else {
         previewDir = join(root, '.claude', 'preview')
       }
-      sendJson(res, 200, { label: elLabel, elements: readMentionElements(previewDir) })
+      sendJson(res, 200, {
+        label: elLabel,
+        title: readMentionElementsTitle(previewDir),
+        elements: readMentionElements(previewDir),
+      })
     } catch (e) {
       sendError(res, e)
     }
