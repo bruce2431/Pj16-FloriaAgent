@@ -2596,12 +2596,12 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 /* 标题/加粗/斜体：库内主题给的是 hsl(var(--foreground, 220 9% 9%))——本项目不定义 --foreground ⇒ 回落近黑，
    暗色下不可读。统一回到正文色，只留字重/字形区分（见下方「Live Preview 主题兜底」）。 */
 /* 标题字号归 Markdown 视觉契约（@floria/cm6 的 .md-scope .cm-header-*），这里只补项目正文色。 */
-#work-editor .cm-header-1, #work-editor .cm-header-2, #work-editor .cm-header-3,
-#work-editor .cm-header-4, #work-editor .cm-header-5, #work-editor .cm-header-6 { color: var(--text); }
+#work-editor .wk-ed-cm .cm-header-1, #work-editor .wk-ed-cm .cm-header-2, #work-editor .wk-ed-cm .cm-header-3,
+#work-editor .wk-ed-cm .cm-header-4, #work-editor .wk-ed-cm .cm-header-5, #work-editor .wk-ed-cm .cm-header-6 { color: var(--text); }
 /* 水平分隔线（web-src/sidebar/work.js wkEdHrPlugin）：未落光标 = 该行画一条横线 + 藏掉 `---` 字符；
    光标进入该行/拖选中 = 不加装饰、`---` 原样可编辑。横线绝对定位在该行竖直中线，行高不变。 */
-#work-editor .cm-line.wk-ed-hr { position: relative; }
-#work-editor .cm-line.wk-ed-hr::after {
+#work-editor .wk-ed-cm .cm-line.wk-ed-hr { position: relative; }
+#work-editor .wk-ed-cm .cm-line.wk-ed-hr::after {
   content: ''; position: absolute; left: var(--wk-ed-pad-x); right: var(--wk-ed-pad-x); top: 50%;
   border-top: 1px solid var(--border); pointer-events: none;
 }
@@ -2612,81 +2612,81 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 /* 纵向间距只能用 padding：CM6 高度图取 widget 的 getBoundingClientRect（**不含 margin**），
    margin 会把之后所有行的缓存 top 顶偏 ⇒ 表格/代码块下方的点击落错行（库在 .cm-table-widget
    注释里明确警告过这一点）。横向 margin 不进高度图，保留用于与正文左边线对齐。 */
-#work-editor .cm-table-widget { margin: 0 var(--wk-ed-pad-x); padding: 12px 0; }
-#work-editor .cm-table-widget table { border-collapse: collapse; width: 100%; }
-#work-editor .cm-table-widget th, #work-editor .cm-table-widget td { border: 1px solid var(--border); padding: 6px 10px; vertical-align: top; }
-#work-editor .cm-table-widget th { background: color-mix(in srgb, var(--text) 7%, transparent); font-weight: 600; }
+#work-editor .wk-ed-cm .cm-table-widget { margin: 0 var(--wk-ed-pad-x); padding: 12px 0; }
+#work-editor .wk-ed-cm .cm-table-widget table { border-collapse: collapse; width: 100%; }
+#work-editor .wk-ed-cm .cm-table-widget th, #work-editor .wk-ed-cm .cm-table-widget td { border: 1px solid var(--border); padding: 6px 10px; vertical-align: top; }
+#work-editor .wk-ed-cm .cm-table-widget th { background: color-mix(in srgb, var(--text) 7%, transparent); font-weight: 600; }
 /* 代码块 widget（库 CodeBlockWidget → `.cm-codeblock-widget`，光标未入块时整块换成 widget）：
    库的 <pre> 走 UA `white-space:pre` + `overflow:auto` ⇒ 长行不按窗口换行、块内横滚；而光标入块后
    库切源码态，那几行是普通 .cm-line（.cm-content 的 break-spaces）会换行 ⇒ 两态换行行为不一致。
    宿主统一为编辑器口径（EditorView.lineWrapping）：pre-wrap 软换行。底/边同聊天区代码块（--field-2 + --border），
    替换库的 hsl(var(--muted,…)) 回落值（本项目无 --muted，暗色下会留浅灰底）。 */
-#work-editor .cm-codeblock-widget {
+#work-editor .wk-ed-cm .cm-codeblock-widget {
   /* 纵向 14px 同上：走 padding 进 widget 矩形，margin 不进高度图 ⇒ 代码块下方点击偏移 */
   margin: 0 var(--wk-ed-pad-x); padding: 14px 0; border: 1px solid var(--border); border-radius: 10px;
   background: var(--field-2); overflow: hidden;
 }
-#work-editor .cm-codeblock-widget pre { padding: 28px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#work-editor .wk-ed-cm .cm-codeblock-widget pre { padding: 28px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* 字体/字号归 Markdown 视觉契约；这里的 padding / line-height 是 widget 几何（进 CM 高度图），留在宿主。 */
-#work-editor .cm-codeblock-line {
+#work-editor .wk-ed-cm .cm-codeblock-line {
   padding: 0 16px; min-height: 0; line-height: 1.65; color: var(--text);
 }
 /* 左上角语言标签（`cm-codeblock-lang`，点击复制整块）：平时隐去底色只留小字，悬停才浮出可点反馈 */
-#work-editor .cm-codeblock-copy {
+#work-editor .wk-ed-cm .cm-codeblock-copy {
   top: 6px; left: 10px; right: auto; padding: 2px 6px;
   background: transparent; border: none; border-radius: 5px;
   color: var(--text-3); font-family: var(--mono); font-size: 11px; line-height: 1.5;
 }
-#work-editor .cm-codeblock-copy:hover { background: var(--hover); color: var(--text-2); }
+#work-editor .wk-ed-cm .cm-codeblock-copy:hover { background: var(--hover); color: var(--text-2); }
 /* 块级公式 widget（editor/cm-math.js）：与正文同一边线，KaTeX 显示模式在该栏内居中 */
-#work-editor .cm-math-block { margin: 0 var(--wk-ed-pad-x); padding: 12px 0; }
+#work-editor .wk-ed-cm .cm-math-block { margin: 0 var(--wk-ed-pad-x); padding: 12px 0; }
 /* Live Preview（vendor 库 live-markdown.js）主题兜底（2026-10-09 根修）：库内置主题的颜色一律写
    hsl(var(--x, <浅色回落>))，而本项目从不定义 --muted/--foreground/--primary/--background/--md-*
    （令牌全为十六进制、名字也不同）⇒ 库的**浅色回落值全部生效** = 硬编码浅色主题 ⇒ 黑夜模式白底白字 /
    深底深字不可读（实报：md 预览行内代码 = 浅灰底白字）。与上方表格/代码块 widget 的兜底同源，
    此处集中一层按项目令牌覆写库类、日夜随动——勿再分散到各处。 */
-#work-editor .cm-content { caretColor: var(--blue); padding: 22px 0 72px; }
+#work-editor .wk-ed-cm .cm-content { caretColor: var(--blue); padding: 22px 0 72px; }
 /* 正文左右留白（覆盖库默认 `0 16px`）：宽窗下正文不再抱边，与下方块级 widget 同一边线 */
-#work-editor .cm-line { padding: 0 var(--wk-ed-pad-x); }
-#work-editor .cm-placeholder { color: var(--text-3); }
-#work-editor .cm-strong, #work-editor .cm-emphasis { color: var(--text); }
-#work-editor .cm-strikethrough { color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-line { padding: 0 var(--wk-ed-pad-x); }
+#work-editor .wk-ed-cm .cm-placeholder { color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-strong, #work-editor .wk-ed-cm .cm-emphasis { color: var(--text); }
+#work-editor .wk-ed-cm .cm-strikethrough { color: var(--text-3); }
 /* 行内代码的底色/内距/等宽/字号归 Markdown 视觉契约（.md-scope code, .md-scope .cm-code）。 */
 /* 链接（含 wikilink / 悬浮卡）：库用 --primary 回落（蓝），改项目蓝令牌，与整体配色一致 */
-#work-editor .cm-link, #work-editor .cm-wikilink,
-#work-editor .cm-link-widget, #work-editor .cm-wikilink-widget { color: var(--blue); }
+#work-editor .wk-ed-cm .cm-link, #work-editor .wk-ed-cm .cm-wikilink,
+#work-editor .wk-ed-cm .cm-link-widget, #work-editor .wk-ed-cm .cm-wikilink-widget { color: var(--blue); }
 /* 相对文件链接 chip（包内 edFileLinkPlugin 产出 = 同一 fileChipDom）：锚点只作点击载体，
    文本样式与底栏 @ 文件 chip 一致（无下划线，悬停才下划线）。 */
-#work-editor .cm-file-link { color: inherit; text-decoration: none; }
+#work-editor .wk-ed-cm .cm-file-link { color: inherit; text-decoration: none; }
 /* 格式化标记（** ` # 等）与围栏标记：库用 --muted-foreground 回落 */
-#work-editor .cm-formatting-inline, #work-editor .cm-formatting-block,
-#work-editor .cm-codeblock-fence { color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-formatting-inline, #work-editor .wk-ed-cm .cm-formatting-block,
+#work-editor .wk-ed-cm .cm-codeblock-fence { color: var(--text-3); }
 /* 标记显隐必须瞬时：库给 `.cm-formatting-inline` / `-block` 配了 0.2s 的 max-width / font-size 过渡，
    而 CM6 在 dispatch 后的测量取到的是过渡**起点**宽度，之后行内宽度继续变（可能触发软换行改行高）
    ⇒ 高度图与真实布局脱节，点击按旧图映射 = 光标落错位置（偶发，只在刚切换标记显隐的行附近）。
    去掉过渡即可让布局在测量前就位。 */
-#work-editor .cm-formatting-inline, #work-editor .cm-formatting-block,
+#work-editor .wk-ed-cm .cm-formatting-inline, #work-editor .wk-ed-cm .cm-formatting-block,
 #cm-host .cm-formatting-inline, #cm-host .cm-formatting-block { transition: none; }
 /* 图片占位 / 信息 / 错误 */
-#work-editor .cm-image-loading, #work-editor .cm-image-info { background: var(--field-2); color: var(--text-3); }
-#work-editor .cm-image-alt { color: var(--text-3); }
-#work-editor .cm-image-spinner { border-color: color-mix(in srgb, var(--text-3) 30%, transparent); border-top-color: var(--text-3); }
-#work-editor .cm-image-error { background: var(--danger-soft); color: var(--danger-fg); }
+#work-editor .wk-ed-cm .cm-image-loading, #work-editor .wk-ed-cm .cm-image-info { background: var(--field-2); color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-image-alt { color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-image-spinner { border-color: color-mix(in srgb, var(--text-3) 30%, transparent); border-top-color: var(--text-3); }
+#work-editor .wk-ed-cm .cm-image-error { background: var(--danger-soft); color: var(--danger-fg); }
 /* 表格 toggle 钮 / 链接悬浮卡 / 数学面板：库用 --background/--border/--foreground 回落 */
-#work-editor .cm-table-toggle { border-color: var(--border); background: var(--bg); color: var(--text-2); }
-#work-editor .cm-link-preview { background: var(--float-bg); border-color: var(--border); }
-#work-editor .cm-math-preview-panel { border: 1px solid var(--border); }
-#work-editor .cm-math-source { color: var(--text); }
+#work-editor .wk-ed-cm .cm-table-toggle { border-color: var(--border); background: var(--bg); color: var(--text-2); }
+#work-editor .wk-ed-cm .cm-link-preview { background: var(--float-bg); border-color: var(--border); }
+#work-editor .wk-ed-cm .cm-math-preview-panel { border: 1px solid var(--border); }
+#work-editor .wk-ed-cm .cm-math-source { color: var(--text); }
 /* 源码态底色一律透明（2026-10-24 定案「所有源码态底色都去掉」）：库给每种块/内联源码态配了半透明
    色底（codeblock 紫 / math 绿 / table·link 蓝 / wikilink 紫 / image 粉），本项目编辑器不需要这类
    提示色，两个 CM6 宿主统一抹掉。`.cm-math-source-block` 是公式源码的**行装饰**（另一条规则）。 */
-#work-editor .cm-codeblock-source,
-#work-editor .cm-math-source,
-#work-editor .cm-math-source-block,
-#work-editor .cm-table-source,
-#work-editor .cm-link-source,
-#work-editor .cm-wikilink-source,
-#work-editor .cm-image-source,
+#work-editor .wk-ed-cm .cm-codeblock-source,
+#work-editor .wk-ed-cm .cm-math-source,
+#work-editor .wk-ed-cm .cm-math-source-block,
+#work-editor .wk-ed-cm .cm-table-source,
+#work-editor .wk-ed-cm .cm-link-source,
+#work-editor .wk-ed-cm .cm-wikilink-source,
+#work-editor .wk-ed-cm .cm-image-source,
 #cm-host .cm-codeblock-source,
 #cm-host .cm-math-source,
 #cm-host .cm-math-source-block,
@@ -2705,24 +2705,24 @@ body.wk-assist-dragging iframe { pointer-events: none; }
    因此原`.cm-formatting-block.cm-md-*` 复合选择器一条都不命中——列表点不渲染、同行露 `-`、
    离开行才整体消失。正确做法：先把 vendor 的按行显隐整类**中和**（恢复普通文本），
    可见性/UI 只由本插件自己的 class 决定。 */
-#work-editor .cm-formatting-block,
-#work-editor .cm-formatting-block-visible,
+#work-editor .wk-ed-cm .cm-formatting-block,
+#work-editor .wk-ed-cm .cm-formatting-block-visible,
 #cm-host .cm-formatting-block,
 #cm-host .cm-formatting-block-visible {
   font-size: inherit; opacity: 1; color: inherit; font-family: inherit; transition: none;
 }
-#work-editor .cm-md-far,
+#work-editor .wk-ed-cm .cm-md-far,
 #cm-host .cm-md-far { font-size: 0.01em; opacity: 0; }
-#work-editor .cm-md-src,
+#work-editor .wk-ed-cm .cm-md-src,
 #cm-host .cm-md-src { font-size: 1em; opacity: 0.6; }
-#work-editor .cm-list-dot,
+#work-editor .wk-ed-cm .cm-list-dot,
 #cm-host .cm-list-dot { position: relative; font-size: 1em; opacity: 1; color: transparent; }
-#work-editor .cm-list-dot::before,
+#work-editor .wk-ed-cm .cm-list-dot::before,
 #cm-host .cm-list-dot::before {
   content: '•'; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
   color: var(--text-2); font-size: 1em; line-height: 1;
 }
-#work-editor .cm-list-num,
+#work-editor .wk-ed-cm .cm-list-num,
 #cm-host .cm-list-num { font-size: 1em; opacity: 1; color: var(--text-2); }
 /* ---------- vendor 令牌桥（2026-10-15，待办4 根治：底栏 #cm-host 的实时预览暗色）----------
    库主题的颜色一律写成 `hsl(var(--muted, 220 14% 96%))` 这种 shadcn 命名，本项目一个都不定义 ⇒
