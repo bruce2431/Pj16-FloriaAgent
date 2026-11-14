@@ -14810,7 +14810,7 @@ function wkMerge3(base, local, remote) {
     const elGrp = elementTitle()
     for (const el of projElementsOf(home).list) {
       if (!match(el.name) && !match(el.desc)) continue
-      items.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: elGrp, t: 0 })
+      items.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: el.card || elGrp, t: 0 })
     }
     items.push(...pickItems(q))
     // 跨类搜索排序（2026-11-08 用户定案）：匹配度优先；同分本项目会话在前；再按时间倒序。
@@ -14869,7 +14869,8 @@ function wkMerge3(base, local, remote) {
     const out = []
     for (const el of projElementsOf(pickHome()).list) {
       if (match && !match(el.name) && !match(el.desc)) continue
-      out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp })
+      // 行分组 = 声明来源卡标题（全局卡暴露进项目时按来源分栏），项目自身/顶层声明回落入口名。
+      out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: el.card || grp })
     }
     return out
   }

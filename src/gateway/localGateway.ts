@@ -171,6 +171,10 @@ interface PreviewCard {
   backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
   backendCfg?: BackendCfg // 卡级后端声明（preview.json 应用卡可选 backend）
   elements: unknown[] // 卡级「可 @ 元素」声明原值（启用时才参与扫描；对外不下发）
+  elementsTitle: string // 该卡元素入口名（全局卡暴露给项目时用；缺省 '')
+  elementsIcon: string // 该卡元素入口图标键（同上；缺省 ''）
+  // 全局卡元素的项目暴露范围：'all' = 全部项目；字符串数组 = 指定项目 label；[] = 只在本上下文
+  elementsScope: 'all' | string[]
 }
 // 预览工作区的独立卡片（2026-10-18）：<previewDir>/<id>/card.json，id = 目录名。
 // 每张卡是一份独立静态页（entry 默认 index.html），宿主把它注册成右栏工具栏 tab；
@@ -2125,6 +2129,16 @@ function readPreviewCards(previewDir: string): PreviewCard[] {
       backendName: backendCfg ? backendCfg.name || title : '',
       backendCfg,
       elements: Array.isArray(c.elements) ? (c.elements as unknown[]) : [],
+      elementsTitle: typeof c.elementsTitle === 'string' ? c.elementsTitle.trim().slice(0, 200) : '',
+      elementsIcon: typeof c.elementsIcon === 'string' ? c.elementsIcon.trim().slice(0, 100) : '',
+      elementsScope:
+        c.elementsScope === 'all'
+          ? 'all'
+          : Array.isArray(c.elementsScope)
+            ? c.elementsScope
+                .filter((s): s is string => typeof s === 'string' && !!s.trim())
+                .map((s) => s.trim())
+            : [],
     })
   }
   return out
@@ -2274,6 +2288,46 @@ export function readMentionElements(previewDir: string): MentionElement[] {
   return out
 }
 
+// 项目上下文的元素清单（含全局卡的选择性暴露）：本预览目录的清单在前，全局根已启用应用卡中
+// elementsScope 命中本项目的声明随后（id 去重）。入口名/图标取本上下文顶层声明；本上下文自身
+// 无任何元素时，回落首个贡献卡的元素入口名（卡级 elementsTitle，缺省卡 title）/图标。
+export function mentionElementsFor(
+  previewDir: string,
+  globalPreviewDir?: string,
+  projectLabel?: string,
+): { title: string; icon: string; elements: MentionElement[] } {
+  const elements = readMentionElements(previewDir)
+  const title = readMentionElementsTitle(previewDir)
+  const icon = readMentionElementsIcon(previewDir)
+  const localCount = elements.length
+  const label = (projectLabel || '').trim()
+  if (!label || !globalPreviewDir || resolve(globalPreviewDir) === resolve(previewDir)) {
+    return { title, icon, elements }
+  }
+  const seen = new Set(elements.map((e) => e.id))
+  let exposedTitle = ''
+  let exposedIcon = ''
+  for (const c of readPreviewCards(globalPreviewDir)) {
+    if (!c.enabled || !c.elements.length) continue
+    const scopeOk = c.elementsScope === 'all' || c.elementsScope.includes(label)
+    if (!scopeOk) continue
+    let contributed = false
+    for (const raw of c.elements) {
+      const el = validateMentionElement(raw, c.title)
+      if (!el || seen.has(el.id)) continue
+      seen.add(el.id)
+      elements.push(el)
+      contributed = true
+    }
+    if (contributed && !exposedTitle) {
+      exposedTitle = c.elementsTitle || c.title
+      exposedIcon = c.elementsIcon
+    }
+  }
+  if (!localCount && elements.length) return { title: exposedTitle, icon: exposedIcon, elements }
+  return { title, icon, elements }
+}
+
 // 读 <previewDir>/preview.json 的 quoteActions 声明。与 cards 同范式（不合格条目整条丢弃、不猜不兜底）：
 // id 非法 / 重名、title 空 → 丢。整个 quoteActions 缺失 = 空集。无 path/host —— 动作不指向文件。
 function readPreviewQuoteActions(previewDir: string): PreviewQuoteAction[] {
@@ -2350,10 +2404,15 @@ function enabledCardBackends(previewDir: string): CardBackendEntry[] {
 
 // 下发前裁剪（/gateway/preview-cards）：后端 cfg（cmd/cwd/port）属网关侧实现，浏览器只要
 // 「有没有 backend + 显示名」——不带出去也不影响启停与挂载决策。
-function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: string; elements?: unknown[] }>(
-  c: T,
-): Record<string, unknown> {
-  const { backendCfg, elements, ...rest } = c
+function publicPreviewCard<
+  T extends {
+    backendCfg?: BackendCfg
+    backendName: string
+    elements?: unknown[]
+    elementsScope?: unknown
+  },
+>(c: T): Record<string, unknown> {
+  const { backendCfg, elements, elementsScope, ...rest } = c
   return { ...rest, backend: !!backendCfg }
 }
 
@@ -3623,9 +3682,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       }
       sendJson(res, 200, {
         label: elLabel,
-        title: readMentionElementsTitle(previewDir),
-        icon: readMentionElementsIcon(previewDir),
-        elements: readMentionElements(previewDir),
+        ...mentionElementsFor(previewDir, join(root, '.claude', 'preview'), elLabel),
       })
     } catch (e) {
       sendError(res, e)
