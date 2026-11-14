@@ -177,7 +177,7 @@
 
 ### 6.8 预览页的 `elements` 字段（可 @ 元素申报，2026-11-13）
 
-预览页可声明「可 @ 元素」，宿主在底栏 `+` 工具栏首屏出现元素入口（视图分组同名，入口名 = `preview.json` 的 `elementsTitle`，未声明回落「元素」）、@ 跨类搜索也可命中；元素选中后**落地形态完全由声明决定**，宿主不解释语义。声明源三处（项目预览页顶层 / `preview.json` 应用卡 / 目录卡），**每处声明的生效都从其声明主体的启用态**（顶层 = 预览页、应用卡 = 该卡目录、目录卡 = 卡目录，载体均为 `.disabled` 标记）：
+预览页可声明「可 @ 元素」，宿主在底栏 `+` 工具栏首屏**按声明来源逐源出现入口**（一源一行，入口名 = 该源的 `elementsTitle`，缺省卡 `title`，顶层未声明回落「元素」；视图分组同名）、@ 跨类搜索也可命中；元素选中后**落地形态完全由声明决定**，宿主不解释语义。声明源三处（项目预览页顶层 / `preview.json` 应用卡 / 目录卡），**每处声明的生效都从其声明主体的启用态**（顶层 = 预览页、应用卡 = 该卡目录、目录卡 = 卡目录，载体均为 `.disabled` 标记）：
 
 ```json
 // .claude/preview/preview.json（项目级）
@@ -189,16 +189,17 @@
 { "cards": [ { "id": "github", "title": "GitHub", "host": "view", "path": "github/index.html",
               "elementsTitle": "GitHub 仓库", "elementsIcon": "github", "elementsScope": "all",
               "elements": [ /* 同上 */ ] } ] }
-// .claude/preview/<card>/card.json（目录卡级，随目录启用态生效，另带该卡 title 作为来源标记）
-{ "title": "Report", "entry": "index.html", "elements": [ /* 同上 */ ] }
+// .claude/preview/<card>/card.json（目录卡级，随目录启用态生效；elementsTitle/elementsIcon 可选）
+{ "title": "Report", "elementsTitle": "报表元素", "elementsIcon": "file", "entry": "index.html", "elements": [ /* 同上 */ ] }
 ```
 
-- 端点 `GET /gateway/mention-elements[?label=<项目>]` → `{ label, title, icon, elements:[{id,name,desc,icon,card,insert}] }`；有 label 按 `findProjects` 定位项目根（`dir/../..`）的 `.claude/preview`，不存在 → 404 `{error:'project not found'}`；无 label = 便携根 `.claude/preview`（全局上下文）。
-- `elementsTitle`（`preview.json` 顶层，可选）：元素入口与下钻分组名的显示文案，`readMentionElementsTitle` 读为 trim 后截 200 的字符串，未声明/空白 → `''`；响应 `title` 与同源。前端消费 = `title || '元素'`（见 web-ui.md §44）。
-- `elementsIcon`（`preview.json` 顶层，可选）：元素入口图标 = `@floria/web` 图标表键，`readMentionElementsIcon` 读为 trim 后截 100 的字符串，未声明/空白 → `''`；响应 `icon` 与同源。前端消费 = `I[icon] || I.chip`，只作用于入口；元素行仍用各条 `el.icon`。
-- `cards[].elementsTitle` / `elementsIcon`（应用卡级，可选）：该卡元素被暴露给项目时的入口名/图标，规则同顶层两字段。
-- `cards[].elementsScope`（应用卡级，可选）：该卡元素向**项目**的暴露范围——`"all"` = 全部项目；字符串数组 = 指定项目 label（与 `findProjects` 的 label 逐字比较）；缺省/非法 = 只在本上下文（全局根）可见。仅作用于全局根 `.claude/preview` 的卡：项目上下文的 `GET /gateway/mention-elements?label=<项目>` 会合并该项目预览目录清单 + 全局根中 `enabled` 且 scope 命中的卡的 `elements`（按 id 去重，`card` = 卡 title）；本项目自身零元素时，入口名/图标回落首个贡献卡的名字/图标。
-- 解析 `readMentionElements(previewDir)`：`preview.json` 顶层 `elements[]` 在前（仅预览页启用时，preview 根无 `.disabled`），再取 `preview.json` `cards[].elements`（仅该卡 `enabled`，即 `path` 首段目录无 `.disabled`），最后取各**已启用**卡（目录无 `.disabled`）的 `card.json` `elements[]`；`card` = 卡 `title`（顶层声明 = `''`）。**自声明随声明主体启用态生效**：停用卡/停用预览页即刻不再下发，前端缓存由 `floria-cards-changed` 事件（启停写口广播）同拍作废。逐条校验，不合格整条丢弃：`id` 匹配 `/^[a-zA-Z0-9_-]{1,64}$/` 且跨来源不重复（重复保首次并写日志）、`name` 非空、`desc` trim 后截 200 字符。
+- 端点 `GET /gateway/mention-elements[?label=<项目>]` → `{ label, title, icon, sources:[{name,icon}], elements:[{id,name,desc,icon,card,insert}] }`；有 label 按 `findProjects` 定位项目根（`dir/../..`）的 `.claude/preview`，不存在 → 404 `{error:'project not found'}`；无 label = 便携根 `.claude/preview`（全局上下文）。
+- `sources` = 本次实际贡献了有效元素的声明来源（顺序 = 顶层 → 应用卡 → 目录卡 → 全局暴露卡）；每源一条 `{name, icon}`，前端首屏一源一入口。`card` 字段逐条回填来源 `sources[].name`，前端据此把下钻行归到对应来源。
+- `elementsTitle`（可选）：来源入口名与下钻分组名。`preview.json` 顶层 / `cards[]` / `card.json` 三处均可声明，trim 后截 200；卡级缺省回落该卡 `title`，顶层缺省 = `''`（前端回落「元素」）。响应顶层 `title` 仍为 `preview.json` 顶层的 `elementsTitle`（无 sources 时兜底）。
+- `elementsIcon`（可选）：来源入口图标 = `@floria/web` 图标表键，三处均可声明，trim 后截 100；未声明/空白 → `''`（前端回落 `chip`）。只作用于入口；元素行仍用各条 `el.icon`。响应顶层 `icon` 与顶层 `elementsIcon` 同源。
+- `cards[].elementsScope`（应用卡级，可选）：该卡元素向**项目**的暴露范围——`"all"` = 全部项目；字符串数组 = 指定项目 label（与 `findProjects` 的 label 逐字比较）；缺省/非法 = 只在本上下文（全局根）可见。仅作用于全局根 `.claude/preview` 的卡：项目上下文的 `GET /gateway/mention-elements?label=<项目>` 会合并该项目预览目录清单 + 全局根中 `enabled` 且 scope 命中的卡的 `elements`（按 id 去重，`card` = 该卡的 `elementsTitle` 或 `title`）；贡献来源同样进 `sources`，前端因此出现独立入口。
+- 扫描 `scanMentionElements(previewDir)`：`preview.json` 顶层 `elements[]` 在前（仅预览页启用时，preview 根无 `.disabled`），再取 `preview.json` `cards[].elements`（仅该卡 `enabled`，即 `path` 首段目录无 `.disabled`），最后取各**已启用**卡（目录无 `.disabled`）的 `card.json` `elements[]`；来源名 = 该处 `elementsTitle`，缺省卡 `title`（顶层缺省 `''`）。**自声明随声明主体启用态生效**：停用卡/停用预览页即刻不再下发，前端缓存由 `floria-cards-changed` 事件（启停写口广播）同拍作废。逐条校验，不合格整条丢弃：`id` 匹配 `/^[a-zA-Z0-9_-]{1,64}$/` 且跨来源不重复（重复保首次并写日志）、`name` 非空、`desc` trim 后截 200 字符。
+- `mentionElementsFor(previewDir, globalPreviewDir, label)` 汇总本地清单与全局命中的暴露卡，返回 `{title, icon, sources, elements}`；`readMentionElements(previewDir)` = 本地扫描的 `elements`（不含全局合并）。
 - `insert` 是三选一（未知类型丢该条）：`{"type":"text","text":"…"}` 原文写入输入栏；`{"type":"token","token":"[@…:…]"}` 令牌原文写入（含义交后端/插件）；`{"type":"path","path":"<项目根相对路径>","pathType":"file"|"dir"}` 按文件/目录引用落地（路径须为 `isPreviewRelPath` 安全相对路径，正斜杠、不得绝对/含 `.`、`..`）。
 - `icon` = `@floria/web` 图标表键（前端不命中回落 `chip`）。前端数据层 `inputbar/toolbar/elements.js`（按上下文缓存，与项目技能缓存同范式），入口/搜索 `toolbar/entries.js`，落地 `inputbar/mention.js`（见 web-ui.md §44）。
 

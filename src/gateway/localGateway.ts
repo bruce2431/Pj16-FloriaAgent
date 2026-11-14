@@ -205,8 +205,14 @@ interface MentionElement {
   name: string
   desc: string
   icon: string // @floria/web 图标表键，缺省 chip
-  card: string // 声明来源卡标题（preview.json 顶层声明 = ''）
+  card: string // 声明来源入口名（卡级 elementsTitle，缺省卡 title；顶层未声明 = ''）
   insert: MentionElementInsert
+}
+// 元素声明来源（「+」首屏每源一个具名入口）：name = 卡级/顶层 elementsTitle，缺省卡 title；
+// icon = elementsIcon（@floria/web 图标表键），缺省 ''（前端回落 chip）。
+interface MentionElementSource {
+  name: string
+  icon: string
 }
 // preview.json 的 quoteActions 声明（2026-09-28）：与 backend / cards 并列的第三种「项目向宿主申报
 // 界面能力」清单——宿主选中引用浮窗（.quote-pop）里追加的动作行。动作是**纯数据**（无 path、不指向
@@ -2239,34 +2245,45 @@ export function readMentionElementsIcon(previewDir: string): string {
   return typeof raw === 'string' ? raw.trim().slice(0, 100) : ''
 }
 
-export function readMentionElements(previewDir: string): MentionElement[] {
+// 扫描并按「声明来源」归组：每个确有有效元素的来源产出一条 sources 条目（「+」首屏一源一入口）。
+// 来源名 = 卡级 / 顶层 elementsTitle，缺省卡 title；顶层未声明 = ''（前端回落「元素」）。
+function scanMentionElements(previewDir: string): { elements: MentionElement[]; sources: MentionElementSource[] } {
   const out: MentionElement[] = []
+  const sources: MentionElementSource[] = []
   const seen = new Set<string>()
-  const take = (list: unknown, card: string) => {
+  const take = (list: unknown, name: string, icon: string) => {
     if (!Array.isArray(list)) return
+    let added = false
     for (const raw of list) {
-      const el = validateMentionElement(raw, card)
+      const el = validateMentionElement(raw, name)
       if (!el) {
         console.log(`[gateway] 元素声明丢弃非法条目：${JSON.stringify(raw).slice(0, 200)}`)
         continue
       }
       if (seen.has(el.id)) {
-        console.log(`[gateway] 元素声明 id 重复，保留首个：${el.id}（${card || '项目级'}）`)
+        console.log(`[gateway] 元素声明 id 重复，保留首个：${el.id}（${name || '项目级'}）`)
         continue
       }
       seen.add(el.id)
       out.push(el)
+      added = true
     }
+    if (added) sources.push({ name, icon: icon || '' })
   }
+  const previewJson = readPreviewJson(previewDir)
   // 顶层声明 = 预览页自身（传统单页预览）申报：随预览页启用态生效（preview 根无 .disabled）。
-  if (!existsSync(join(previewDir, CUSTOMIZATION_DISABLED_MARKER))) take(readPreviewJson(previewDir)?.elements, '')
+  if (!existsSync(join(previewDir, CUSTOMIZATION_DISABLED_MARKER))) {
+    take(previewJson?.elements, readMentionElementsTitle(previewDir), readMentionElementsIcon(previewDir))
+  }
   // preview.json 应用卡的卡级声明：随「该卡启用」生效（enabled = 路径首段目录无 .disabled）。
-  for (const c of readPreviewCards(previewDir)) if (c.enabled) take(c.elements, c.title)
+  for (const c of readPreviewCards(previewDir)) {
+    if (c.enabled) take(c.elements, c.elementsTitle || c.title, c.elementsIcon)
+  }
   let ents: Dirent[]
   try {
     ents = readdirSync(previewDir, { withFileTypes: true })
   } catch {
-    return out
+    return { elements: out, sources }
   }
   for (const e of ents) {
     if (!e.isDirectory() || !/^[a-zA-Z0-9_-]{1,32}$/.test(e.name)) continue
@@ -2283,49 +2300,51 @@ export function readMentionElements(previewDir: string): MentionElement[] {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
     const c = raw as Record<string, unknown>
     const title = typeof c.title === 'string' ? c.title.trim() : ''
-    take(c.elements, title)
+    const etitle = typeof c.elementsTitle === 'string' ? c.elementsTitle.trim().slice(0, 200) : ''
+    const eicon = typeof c.elementsIcon === 'string' ? c.elementsIcon.trim().slice(0, 100) : ''
+    take(c.elements, etitle || title, eicon)
   }
-  return out
+  return { elements: out, sources }
+}
+
+export function readMentionElements(previewDir: string): MentionElement[] {
+  return scanMentionElements(previewDir).elements
 }
 
 // 项目上下文的元素清单（含全局卡的选择性暴露）：本预览目录的清单在前，全局根已启用应用卡中
-// elementsScope 命中本项目的声明随后（id 去重）。入口名/图标取本上下文顶层声明；本上下文自身
-// 无任何元素时，回落首个贡献卡的元素入口名（卡级 elementsTitle，缺省卡 title）/图标。
+// elementsScope 命中本项目的声明随后（id 去重）。sources 逐源列出（每源一个具名入口）；
+// title/icon 仍为预览页顶层声明，作无 sources 时的兜底。
 export function mentionElementsFor(
   previewDir: string,
   globalPreviewDir?: string,
   projectLabel?: string,
-): { title: string; icon: string; elements: MentionElement[] } {
-  const elements = readMentionElements(previewDir)
+): { title: string; icon: string; elements: MentionElement[]; sources: MentionElementSource[] } {
+  const local = scanMentionElements(previewDir)
+  const elements = local.elements
+  const sources = local.sources.slice()
   const title = readMentionElementsTitle(previewDir)
   const icon = readMentionElementsIcon(previewDir)
-  const localCount = elements.length
   const label = (projectLabel || '').trim()
   if (!label || !globalPreviewDir || resolve(globalPreviewDir) === resolve(previewDir)) {
-    return { title, icon, elements }
+    return { title, icon, elements, sources }
   }
   const seen = new Set(elements.map((e) => e.id))
-  let exposedTitle = ''
-  let exposedIcon = ''
   for (const c of readPreviewCards(globalPreviewDir)) {
     if (!c.enabled || !c.elements.length) continue
     const scopeOk = c.elementsScope === 'all' || c.elementsScope.includes(label)
     if (!scopeOk) continue
+    const name = c.elementsTitle || c.title
     let contributed = false
     for (const raw of c.elements) {
-      const el = validateMentionElement(raw, c.title)
+      const el = validateMentionElement(raw, name)
       if (!el || seen.has(el.id)) continue
       seen.add(el.id)
       elements.push(el)
       contributed = true
     }
-    if (contributed && !exposedTitle) {
-      exposedTitle = c.elementsTitle || c.title
-      exposedIcon = c.elementsIcon
-    }
+    if (contributed) sources.push({ name, icon: c.elementsIcon || '' })
   }
-  if (!localCount && elements.length) return { title: exposedTitle, icon: exposedIcon, elements }
-  return { title, icon, elements }
+  return { title, icon, elements, sources }
 }
 
 // 读 <previewDir>/preview.json 的 quoteActions 声明。与 cards 同范式（不合格条目整条丢弃、不猜不兜底）：

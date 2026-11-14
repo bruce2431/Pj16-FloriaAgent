@@ -14142,16 +14142,16 @@ function wkMerge3(base, local, remote) {
     ensurePickAll().catch(() => {})
     loadPickPath(pickAll.root).then((ok) => { if (ok && after) after() })
   }
-  // 按上下文缓存（'' = 全局）：{list, title, icon, loaded, loading, err}。同一 label 只发一次请求，
+  // 按上下文缓存（'' = 全局）：{list, title, icon, sources, loaded, loading, err}。同一 label 只发一次请求，
   // 在途复用同一 Promise，失败记 err 并在下次调用时重试——与 mgr-data 的项目技能缓存同范式。
-  // title / icon = 预览页声明的入口名与图标（preview.json 的 elementsTitle / elementsIcon），
-  // 空串由消费点回落「元素」/ chip。
+  // sources = 各声明来源的入口名/图标（每源一个「+」首屏入口）；title / icon = 预览页顶层声明，
+  // 仅作 sources 缺失时的兜底；空串由消费点回落「元素」/ chip。
   const PROJ_ELEMENTS = new Map()
   function projElementsOf(label) {
     const key = label || ''
     let r = PROJ_ELEMENTS.get(key)
     if (!r) {
-      r = { list: [], title: '', icon: '', loaded: false, loading: false, err: '' }
+      r = { list: [], title: '', icon: '', sources: [], loaded: false, loading: false, err: '' }
       PROJ_ELEMENTS.set(key, r)
     }
     return r
@@ -14181,6 +14181,9 @@ function wkMerge3(base, local, remote) {
         r.list = data.elements
         r.title = typeof data.title === 'string' ? data.title : ''
         r.icon = typeof data.icon === 'string' ? data.icon : ''
+        r.sources = (Array.isArray(data.sources) ? data.sources : [])
+          .filter((s) => s && typeof s === 'object' && typeof s.name === 'string')
+          .map((s) => ({ name: s.name, icon: typeof s.icon === 'string' ? s.icon : '' }))
         r.loaded = true
         return r.list
       })
@@ -14643,7 +14646,8 @@ function wkMerge3(base, local, remote) {
   // 2026-09-09 二轮定案：去 tab 单页分组（上传/技能/引用会话/指令堆放一页）；items=渲染时平铺条目（键盘索引基准）
   // 工具栏是 @ 与「+」的唯一弹窗（2026-10-25/2026-11-08 用户定案）：两种手势都在底栏留一个锚点
   // （@ 的位置 / + 点击时的光标位置），此后输入的文本即查询词，结果扁平混排、选中替换该区间。
-  const cmd = { open: false, view: '', status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
+  // elementSrc = 元素视图当前来源入口（与 view='element' 配对；'' = 预览页顶层声明）。
+  const cmd = { open: false, view: '', elementSrc: '', status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -14732,20 +14736,27 @@ function wkMerge3(base, local, remote) {
   ]
   // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
   // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
-  // 入口名 / 图标与下钻分组名由声明决定（preview.json 的 elementsTitle / elementsIcon），
-  // 未声明回落「元素」/ chip。元素行本身仍用各条 el.icon，不参与回落。
+  // **一源一入口**（2026-11-14）：每个声明来源（预览页顶层 / 各应用卡 / 全局暴露卡）各占一行，
+  // 入口名取该源的 elementsTitle，缺省卡 title；顶层未声明回落「元素」。图标取 elementsIcon，缺省 chip。
+  // 元素行本身仍用各条 el.icon，不参与回落。
   function elementTitle() {
     return projElementsOf(pickHome()).title || '元素'
   }
+  function elementSources() {
+    const els = projElementsOf(pickHome())
+    if (els.sources.length) return els.sources
+    return els.list.length ? [{ name: els.title, icon: els.icon }] : []
+  }
   function cmdViews() {
     const out = CMD_VIEWS.slice()
-    const els = projElementsOf(pickHome())
-    if (els.list.length) {
+    for (const s of elementSources()) {
+      const name = s.name || '元素'
       out.push({
         view: 'element',
-        name: elementTitle(),
-        desc: '引用' + elementTitle() + '（预览页声明）',
-        icon: I[els.icon] || I.chip,
+        src: s.name || '',
+        name,
+        desc: '引用' + name + '（预览页声明）',
+        icon: I[s.icon] || I.chip,
       })
     }
     return out
@@ -14865,11 +14876,13 @@ function wkMerge3(base, local, remote) {
   }
   // 元素行 = 当前上下文（pickHome，'' = 全局预览根）的预览声明；选中后按声明 insert 落地，
   // 前端不解释元素语义。数据层与 @ 跨类搜索同源（toolbar/elements.js 的 projElementsOf）。
-  function cmdElementRows(match, grp) {
+  // src = 首屏点进的来源入口（'' = 顶层声明）：只列该源的条目。
+  function cmdElementRows(match, grp, src) {
     const out = []
     for (const el of projElementsOf(pickHome()).list) {
+      if (src && el.card !== src) continue
       if (match && !match(el.name) && !match(el.desc)) continue
-      // 行分组 = 声明来源卡标题（全局卡暴露进项目时按来源分栏），项目自身/顶层声明回落入口名。
+      // 行分组 = 声明来源入口名（全局卡暴露进项目时按来源分栏），顶层声明回落入口名。
       out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: el.card || grp })
     }
     return out
@@ -14891,7 +14904,7 @@ function wkMerge3(base, local, remote) {
   // 浮窗滚动量保持的「同一屏」判据：模式 / 视图 / 查询词 / 当前浏览层任一变化 = 换了一屏，
   // 旧 scrollTop 必须作废（否则新屏带着上一屏的滚动量，分组标题被顶上裁掉半截）。
   function cmdViewKey() {
-    return `${cmd.view || ''}|${cmdQuery()}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
+    return `${cmd.view || ''}|${cmd.elementSrc || ''}|${cmdQuery()}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
   }
   function cmdEntries() {
     const q = cmdQuery()
@@ -14905,7 +14918,7 @@ function wkMerge3(base, local, remote) {
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      else if (cmd.view === 'element') items.push(...cmdElementRows(match, elementTitle()))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, elementTitle(), cmd.elementSrc))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {
@@ -15194,6 +15207,7 @@ function setModelUserPicked(v) { modelUserPicked = v }
     if (msel.open) closeModelPop()
     cmd.open = true
     cmd.view = '' // 每次打开都回首屏入口（手势起点一致）
+    cmd.elementSrc = ''
     cmd.status = 'ready'
     cmd.active = 0
     cmd.confirming = null
@@ -15374,8 +15388,8 @@ function setModelUserPicked(v) { modelUserPicked = v }
     if (!it || cmd.submitting) return
     // 入口视图导航（两个模式共用，必须先于 @ 落地判：否则 @ 里点「文件」会被当成插入 [插件:文件] 胶囊）：
     // 入口行 = 进入该类（此后查询词只在该类里搜）；返回行 = 回首屏。
-    if (it.kind === 'entry') { cmd.view = it.view; cmd.active = 0; renderCmdPop(); return }
-    if (it.kind === 'back') { cmd.view = ''; cmd.active = 0; renderCmdPop(); return }
+    if (it.kind === 'entry') { cmd.view = it.view; cmd.elementSrc = it.src || ''; cmd.active = 0; renderCmdPop(); return }
+    if (it.kind === 'back') { cmd.view = ''; cmd.elementSrc = ''; cmd.active = 0; renderCmdPop(); return }
     if (it.kind === 'imgpick') { $('img-file').click(); return }
     if (it.kind === 'filepick') { $('file-upload').click(); return }
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）

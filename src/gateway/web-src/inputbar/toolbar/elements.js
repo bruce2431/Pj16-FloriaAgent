@@ -5,16 +5,16 @@
 
 import { needToken, apiUrl } from '../../engine/gateway.js'
 /* @module inputbar/toolbar/elements.js */
-  // 按上下文缓存（'' = 全局）：{list, title, icon, loaded, loading, err}。同一 label 只发一次请求，
+  // 按上下文缓存（'' = 全局）：{list, title, icon, sources, loaded, loading, err}。同一 label 只发一次请求，
   // 在途复用同一 Promise，失败记 err 并在下次调用时重试——与 mgr-data 的项目技能缓存同范式。
-  // title / icon = 预览页声明的入口名与图标（preview.json 的 elementsTitle / elementsIcon），
-  // 空串由消费点回落「元素」/ chip。
+  // sources = 各声明来源的入口名/图标（每源一个「+」首屏入口）；title / icon = 预览页顶层声明，
+  // 仅作 sources 缺失时的兜底；空串由消费点回落「元素」/ chip。
   const PROJ_ELEMENTS = new Map()
   function projElementsOf(label) {
     const key = label || ''
     let r = PROJ_ELEMENTS.get(key)
     if (!r) {
-      r = { list: [], title: '', icon: '', loaded: false, loading: false, err: '' }
+      r = { list: [], title: '', icon: '', sources: [], loaded: false, loading: false, err: '' }
       PROJ_ELEMENTS.set(key, r)
     }
     return r
@@ -44,6 +44,9 @@ import { needToken, apiUrl } from '../../engine/gateway.js'
         r.list = data.elements
         r.title = typeof data.title === 'string' ? data.title : ''
         r.icon = typeof data.icon === 'string' ? data.icon : ''
+        r.sources = (Array.isArray(data.sources) ? data.sources : [])
+          .filter((s) => s && typeof s === 'object' && typeof s.name === 'string')
+          .map((s) => ({ name: s.name, icon: typeof s.icon === 'string' ? s.icon : '' }))
         r.loaded = true
         return r.list
       })

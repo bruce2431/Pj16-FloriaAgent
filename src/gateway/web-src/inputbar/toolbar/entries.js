@@ -31,20 +31,27 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   ]
   // 元素入口只在当前上下文确有声明时出现（2026-11-13）：声明来自预览页（preview.json / card.json
   // 的 elements[]），网关扫描；无声明时首屏保持原样，不留空入口。
-  // 入口名 / 图标与下钻分组名由声明决定（preview.json 的 elementsTitle / elementsIcon），
-  // 未声明回落「元素」/ chip。元素行本身仍用各条 el.icon，不参与回落。
+  // **一源一入口**（2026-11-14）：每个声明来源（预览页顶层 / 各应用卡 / 全局暴露卡）各占一行，
+  // 入口名取该源的 elementsTitle，缺省卡 title；顶层未声明回落「元素」。图标取 elementsIcon，缺省 chip。
+  // 元素行本身仍用各条 el.icon，不参与回落。
   function elementTitle() {
     return projElementsOf(pickHome()).title || '元素'
   }
+  function elementSources() {
+    const els = projElementsOf(pickHome())
+    if (els.sources.length) return els.sources
+    return els.list.length ? [{ name: els.title, icon: els.icon }] : []
+  }
   function cmdViews() {
     const out = CMD_VIEWS.slice()
-    const els = projElementsOf(pickHome())
-    if (els.list.length) {
+    for (const s of elementSources()) {
+      const name = s.name || '元素'
       out.push({
         view: 'element',
-        name: elementTitle(),
-        desc: '引用' + elementTitle() + '（预览页声明）',
-        icon: I[els.icon] || I.chip,
+        src: s.name || '',
+        name,
+        desc: '引用' + name + '（预览页声明）',
+        icon: I[s.icon] || I.chip,
       })
     }
     return out
@@ -164,11 +171,13 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   }
   // 元素行 = 当前上下文（pickHome，'' = 全局预览根）的预览声明；选中后按声明 insert 落地，
   // 前端不解释元素语义。数据层与 @ 跨类搜索同源（toolbar/elements.js 的 projElementsOf）。
-  function cmdElementRows(match, grp) {
+  // src = 首屏点进的来源入口（'' = 顶层声明）：只列该源的条目。
+  function cmdElementRows(match, grp, src) {
     const out = []
     for (const el of projElementsOf(pickHome()).list) {
+      if (src && el.card !== src) continue
       if (match && !match(el.name) && !match(el.desc)) continue
-      // 行分组 = 声明来源卡标题（全局卡暴露进项目时按来源分栏），项目自身/顶层声明回落入口名。
+      // 行分组 = 声明来源入口名（全局卡暴露进项目时按来源分栏），顶层声明回落入口名。
       out.push({ kind: 'element', name: el.name, desc: el.desc, el, grp: el.card || grp })
     }
     return out
@@ -190,7 +199,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
   // 浮窗滚动量保持的「同一屏」判据：模式 / 视图 / 查询词 / 当前浏览层任一变化 = 换了一屏，
   // 旧 scrollTop 必须作废（否则新屏带着上一屏的滚动量，分组标题被顶上裁掉半截）。
   function cmdViewKey() {
-    return `${cmd.view || ''}|${cmdQuery()}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
+    return `${cmd.view || ''}|${cmd.elementSrc || ''}|${cmdQuery()}|${pick.path}|${pick.searchOff ? 'browse' : 'search'}`
   }
   function cmdEntries() {
     const q = cmdQuery()
@@ -204,7 +213,7 @@ import { matchScore, pickHome, sessionOwn, sortSessions } from './scope.js'
       if (cmd.view !== 'file') items.push({ kind: 'back', name: '返回', grp: '导航' })
       if (cmd.view === 'session') items.push(...cmdSessionRows(q, '会话'))
       else if (cmd.view === 'skill') items.push(...cmdSkillRows(match, '技能'))
-      else if (cmd.view === 'element') items.push(...cmdElementRows(match, elementTitle()))
+      else if (cmd.view === 'element') items.push(...cmdElementRows(match, elementTitle(), cmd.elementSrc))
       // 指令分支必须带花括号：`else if (…) for (…) if (…) push()` 后面再跟 `else if` 会把
       // 它吸附给内层 if（悬垂 else），文件视图分支永远不执行（2026-10-25 根因：@ 点「文件」只剩「返回」）。
       else if (cmd.view === 'cmd') {

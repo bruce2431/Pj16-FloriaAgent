@@ -48,7 +48,8 @@ import { pickHome } from './toolbar/scope.js'
 /* @module inputbar/commands.js #2 */
   // 工具栏是 @ 与「+」的唯一弹窗（2026-10-25/2026-11-08 用户定案）：两种手势都在底栏留一个锚点
   // （@ 的位置 / + 点击时的光标位置），此后输入的文本即查询词，结果扁平混排、选中替换该区间。
-  const cmd = { open: false, view: '', status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
+  // elementSrc = 元素视图当前来源入口（与 view='element' 配对；'' = 预览页顶层声明）。
+  const cmd = { open: false, view: '', elementSrc: '', status: 'pending', items: [], active: 0, prevActive: 0, submitting: false, confirming: null, acknowledged: false, error: null, vpKey: '' }
   // 模型菜单状态（对齐 dsh ModelSelect Pane：root | model | effort）
   const msel = { open: false, pane: 'root', active: 0 }
   const cmdPop = $('cmd-pop')
@@ -129,6 +130,7 @@ import { pickHome } from './toolbar/scope.js'
     if (msel.open) closeModelPop()
     cmd.open = true
     cmd.view = '' // 每次打开都回首屏入口（手势起点一致）
+    cmd.elementSrc = ''
     cmd.status = 'ready'
     cmd.active = 0
     cmd.confirming = null
@@ -309,8 +311,8 @@ import { pickHome } from './toolbar/scope.js'
     if (!it || cmd.submitting) return
     // 入口视图导航（两个模式共用，必须先于 @ 落地判：否则 @ 里点「文件」会被当成插入 [插件:文件] 胶囊）：
     // 入口行 = 进入该类（此后查询词只在该类里搜）；返回行 = 回首屏。
-    if (it.kind === 'entry') { cmd.view = it.view; cmd.active = 0; renderCmdPop(); return }
-    if (it.kind === 'back') { cmd.view = ''; cmd.active = 0; renderCmdPop(); return }
+    if (it.kind === 'entry') { cmd.view = it.view; cmd.elementSrc = it.src || ''; cmd.active = 0; renderCmdPop(); return }
+    if (it.kind === 'back') { cmd.view = ''; cmd.elementSrc = ''; cmd.active = 0; renderCmdPop(); return }
     if (it.kind === 'imgpick') { $('img-file').click(); return }
     if (it.kind === 'filepick') { $('file-upload').click(); return }
     if (it.kind === 'pathwait') return // 占位行不可选（清单未就绪）
