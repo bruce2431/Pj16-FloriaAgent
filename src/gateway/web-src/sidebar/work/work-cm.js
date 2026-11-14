@@ -21,10 +21,11 @@
     return apiUrl(`/gateway/file?label=${encodeURIComponent(state.workProj)}&path=${encodeURIComponent(p)}`)
   }
 
-  // ---------- 编辑器显示偏好（限制行宽 / 行号 / 行距 / 行号间距） ----------
+  // ---------- 编辑器显示偏好（限制行宽 / 行号 / 行距 / 行号间距 / 显示输入栏） ----------
   // 全局一套、localStorage 记忆：所有文件与项目共用，刷新/重开保持。档位名由包内映射到实际值。
+  // input 只归宿主（底栏单例挂载，见 work-layout.js 的 applyWkEdInput），包内 normalizePrefs 会忽略它。
   const WK_ED_PREF_KEY = 'floria.wkEditorPrefs'
-  const WK_ED_PREF_DEF = { width: true, lines: true, lineHeight: 'normal', gutterGap: 'normal' }
+  const WK_ED_PREF_DEF = { width: true, lines: true, lineHeight: 'normal', gutterGap: 'normal', input: false }
   function wkEdPrefsLoad() {
     try {
       const p = JSON.parse(localStorage.getItem(WK_ED_PREF_KEY) || '{}')

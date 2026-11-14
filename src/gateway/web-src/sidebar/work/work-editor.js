@@ -81,6 +81,7 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
     lines: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
     lineHeight: '<path d="M12 2v20"/><path d="m8 6 4-4 4 4"/><path d="m8 18 4 4 4-4"/>',
     gutterGap: '<path d="M2 12h20"/><path d="m6 8-4 4 4 4"/><path d="m18 8 4 4-4 4"/>',
+    input: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   }
   const wkEdpIcon = (k) => '<span class="wk-edp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + WK_EDP_ICONS[k] + '</svg></span>'
   let wkEdPrefsPop = null
@@ -96,6 +97,7 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
       '<div class="wk-edp-head">编辑器显示</div>' +
       sw('width', '限制行宽', !!p.width) +
       sw('lines', '行号', !!p.lines) +
+      sw('input', '显示输入栏', !!p.input) +
       `<div class="wk-edp-row">${wkEdpIcon('lineHeight')}<span class="wk-edp-label">行距</span>${seg('lineHeight')}</div>` +
       `<div class="wk-edp-row">${wkEdpIcon('gutterGap')}<span class="wk-edp-label">行号间距</span>${seg('gutterGap')}</div>`
     )
@@ -137,6 +139,7 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
         const k = sw.dataset.switch
         wkEdSetPrefs({ [k]: !wkEdGetPrefs()[k] })
         wkEdPrefsSync()
+        if (k === 'input') applyPanes() // 底栏单例进出编辑器（applyWkEdInput）随布局落地
         return
       }
       const b = e.target.closest('.wk-edp-seg button')

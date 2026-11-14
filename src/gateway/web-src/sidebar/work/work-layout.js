@@ -1,5 +1,6 @@
 // 布局落地：模式切换 applySbMode / 侧栏开关锚定 / 聊天 tab 开集与关合 / 主区三列不变量 applyPanes。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
 import { isTempProjLabel } from '../../core/util.js'
+import { inputWrap } from '../../engine/state.js'
 /* @module sidebar/work/work-layout.js */
 
   // 面板与主区布局按 state 落地。启动恢复与运行期切换共用这一条路径（无第二份初始化旁路）。
@@ -68,6 +69,32 @@ import { isTempProjLabel } from '../../core/util.js'
     if (state.wkMainTab === 'plugins' && state.workProj) return 'plugins'
     if (wkAssistInFlow()) return state.wkMainTab === 'file' && state.workFile ? 'file' : 'chat'
     return state.workFile ? 'file' : ''
+  }
+
+  // ---------- 编辑卡底部输入栏（右键「显示输入栏」） ----------
+  // 底栏是单例 #input-wrap（engine/state.js），不另造第二条输入链：条件满足时整枚移进
+  // #work-editor 流内贴底（几何见 styles.css「编辑卡输入栏」段），否则移回会话卡沉底 / 空态台面。
+  // 条件 = work 模式 + 下沉格正显示文件 tab + 编辑器偏好 input（work-cm.js 的 localStorage 唯一读写点）。
+  function wkEdInputOn() {
+    return state.sbMode === 'work' && wkShownTab() === 'file' && !!wkEdGetPrefs().input
+  }
+  function applyWkEdInput() {
+    const ed = $('work-editor')
+    if (!ed) return
+    const on = wkEdInputOn()
+    ed.classList.toggle('wk-ed-with-input', on)
+    if (on) {
+      if (inputWrap.parentNode !== ed) ed.appendChild(inputWrap)
+      inputWrap.classList.add('docked')
+      chatArea.classList.add('in-session') // 会话态门控（底栏工具行 / 项目 chip 与正常会话一致）
+      return
+    }
+    if (inputWrap.parentNode !== ed) return // 不在编辑器里：落位归路由既有 stage/chat 链
+    // 移回：会话在场 → 会话卡沉底；空对话 → 空态台面（与 renderSession / renderHome 同口径）
+    const inSession = !!state.currentHash
+    mountInput(inSession ? 'chat' : 'stage')
+    inputWrap.classList.toggle('docked', inSession)
+    chatArea.classList.toggle('in-session', inSession)
   }
 
   // 打开的聊天 tab 开放集（浏览器 tab 模型）：真源 = state.wkChats。**持久化、按项目重置**
@@ -177,6 +204,7 @@ import { isTempProjLabel } from '../../core/util.js'
     applyWorkCols()
     renderTopbar()
     applyPvTab()
+    applyWkEdInput() // 编辑卡输入栏：底栏单例的进出场随布局落地（条件判定唯一处见本函数上方）
     saveWork() // 布局落地即持久化（2026-10-13 待办 11）：顶栏开放集（wkChats/wkFiles）的入列/移除
     // 路径分散在 ensure 兜底、syncWorkTabs、closeWkFile（关非激活）等处，并非每处都 saveWork——
     // 统一收口在布局落地这一条链上，凡可见状态变化必已过 applyPanes ⇒ 凡变化必落盘。saveWork

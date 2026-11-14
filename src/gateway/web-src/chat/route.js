@@ -145,8 +145,10 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
   // 2026-09-23 卡化：两处基准都在会话卡内（.g-stage 是卡的后代；docked 目标是卡本身），
   // 输入栏随会话卡生灭——不再有「挂槽位」的旧路径。
   const emptyStageEl = () => document.querySelector('#empty-hint .g-stage')
+  // work 编辑卡底部输入栏在场时（右键「显示输入栏」；判定唯一处 = work-layout.js 的 wkEdInputOn），
+  // 底栏归 #work-editor —— stage/chat 既有落位只在其后生效：同一枚单例，同一时刻只有一个归属。
   function mountInput(where) {
-    const target = where === 'stage' ? emptyStageEl() : sessionCard
+    const target = wkEdInputOn() ? $('work-editor') : where === 'stage' ? emptyStageEl() : sessionCard
     if (target && inputWrap.parentNode !== target) target.appendChild(inputWrap)
   }
   // 输入栏 stage↔chat 迁移的 FLIP 补间（2026-08-30 丝滑空态→会话）：换父后 top/width 是
@@ -161,6 +163,13 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
       el.style.transition = ''
       el.style.transformOrigin = ''
       flipInputTimer = null
+    }
+    // 编辑卡输入栏在场：落位恒在编辑卡（流内贴底，无 stage↔chat 迁移），FLIP 的锚点补偿不适用
+    if (wkEdInputOn()) {
+      mountInput('chat')
+      el.classList.add('docked')
+      chatArea.classList.add('in-session')
+      return
     }
     const apply = () => {
       if (toStage) {

@@ -2554,6 +2554,14 @@ body.wk-assist-dragging iframe { pointer-events: none; }
 .wk-ed-head { position: absolute; top: 8px; right: 14px; z-index: 4; display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: var(--plane); pointer-events: none; }
 .wk-ed-head[hidden] { display: none; }
 .wk-ed-body { flex: 1; min-height: 0; overflow: auto; position: relative; }
+/* 编辑卡底部输入栏（右键「显示输入栏」）：同一枚 #input-wrap 从会话卡移入 #work-editor，
+   在流内贴底——会话态的绝对定位/宽度规则在此让位；键盘抬升改由 margin-bottom 承担。 */
+#work-editor > #input-wrap.docked {
+  position: relative; left: auto; top: auto; transform: none;
+  flex: none; align-self: center;
+  width: min(780px, calc(100% - 40px));
+  margin: 10px 0 calc(14px + var(--kb-lift, 0px));
+}
 /* 编辑区（CodeMirror 6，2026-10-07）：所有可编辑文本文件挂 .wk-ed-cm 宿主，md 走 Live Preview、
    代码按扩展名高亮。字号/配色与本项目 .msg .body 同源（库自带 editorTheme 用 em/hsl 变量，
    这里以 #work-editor 前缀覆盖为项目度量）。 */

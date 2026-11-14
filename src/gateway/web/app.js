@@ -2600,8 +2600,10 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
   // 2026-09-23 卡化：两处基准都在会话卡内（.g-stage 是卡的后代；docked 目标是卡本身），
   // 输入栏随会话卡生灭——不再有「挂槽位」的旧路径。
   const emptyStageEl = () => document.querySelector('#empty-hint .g-stage')
+  // work 编辑卡底部输入栏在场时（右键「显示输入栏」；判定唯一处 = work-layout.js 的 wkEdInputOn），
+  // 底栏归 #work-editor —— stage/chat 既有落位只在其后生效：同一枚单例，同一时刻只有一个归属。
   function mountInput(where) {
-    const target = where === 'stage' ? emptyStageEl() : sessionCard
+    const target = wkEdInputOn() ? $('work-editor') : where === 'stage' ? emptyStageEl() : sessionCard
     if (target && inputWrap.parentNode !== target) target.appendChild(inputWrap)
   }
   // 输入栏 stage↔chat 迁移的 FLIP 补间（2026-08-30 丝滑空态→会话）：换父后 top/width 是
@@ -2616,6 +2618,13 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
       el.style.transition = ''
       el.style.transformOrigin = ''
       flipInputTimer = null
+    }
+    // 编辑卡输入栏在场：落位恒在编辑卡（流内贴底，无 stage↔chat 迁移），FLIP 的锚点补偿不适用
+    if (wkEdInputOn()) {
+      mountInput('chat')
+      el.classList.add('docked')
+      chatArea.classList.add('in-session')
+      return
     }
     const apply = () => {
       if (toStage) {
@@ -7150,6 +7159,32 @@ function setFirstSendHash(v) { firstSendHash = v }
     return state.workFile ? 'file' : ''
   }
 
+  // ---------- 编辑卡底部输入栏（右键「显示输入栏」） ----------
+  // 底栏是单例 #input-wrap（engine/state.js），不另造第二条输入链：条件满足时整枚移进
+  // #work-editor 流内贴底（几何见 styles.css「编辑卡输入栏」段），否则移回会话卡沉底 / 空态台面。
+  // 条件 = work 模式 + 下沉格正显示文件 tab + 编辑器偏好 input（work-cm.js 的 localStorage 唯一读写点）。
+  function wkEdInputOn() {
+    return state.sbMode === 'work' && wkShownTab() === 'file' && !!wkEdGetPrefs().input
+  }
+  function applyWkEdInput() {
+    const ed = $('work-editor')
+    if (!ed) return
+    const on = wkEdInputOn()
+    ed.classList.toggle('wk-ed-with-input', on)
+    if (on) {
+      if (inputWrap.parentNode !== ed) ed.appendChild(inputWrap)
+      inputWrap.classList.add('docked')
+      chatArea.classList.add('in-session') // 会话态门控（底栏工具行 / 项目 chip 与正常会话一致）
+      return
+    }
+    if (inputWrap.parentNode !== ed) return // 不在编辑器里：落位归路由既有 stage/chat 链
+    // 移回：会话在场 → 会话卡沉底；空对话 → 空态台面（与 renderSession / renderHome 同口径）
+    const inSession = !!state.currentHash
+    mountInput(inSession ? 'chat' : 'stage')
+    inputWrap.classList.toggle('docked', inSession)
+    chatArea.classList.toggle('in-session', inSession)
+  }
+
   // 打开的聊天 tab 开放集（浏览器 tab 模型）：真源 = state.wkChats。**持久化、按项目重置**
   // （2026-10-13 用户待办 11 推翻 2026-10-07 的不持久化定案；切项目清空的防线不变，见 selectProject）。
   // 条目 = 会话 hash（**不含** WK_NEW_TAB：空态不占胶囊）。激活键 = 当前路由（currentHash；空 = 首页 ⇒ 'new'）。
@@ -7257,6 +7292,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     applyWorkCols()
     renderTopbar()
     applyPvTab()
+    applyWkEdInput() // 编辑卡输入栏：底栏单例的进出场随布局落地（条件判定唯一处见本函数上方）
     saveWork() // 布局落地即持久化（2026-10-13 待办 11）：顶栏开放集（wkChats/wkFiles）的入列/移除
     // 路径分散在 ensure 兜底、syncWorkTabs、closeWkFile（关非激活）等处，并非每处都 saveWork——
     // 统一收口在布局落地这一条链上，凡可见状态变化必已过 applyPanes ⇒ 凡变化必落盘。saveWork
@@ -8546,10 +8582,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     return apiUrl(`/gateway/file?label=${encodeURIComponent(state.workProj)}&path=${encodeURIComponent(p)}`)
   }
 
-  // ---------- 编辑器显示偏好（限制行宽 / 行号 / 行距 / 行号间距） ----------
+  // ---------- 编辑器显示偏好（限制行宽 / 行号 / 行距 / 行号间距 / 显示输入栏） ----------
   // 全局一套、localStorage 记忆：所有文件与项目共用，刷新/重开保持。档位名由包内映射到实际值。
+  // input 只归宿主（底栏单例挂载，见 work-layout.js 的 applyWkEdInput），包内 normalizePrefs 会忽略它。
   const WK_ED_PREF_KEY = 'floria.wkEditorPrefs'
-  const WK_ED_PREF_DEF = { width: true, lines: true, lineHeight: 'normal', gutterGap: 'normal' }
+  const WK_ED_PREF_DEF = { width: true, lines: true, lineHeight: 'normal', gutterGap: 'normal', input: false }
   function wkEdPrefsLoad() {
     try {
       const p = JSON.parse(localStorage.getItem(WK_ED_PREF_KEY) || '{}')
@@ -11753,6 +11790,7 @@ function wkMerge3(base, local, remote) {
     lines: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
     lineHeight: '<path d="M12 2v20"/><path d="m8 6 4-4 4 4"/><path d="m8 18 4 4 4-4"/>',
     gutterGap: '<path d="M2 12h20"/><path d="m6 8-4 4 4 4"/><path d="m18 8 4 4-4 4"/>',
+    input: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   }
   const wkEdpIcon = (k) => '<span class="wk-edp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + WK_EDP_ICONS[k] + '</svg></span>'
   let wkEdPrefsPop = null
@@ -11768,6 +11806,7 @@ function wkMerge3(base, local, remote) {
       '<div class="wk-edp-head">编辑器显示</div>' +
       sw('width', '限制行宽', !!p.width) +
       sw('lines', '行号', !!p.lines) +
+      sw('input', '显示输入栏', !!p.input) +
       `<div class="wk-edp-row">${wkEdpIcon('lineHeight')}<span class="wk-edp-label">行距</span>${seg('lineHeight')}</div>` +
       `<div class="wk-edp-row">${wkEdpIcon('gutterGap')}<span class="wk-edp-label">行号间距</span>${seg('gutterGap')}</div>`
     )
@@ -11809,6 +11848,7 @@ function wkMerge3(base, local, remote) {
         const k = sw.dataset.switch
         wkEdSetPrefs({ [k]: !wkEdGetPrefs()[k] })
         wkEdPrefsSync()
+        if (k === 'input') applyPanes() // 底栏单例进出编辑器（applyWkEdInput）随布局落地
         return
       }
       const b = e.target.closest('.wk-edp-seg button')
