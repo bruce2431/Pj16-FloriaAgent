@@ -170,6 +170,7 @@ interface PreviewCard {
   enabled: boolean
   backendName: string // 该卡后端显示名（backend.name，缺省 title）；无后端 = ''
   backendCfg?: BackendCfg // 卡级后端声明（preview.json 应用卡可选 backend）
+  elements: unknown[] // 卡级「可 @ 元素」声明原值（启用时才参与扫描；对外不下发）
 }
 // 预览工作区的独立卡片（2026-10-18）：<previewDir>/<id>/card.json，id = 目录名。
 // 每张卡是一份独立静态页（entry 默认 index.html），宿主把它注册成右栏工具栏 tab；
@@ -2123,6 +2124,7 @@ function readPreviewCards(previewDir: string): PreviewCard[] {
       enabled: !firstSeg || !existsSync(join(previewDir, firstSeg, CUSTOMIZATION_DISABLED_MARKER)),
       backendName: backendCfg ? backendCfg.name || title : '',
       backendCfg,
+      elements: Array.isArray(c.elements) ? (c.elements as unknown[]) : [],
     })
   }
   return out
@@ -2242,7 +2244,10 @@ export function readMentionElements(previewDir: string): MentionElement[] {
       out.push(el)
     }
   }
-  take(readPreviewJson(previewDir)?.elements, '')
+  // 顶层声明 = 预览页自身（传统单页预览）申报：随预览页启用态生效（preview 根无 .disabled）。
+  if (!existsSync(join(previewDir, CUSTOMIZATION_DISABLED_MARKER))) take(readPreviewJson(previewDir)?.elements, '')
+  // preview.json 应用卡的卡级声明：随「该卡启用」生效（enabled = 路径首段目录无 .disabled）。
+  for (const c of readPreviewCards(previewDir)) if (c.enabled) take(c.elements, c.title)
   let ents: Dirent[]
   try {
     ents = readdirSync(previewDir, { withFileTypes: true })
@@ -2345,8 +2350,10 @@ function enabledCardBackends(previewDir: string): CardBackendEntry[] {
 
 // 下发前裁剪（/gateway/preview-cards）：后端 cfg（cmd/cwd/port）属网关侧实现，浏览器只要
 // 「有没有 backend + 显示名」——不带出去也不影响启停与挂载决策。
-function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: string }>(c: T): Record<string, unknown> {
-  const { backendCfg, ...rest } = c
+function publicPreviewCard<T extends { backendCfg?: BackendCfg; backendName: string; elements?: unknown[] }>(
+  c: T,
+): Record<string, unknown> {
+  const { backendCfg, elements, ...rest } = c
   return { ...rest, backend: !!backendCfg }
 }
 

@@ -19,6 +19,18 @@ import { needToken, apiUrl } from '../../engine/gateway.js'
     }
     return r
   }
+  // 卡启用态变化后丢弃该上下文的缓存：元素清单随声明卡启用态变（停用即不再下发），
+  // 下次打开「+」/ @ 时重拉，入口随之下线或上线。
+  function invalidateProjectElements(label) {
+    PROJ_ELEMENTS.delete(label || '')
+  }
+  // 卡/应用启停成功后由写口广播（engine/ext-runtime.js 与 work-plugins.js 派发）：
+  // 元素清单随声明卡启用态变，缓存必须同拍作废，否则入口会在停用后继续出现。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('floria-cards-changed', (e) => {
+      invalidateProjectElements((e && e.detail && e.detail.label) || '')
+    })
+  }
   function ensureProjectElements(label) {
     const r = projElementsOf(label)
     if (r.loaded || r.loading || needToken()) return Promise.resolve(r.list)
@@ -45,4 +57,4 @@ import { needToken, apiUrl } from '../../engine/gateway.js'
       })
   }
 
-export { ensureProjectElements, projElementsOf }
+export { ensureProjectElements, invalidateProjectElements, projElementsOf }

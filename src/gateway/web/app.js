@@ -5131,6 +5131,8 @@ function setFirstSendHash(v) { firstSendHash = v }
       throw new Error(d.error || 'HTTP ' + res.status)
     }
     await loadAppCatalog()
+    // 启用态变了 ⇒ 依赖「卡启用」的自声明能力（@ 元素清单等）同拍作废缓存。
+    try { window.dispatchEvent(new CustomEvent('floria-cards-changed', { detail: { label: GLOBAL_LABEL } })) } catch {}
     return isAppEnabled(id)
   }
   // 目录 → 侧栏 tab（只取已启用者）。id 加 `app:` 前缀，与第一方裸词 id、EXT 的 `ext:` 零撞车。
@@ -8411,6 +8413,8 @@ function setFirstSendHash(v) { firstSendHash = v }
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error || 'HTTP ' + res.status)
       }
+      // 启用态变了 ⇒ 依赖「卡启用」的自声明能力（@ 元素清单等）同拍作废缓存。
+      try { window.dispatchEvent(new CustomEvent('floria-cards-changed', { detail: { label } })) } catch {}
     } catch (e) {
       if (!derived) {
         c.enabled = !next
@@ -14151,6 +14155,18 @@ function wkMerge3(base, local, remote) {
       PROJ_ELEMENTS.set(key, r)
     }
     return r
+  }
+  // 卡启用态变化后丢弃该上下文的缓存：元素清单随声明卡启用态变（停用即不再下发），
+  // 下次打开「+」/ @ 时重拉，入口随之下线或上线。
+  function invalidateProjectElements(label) {
+    PROJ_ELEMENTS.delete(label || '')
+  }
+  // 卡/应用启停成功后由写口广播（engine/ext-runtime.js 与 work-plugins.js 派发）：
+  // 元素清单随声明卡启用态变，缓存必须同拍作废，否则入口会在停用后继续出现。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('floria-cards-changed', (e) => {
+      invalidateProjectElements((e && e.detail && e.detail.label) || '')
+    })
   }
   function ensureProjectElements(label) {
     const r = projElementsOf(label)

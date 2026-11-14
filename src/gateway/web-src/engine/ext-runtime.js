@@ -165,6 +165,8 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
       throw new Error(d.error || 'HTTP ' + res.status)
     }
     await loadAppCatalog()
+    // 启用态变了 ⇒ 依赖「卡启用」的自声明能力（@ 元素清单等）同拍作废缓存。
+    try { window.dispatchEvent(new CustomEvent('floria-cards-changed', { detail: { label: GLOBAL_LABEL } })) } catch {}
     return isAppEnabled(id)
   }
   // 目录 → 侧栏 tab（只取已启用者）。id 加 `app:` 前缀，与第一方裸词 id、EXT 的 `ext:` 零撞车。

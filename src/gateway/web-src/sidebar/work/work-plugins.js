@@ -282,6 +282,8 @@ import { cachedRepoVersion, ensureRepoVersion, fillVersionRow, renderRepoIntro, 
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error || 'HTTP ' + res.status)
       }
+      // 启用态变了 ⇒ 依赖「卡启用」的自声明能力（@ 元素清单等）同拍作废缓存。
+      try { window.dispatchEvent(new CustomEvent('floria-cards-changed', { detail: { label } })) } catch {}
     } catch (e) {
       if (!derived) {
         c.enabled = !next
