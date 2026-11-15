@@ -1657,7 +1657,11 @@ body.sb-resizing { cursor: grabbing !important; user-select: none; }
    与 .preview-shell 同构但**不复用类名**——宿主侧所有「当前预览帧」的查询（rail-ext 的
    .preview-frame、mgr 的三级链）都按 .preview-frame 定位，外部卡若同用会顶替真预览帧。 */
 .ext-shell { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.ext-frame { flex: 1; width: 100%; border: none; background: #fff; }
+/* 底随主题（同 .view-card 的 --chat-bg）：应用/外置卡是 Floria 自产、随主题的卡（卡内自设
+   html[data-theme]），iframe 元素底必须 = 卡底色——卡内透明区 / scrollbar-gutter 预留槽透出的是
+   iframe 元素底，用 #fff 会在暗色下露成右侧白带。区别于 .preview-frame 的 #fff（外部内容如
+   ComfyUI 无暗色版、保持原色，见 docs/web-ui.md §56）。 */
+.ext-frame { flex: 1; width: 100%; border: none; background: var(--chat-bg); }
 /* 预览加载/无预览占位（2026-08-15）：先 fetch 探测入口，命中挂 iframe；无 preview 也无后端时显示空态 */
 .preview-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .preview-loading, .preview-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-2); font-size: 13px; }

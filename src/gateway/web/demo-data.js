@@ -45,20 +45,33 @@ window.FLORIA_DEMO_DATA = (() => {
   ]
   return {
     sessions: {
-      workspace: 'F:/@WrokSpace',
-      // 用真实项目 label：work 右栏预览帧直接加载该项目真实存在的预览页，缩略图里预览列可用。
+      workspace: 'WorkFlie',
+      // 演示用通用项目：不指向真实目录、不声明任何预览，右栏不会加载真实预览页
       groups: [
-        { label: 'Pj16-CodeAgent构建', dir: 'F:/@WrokSpace/Pj16-CodeAgent构建', scope: 'project', hasPreview: true },
+        { label: 'WorkFlie', dir: 'WorkFlie', scope: 'project', hasPreview: false },
       ],
       sessions: [
         {
           file: 'demo-1.jsonl',
           title: '演示 · 底栏最近文件入口',
-          projectLabel: 'Pj16-CodeAgent构建',
-          projectScope: 'project',
+          // 全局根会话：chat 侧栏不显示任何项目标签/项目分组
+          projectLabel: '',
+          projectScope: 'global',
           messageCount: messages.length,
           updatedAt: now - 12 * 60 * 1000,
           createdAt: t0 - 10 * 60 * 1000,
+          state: null,
+          turnEndAt: null,
+        },
+        {
+          // work 模式项目会话：work 侧栏「聊天」页签只列 projectLabel === 当前工作项目的会话
+          file: 'demo-2.jsonl',
+          title: '演示 · 预览卡组件树',
+          projectLabel: 'WorkFlie',
+          projectScope: 'project',
+          messageCount: 3,
+          updatedAt: now - 32 * 60 * 1000,
+          createdAt: t0 - 40 * 60 * 1000,
           state: null,
           turnEndAt: null,
         },
@@ -66,7 +79,7 @@ window.FLORIA_DEMO_DATA = (() => {
     },
     session: {
       file: 'demo-1',
-      cwd: 'F:/@WrokSpace/Pj16-CodeAgent构建',
+      cwd: 'WorkFlie',
       model: 'deepseek-v4',
       effort: 'low',
       context: { usedTokens: 38400, contextWindow: 200000, percent: 19 },
@@ -96,8 +109,8 @@ window.FLORIA_DEMO_DATA = (() => {
         { name: 'README.md', type: 'file' },
       ],
     },
-    // 该项目有传统单页预览（.claude/preview/index.html），右栏预览帧可直接加载真实页面
-    previewCards: { label: 'Pj16-CodeAgent构建', cards: [], previewCards: [], hasIndex: true, indexEnabled: true },
+    // 演示项目不提供任何预览：无传统单页、无卡，右栏只显示空态
+    previewCards: { label: 'WorkFlie', cards: [], previewCards: [], hasIndex: false, indexEnabled: false },
     plugins: { plugins: [], skills: [], items: [] },
   }
 })()
