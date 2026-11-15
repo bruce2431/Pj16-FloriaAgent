@@ -234,6 +234,17 @@ import { renderRailExt } from '../rail-ext.js'
     mountPreview(el, label, hasPreviewOf(label), cardId)
   }
 
+  // 预览卡文件变化（网关监听 .claude/preview → SSE → feature/preview-frame 重拉卡表后广播）：
+  // 卡表/卡目录变化后重渲 tab 条并归一激活卡。帧本身的重新挂载归 preview-frame 唯一实现，
+  // 本处只管宿主 UI（不让 preview-frame 反向 import sidebar）。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('floria-preview-changed', (e) => {
+      const label = e && e.detail && e.detail.label
+      if (!label || state.workProj !== label || !state.wkPreview) return
+      applyPvTab()
+    })
+  }
+
   // 顶栏 tab 条（唯一渲染口）：[聊天胶囊 × N] [文件 pill × N]（2026-10-12 文件 pill 起多枚并存）。
   // 聊天胶囊 = 开放集 state.wkChats 一条一枚，命名用会话标题（空对话 = 「新对话」）；
   // 文件 pill = 开放集 state.wkFiles 一条一枚，命名用**项目内相对路径**（MATH/main.tex）——不能用

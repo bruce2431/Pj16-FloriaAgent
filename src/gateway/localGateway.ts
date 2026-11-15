@@ -127,6 +127,13 @@ const sseSizes = new Map<string, { size: number; mtime: number }>()
 // 避免频繁扫描。
 const sseWatches = new Map<string, FSWatcher>()
 let sseDebounce: NodeJS.Timeout | null = null
+// 预览目录文件监听（预览卡改动自动刷新）：<项目>/.claude/preview 下任意文件变化 → 去抖后群发
+// preview-changed，前端据此重载对应预览帧 / 重拉卡表，不再需要手动刷新整页。
+// 事件体 {type:'preview-changed', label, card, meta}：card = 首段目录名（= 预览卡 id）；
+// meta = 卡表结构可能变化（card.json / preview.json / 顶层文件 / 新增删除）→ 前端重拉卡表再重挂。
+const previewWatches = new Map<string, FSWatcher>()
+const previewDebounce = new Map<string, { cards: Set<string>; meta: boolean; timer: NodeJS.Timeout | null }>()
+const PREVIEW_CHANGE_DEBOUNCE_MS = 250
 // 2026-08-17 空闲自动回收：三集合（cliClients/sockets/sseClients）全空持续 GATEWAY_IDLE_MINUTES
 // 分钟后自动关闭网关，避免「所有 CLI/遥测端都退出、网关空转占端口」的孤儿状态。仅 --gateway
 // 独立进程模式启用（进程内模式网关随 CLI 同生共死，无孤儿问题）。阈值可用 GATEWAY_IDLE_MINUTES 调。
@@ -3685,7 +3692,8 @@ function ensureSseWatches(root: string): void {
   // P0 修复（2026-08-27）：原版 `size > 0` 早退只在首个 SSE 订阅时建一批 watch，网关运行中
   // 新建的项目目录永不覆盖，其会话变化无法触发 SSE → 改为增量补建：每次调用按 findProjects
   // 当前结果为缺失的目录补 watch；watcher error（Windows 目录删除等失效）摘除条目，下次调用自动重建。
-  for (const g of findProjects(root)) {
+  const projs = findProjects(root)
+  for (const g of projs) {
     if (sseWatches.has(g.dir)) continue
     try {
       const dir = g.dir
@@ -3698,6 +3706,77 @@ function ensureSseWatches(root: string): void {
       /* 目录不存在/被移除，忽略 */
     }
   }
+  ensurePreviewWatches(projs)
+}
+
+// 预览目录文件变化 → 250ms 去抖合并 → SSE 群发 preview-changed。
+// 首段不是合法卡 id（预览根下的散文件）或事件是 rename（新建/删除/编辑器原子保存）一律按
+// meta 处理：整项目重拉卡表，不猜归属。
+function notePreviewChange(label: string, eventType: string, filename: string | Buffer | null): void {
+  if (sseClients.size === 0) return
+  let entry = previewDebounce.get(label)
+  if (!entry) {
+    entry = { cards: new Set(), meta: false, timer: null }
+    previewDebounce.set(label, entry)
+  }
+  const f = (typeof filename === 'string' ? filename : filename ? filename.toString() : '').replace(/\\/g, '/')
+  const segs = f.split('/').filter(Boolean)
+  const card = segs.length > 1 && /^[a-zA-Z0-9_-]{1,32}$/.test(segs[0]) ? segs[0] : ''
+  if (!card || segs[segs.length - 1] === 'card.json' || eventType === 'rename') entry.meta = true
+  else entry.cards.add(card)
+  if (entry.meta) entry.cards.clear()
+  if (entry.timer) return
+  entry.timer = setTimeout(() => {
+    previewDebounce.delete(label)
+    const objs: Array<{ type: string; label: string; card: string; meta: boolean }> = entry.meta
+      ? [{ type: 'preview-changed', label, card: '', meta: true }]
+      : [...entry.cards].map((c) => ({ type: 'preview-changed', label, card: c, meta: false }))
+    for (const obj of objs) {
+      const s = `data: ${JSON.stringify(obj)}\n\n`
+      sendAll(sseClients, (c) => {
+        c.res.write(s)
+      })
+    }
+  }, PREVIEW_CHANGE_DEBOUNCE_MS)
+}
+
+// 预览目录 watch 增量补齐（与 sseWatches 同节奏：每次 ensureSseWatches 调用按当前项目清单
+// 补齐缺失、摘除已消失）。Windows/macOS 用 recursive 覆盖卡目录内任意深度；平台不支持递归时
+// 退化为只监听预览根（仍能感知新增/删除卡与 preview.json 变化）。
+function ensurePreviewWatches(projs: ProjectInfo[]): void {
+  const seen = new Set<string>()
+  if (sseClients.size > 0) {
+    for (const g of projs) {
+      if (!g.hasPreview) continue
+      const dir = previewDirOf(g)
+      seen.add(dir)
+      if (previewWatches.has(dir)) continue
+      try {
+        const onEv = (ev: string, fn: string | Buffer | null) => notePreviewChange(g.label, ev, fn)
+        let w: FSWatcher
+        try {
+          w = watch(dir, { recursive: true }, onEv)
+        } catch {
+          w = watch(dir, onEv)
+        }
+        w.on('error', () => {
+          if (previewWatches.get(dir) === w) previewWatches.delete(dir)
+        })
+        previewWatches.set(dir, w)
+      } catch {
+        /* 目录不存在/被移除，忽略 */
+      }
+    }
+  }
+  for (const [dir, w] of previewWatches) {
+    if (seen.has(dir)) continue
+    try {
+      w.close()
+    } catch {
+      /* 忽略 */
+    }
+    previewWatches.delete(dir)
+  }
 }
 function stopSseWatches(): void {
   for (const w of sseWatches.values()) {
@@ -3708,6 +3787,16 @@ function stopSseWatches(): void {
     }
   }
   sseWatches.clear()
+  for (const w of previewWatches.values()) {
+    try {
+      w.close()
+    } catch {
+      /* 忽略 */
+    }
+  }
+  previewWatches.clear()
+  for (const e of previewDebounce.values()) if (e.timer) clearTimeout(e.timer)
+  previewDebounce.clear()
   if (sseDebounce) {
     clearTimeout(sseDebounce)
     sseDebounce = null

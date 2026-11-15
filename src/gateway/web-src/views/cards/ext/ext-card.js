@@ -24,9 +24,11 @@ import { cardBus } from '../../../engine/card-bus.js'
     // 同卡重渲（切 kind/cat 或刷新）：旧帧随 innerHTML 拆除前先注销，否则表里留个死项
     const old = body.querySelector('.ext-frame')
     if (old) cardBus.unregisterFrame(old.__cardKey)
+    // data-ext-label：预览目录文件变化（preview-changed）时按「项目 + 卡」定位该帧重载
+    // （frame 层刷新归 feature/preview-frame.js，本模块只提供归属标记）。
     body.innerHTML =
       '<div class="ext-shell">' +
-      `<iframe class="ext-frame" title="${esc(card.title)}" data-ext-card="${esc(card.id)}" src="${esc(extCardSrc(label, card))}"></iframe>` +
+      `<iframe class="ext-frame" title="${esc(card.title)}" data-ext-card="${esc(card.id)}" data-ext-label="${esc(label)}" src="${esc(extCardSrc(label, card))}"></iframe>` +
       '</div>'
     // kind 恒 'ext'：EXT（当前预览项目）与应用（label = 全局根）共用本渲染器，label 已足以区分归属
     cardBus.registerFrame({ kind: 'ext', label, el: body.querySelector('.ext-frame'), id: card.id })

@@ -1645,6 +1645,9 @@ function setSessionCwd(v) { sessionCwd = v }
   let liveUiPort = {}    // 渲染/暂态/导航出口（renderTransient/renderSettle/renderRecent/renderTaskDock/…）
   let liveStagePort = {} // 两层消息流 stage（stage 对象 + stageStart）
   let liveStatePort = {} // 可变状态读写口（takeover/firstSendHash/pendingUserMsgs）
+  // 预览卡文件变化（网关 preview-changed 事件）→ feature 层（preview-frame.js）自行注册处理：
+  // engine 不 import feature，处理函数由 feature 模块加载时经 setPreviewChangedHook 注入。
+  let onPreviewChanged = () => {}
 
   // ---------- 实时同步（阶段1：SSE 监听 jsonl 变化，自动刷新会话/列表）----------
   // 兼容：刷新只替换 messagesEl 内层，折叠开合（含网关实时折叠）与滚动位置尽量保留；
@@ -1751,6 +1754,11 @@ function setSessionCwd(v) { sessionCwd = v }
     let ev
     try { ev = JSON.parse(e.data) } catch { return }
     if (ev.type === 'hello') { refreshList(); refreshSession(); checkAssetFresh() }
+    else if (ev.type === 'preview-changed') {
+      // 预览卡文件变化（网关 .claude/preview 监听 → 250ms 去抖）：交给 feature 层决定是重载
+      // 对应 iframe（card 命中、meta=false）还是重拉卡表并重挂（card.json / 新增删除卡）。
+      if (typeof ev.label === 'string') onPreviewChanged(ev)
+    }
     else if (ev.type === 'activity') {
         // 状态点翻转即时刷新（网关 /gateway/activity 群发，2026-08-29）。
         // 2026-09-07 断连感知：state=null（CLI /clients 断开 → 网关 detach 群发）= 会话进程
@@ -2477,6 +2485,7 @@ function setSessionCwd(v) { sessionCwd = v }
 
 function setLiveModelHook(fn) { onSessionModel = fn }
 function setLiveEffortHook(fn) { onSessionEffort = fn }
+function setPreviewChangedHook(fn) { onPreviewChanged = typeof fn === 'function' ? fn : () => {} }
 function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort = p.stage; liveStatePort = p.state }
   // ---------- 路由 ----------
   // 2026-08-28 pushState 路径路由：/session/<全长会话hash>、/manage/<kind>、/project/<label>（project 避开网关
@@ -5632,9 +5641,11 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 同卡重渲（切 kind/cat 或刷新）：旧帧随 innerHTML 拆除前先注销，否则表里留个死项
     const old = body.querySelector('.ext-frame')
     if (old) cardBus.unregisterFrame(old.__cardKey)
+    // data-ext-label：预览目录文件变化（preview-changed）时按「项目 + 卡」定位该帧重载
+    // （frame 层刷新归 feature/preview-frame.js，本模块只提供归属标记）。
     body.innerHTML =
       '<div class="ext-shell">' +
-      `<iframe class="ext-frame" title="${esc(card.title)}" data-ext-card="${esc(card.id)}" src="${esc(extCardSrc(label, card))}"></iframe>` +
+      `<iframe class="ext-frame" title="${esc(card.title)}" data-ext-card="${esc(card.id)}" data-ext-label="${esc(label)}" src="${esc(extCardSrc(label, card))}"></iframe>` +
       '</div>'
     // kind 恒 'ext'：EXT（当前预览项目）与应用（label = 全局根）共用本渲染器，label 已足以区分归属
     cardBus.registerFrame({ kind: 'ext', label, el: body.querySelector('.ext-frame'), id: card.id })
@@ -6206,6 +6217,7 @@ function setFirstSendHash(v) { firstSendHash = v }
       pvClear(container)
     }
     container.__pvLabel = label
+    container.__pvHasPreview = hasPreview
     // 预览 iframe 挂在 .preview-body 里（该层由下面的 shell 建立，软重入时原样保留）
     if (!container.querySelector('.preview-body')) {
       container.innerHTML =
@@ -6213,6 +6225,9 @@ function setFirstSendHash(v) { firstSendHash = v }
         '<div class="preview-body"><div class="preview-loading">正在加载…</div></div>' +
         '</div>'
     }
+    // 预览文件变化自刷新（previewChanged 的容器反查）：shell 建好后回指宿主容器。
+    const shellBody = container.querySelector('.preview-body')
+    if (shellBody) shellBody.__pvHost = container
     // 无后端、无 .claude/preview 静态页 = 该项目没有可视预览：空态占位（宿主不再内置默认页）。
     const mountEmpty = () => {
       if (!container.isConnected) return
@@ -6222,6 +6237,8 @@ function setFirstSendHash(v) { firstSendHash = v }
       pvClear(container) // 池内旧帧一并作废（空态下没有卡可切，留着只会切到已离场的元素）
       container.innerHTML =
         '<div class="preview-shell"><div class="preview-body"><div class="preview-empty">该项目暂无预览</div></div></div>'
+      const emptyBody = container.querySelector('.preview-body')
+      if (emptyBody) emptyBody.__pvHost = container
       state.previewMounted = label
     }
     const mount = (src, name, already) => {
@@ -6340,6 +6357,82 @@ function setFirstSendHash(v) { firstSendHash = v }
           .catch(mountEmpty)
       })
   }
+
+  // ---------- 预览卡文件变化自刷新（网关 preview-changed）----------
+  // 不变量：改 <项目>/.claude/preview 下文件后，在场的预览帧在去抖窗口内看到新内容，
+  // 不再需要手动刷新整个页面。区分两级：
+  //   meta=false + card 命中 = 卡内文件（html/css/js）变化 → 只重载该卡 iframe，
+  //     池内其他卡状态（页码/滚动）原样保留；
+  //   meta=true（card.json / preview.json / 顶层文件 / 新增删除）= 卡表结构可能变 →
+  //     重拉卡表、按新表重挂帧（新增卡、entry 改动），再让在场帧拿到新内容。
+  function previewHosts(label) {
+    const out = []
+    for (const body of document.querySelectorAll('.preview-body')) {
+      const host = body.__pvHost
+      if (host && host.isConnected && host.__pvLabel === label) out.push(host)
+    }
+    return out
+  }
+  // 重载单帧：新文档 = 旧文档申报/总线状态整份作废（与 mountPreview 换 src 同一套复位）。
+  // 同 URL 重设 src 不保证重新请求，加 _r 时间戳绕开 304 缓存。
+  function reloadPreviewFrame(container, key) {
+    const body = container.querySelector('.preview-body')
+    const rec = body ? pvPool(body).get(key) : null
+    if (!rec || !rec.el) return
+    const el = rec.el
+    clearRailExt()
+    el.__railItems = []
+    el.__wkTools = []
+    el.__pvLoaded = false
+    const src = (el.getAttribute('src') || '').replace(/([?&])_r=[^&]*/g, '')
+    if (!src) return
+    el.setAttribute('src', src + (src.includes('?') ? '&' : '?') + '_r=' + Date.now())
+    cardBus.registerFrame({ kind: 'preview', label: el.dataset.label || '', el })
+  }
+  // 应用卡 / 项目外部卡（preview.json cards[] → views/cards/ext/ext-card.js 的 .ext-frame）：
+  // 与目录卡帧不同，它们不在 .preview-body 池里，归属靠 data-ext-label/data-ext-card。重载同一套
+  // 「去旧 _r → 加新时间戳」绕缓存；registerFrame 按 el 复用 key 并清卡态（旧文档申报作废）。
+  function reloadExtFrames(label, card) {
+    for (const el of document.querySelectorAll('.ext-frame')) {
+      if (el.dataset.extLabel !== label) continue
+      if (card && el.dataset.extCard !== card) continue
+      const src = (el.getAttribute('src') || '').replace(/([?&])_r=[^&]*/g, '')
+      if (!src) continue
+      el.setAttribute('src', src + (src.includes('?') ? '&' : '?') + '_r=' + Date.now())
+      cardBus.registerFrame({ kind: 'ext', label, el, id: el.dataset.extCard || '' })
+    }
+  }
+  function handlePreviewChange(ev) {
+    const label = ev && ev.label
+    if (!label) return
+    const card = typeof ev.card === 'string' ? ev.card : ''
+    const hosts = previewHosts(label)
+    if (ev.meta !== true) {
+      for (const c of hosts) {
+        const body = c.querySelector('.preview-body')
+        const pool = body && pvPool(body)
+        if (!pool) continue
+        for (const k of card ? [card] : [...pool.keys()]) if (pool.has(k)) reloadPreviewFrame(c, k)
+      }
+      reloadExtFrames(label, card)
+      return
+    }
+    syncExtCards(label).then(() => {
+      for (const c of previewHosts(label)) {
+        const active = activePreviewFrame(c)
+        if (active) reloadPreviewFrame(c, active.dataset.card || '') // 内容同拍变了（原子保存）
+        const keep = previewCardNormId(label, active ? active.dataset.card || '' : '')
+        mountPreview(c, label, c.__pvHasPreview !== false, keep)
+      }
+      reloadExtFrames(label, '')
+      // 工作区根的 preview.json 同时是应用目录真源：声明变化要重拉应用清单（侧栏 app: tab）
+      if (isGlobalLabel(label)) syncGlobalPlugins()
+      // 宿主侧（work 右栏 tab 条）重渲；@ 元素缓存随卡表/声明一并作废。
+      try { window.dispatchEvent(new CustomEvent('floria-preview-changed', { detail: { label } })) } catch { /* 忽略 */ }
+      try { window.dispatchEvent(new CustomEvent('floria-cards-changed', { detail: { label } })) } catch { /* 忽略 */ }
+    })
+  }
+  setPreviewChangedHook(handlePreviewChange)
 
   // ---------- 预览页注册的侧栏快捷按钮 · 状态与清点（2026-10-05 自 sidebar/rail-ext.js 迁入）----------
   // 快捷按钮集（floria-rail-register 申报）与外部卡申报同属「当前预览文档」域，故其清点与 EXT 清点
@@ -7527,6 +7620,17 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 建帧 / 池内切显隐都是异步回程，激活帧落地后由 setPreviewActiveHook 统一收尾
     // （见下方 hook：恢复帧工具、侧栏按钮、补发交接数据）。
     mountPreview(el, label, hasPreviewOf(label), cardId)
+  }
+
+  // 预览卡文件变化（网关监听 .claude/preview → SSE → feature/preview-frame 重拉卡表后广播）：
+  // 卡表/卡目录变化后重渲 tab 条并归一激活卡。帧本身的重新挂载归 preview-frame 唯一实现，
+  // 本处只管宿主 UI（不让 preview-frame 反向 import sidebar）。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('floria-preview-changed', (e) => {
+      const label = e && e.detail && e.detail.label
+      if (!label || state.workProj !== label || !state.wkPreview) return
+      applyPvTab()
+    })
   }
 
   // 顶栏 tab 条（唯一渲染口）：[聊天胶囊 × N] [文件 pill × N]（2026-10-12 文件 pill 起多枚并存）。

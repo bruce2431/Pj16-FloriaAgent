@@ -471,3 +471,14 @@ work 文件树 / 顶栏文件 pill 行菜单「下载」的唯一取件口。与
 - **不变量**：`breakdown` 七键之和恒等于 `fixed + 消息估算`，其中 `fixed` 被钳在 ≥0——估算超过 provider 精确值时（CJK/代码偏贵），超出部分仍只落在消息分类，不做负值回填。
 
 前端消费见 web-ui.md §74。
+
+## 23. 预览目录变化自动刷新（SSE `preview-changed`）
+
+`<项目>/.claude/preview/`（含全局根）任意文件变化 → 网关去抖 250ms 后群发 SSE，前端据此自更新预览帧，不再需要手动刷新整页。
+
+- **事件体**：`{type:'preview-changed', label, card, meta}`。
+  - `card` = 变化文件相对预览根的首段目录名（= 预览卡 id，即卡内 html/css/js 改动）；首段不是合法卡 id（预览根散文件）时为空。
+  - `meta` = 卡表结构可能变化：`card.json`、`preview.json`、预览根顶层文件，或 `rename` 事件（新建/删除卡目录、编辑器原子保存）。`meta:true` 时 `card` 恒为 `''`。
+- **监听范围**：`ensureSseWatches` 每次调用（SSE 建连、`GET /gateway/sessions` 列表、项目改名）按 `findProjects` 增量补建预览目录 watch（优先 `recursive:true` 覆盖卡目录内任意深度，平台不支持时退化为预览根单层）；项目消失 / 预览目录移除即摘除，`stopSseWatches` 一并关闭并清去抖定时器。
+- **活性判据**：无 SSE 客户端时不建 watch、不发事件（与 `sseWatches` 同一条）。
+- **前端消费**：`card` 命中且 `meta:false` → 只重载该卡 iframe（目录卡 `.preview-frame` 与应用卡 `.ext-frame` 两类，URL 追加 `_r` 时间戳绕 304）；`meta:true` → 重拉 `/gateway/preview-cards`，按新卡表重挂目录卡帧、重载该项目全部应用卡帧，工作区根另重拉应用目录，并广播 `floria-preview-changed`（work 右栏 tab 条）与 `floria-cards-changed`（@ 元素缓存）。实现见 [web-ui.md](web-ui.md) §75。

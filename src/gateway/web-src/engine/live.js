@@ -26,6 +26,9 @@ import { toast } from '../core/util.js'
   let liveUiPort = {}    // 渲染/暂态/导航出口（renderTransient/renderSettle/renderRecent/renderTaskDock/…）
   let liveStagePort = {} // 两层消息流 stage（stage 对象 + stageStart）
   let liveStatePort = {} // 可变状态读写口（takeover/firstSendHash/pendingUserMsgs）
+  // 预览卡文件变化（网关 preview-changed 事件）→ feature 层（preview-frame.js）自行注册处理：
+  // engine 不 import feature，处理函数由 feature 模块加载时经 setPreviewChangedHook 注入。
+  let onPreviewChanged = () => {}
 
   // ---------- 实时同步（阶段1：SSE 监听 jsonl 变化，自动刷新会话/列表）----------
   // 兼容：刷新只替换 messagesEl 内层，折叠开合（含网关实时折叠）与滚动位置尽量保留；
@@ -132,6 +135,11 @@ import { toast } from '../core/util.js'
     let ev
     try { ev = JSON.parse(e.data) } catch { return }
     if (ev.type === 'hello') { refreshList(); refreshSession(); checkAssetFresh() }
+    else if (ev.type === 'preview-changed') {
+      // 预览卡文件变化（网关 .claude/preview 监听 → 250ms 去抖）：交给 feature 层决定是重载
+      // 对应 iframe（card 命中、meta=false）还是重拉卡表并重挂（card.json / 新增删除卡）。
+      if (typeof ev.label === 'string') onPreviewChanged(ev)
+    }
     else if (ev.type === 'activity') {
         // 状态点翻转即时刷新（网关 /gateway/activity 群发，2026-08-29）。
         // 2026-09-07 断连感知：state=null（CLI /clients 断开 → 网关 detach 群发）= 会话进程
@@ -859,6 +867,8 @@ import { toast } from '../core/util.js'
 // —— 跨模块写入口（切割脚本生成）——
 export function setLiveModelHook(fn) { onSessionModel = fn }
 export function setLiveEffortHook(fn) { onSessionEffort = fn }
+// 预览卡文件变化处理器注入（feature/preview-frame.js 模块加载时调用；engine 不 import feature）
+export function setPreviewChangedHook(fn) { onPreviewChanged = typeof fn === 'function' ? fn : () => {} }
 // 分层治理 4C（2026-10-10）：feature 端口注入（app 启动序列调用一次，须先于 initLive）。
 export function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort = p.stage; liveStatePort = p.state }
 

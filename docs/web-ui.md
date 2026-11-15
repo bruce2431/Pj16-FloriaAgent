@@ -516,6 +516,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
   4. **非法声明丢弃不兜底**——字段不合格 / 未知 `host` / 越界 `path` → 整条丢；两条来源共用 `engine/ext-decl.js` `normExtCards` 的**同一份过滤器**（postMessage 不过网关，必须自己再校一遍，但不给两处各写一套）。
   5. **申报缓存与刷新恢复（2026-10-02）**——`EXT` 只活在内存里（刷新即空），故网关权威快照（`replace=true`，含 `cards` 与 `quoteActions` 同存）按 label 落 `UI_KEY` 的 `extDecls` 段（`persistExtDecls`，写口仍是 `patchUI`）；postMessage 增量注册**不落盘**（那是预览页的实时补充，混进快照会让缓存随文档生命周期漂移）。回填口 `hydrateExtCards(label)` / `hydrateExtCardId(id)`（`ext:<label>:<cardId>` → label = 最后一个冒号之前那段）复用**同一注册口** `registerExtCards(label, cards, true)`（不另写第二套建表逻辑），三处接线：启动 `initWork()`（`loadWork` 之后）、切项目 `selectProject()`（换槽即换卡）、路由直进 `route()` 的 `mgr` 分支（按 id 里的 label 回填，先于 `renderMgr`）。网络清单仍为权威：`syncWorkExtCards()`（预览栏开着时由 `mountPreview`→`syncExtCards` 拉，关着时在 `ensureWork` 补拉链里拉）拉新整份覆盖——缓存只是「上次所见」的快照，不猜不兜底。
 - **样式**：`.ext-shell`（`relative` + 纵向 flex + `height:100%`）> `.ext-frame`（`flex:1; width:100%; border:0`）。与 `.preview-shell`/`.preview-frame` **同构但不复用类名**——宿主侧所有「当前预览帧」的查询（rail-ext 的 `.preview-frame`、`openProjectPreview` 两级链）都按 `.preview-frame` 定位，外部卡若同用会顶替真预览帧。全高卡特例判据须并入 `.ext-shell`（与 `:has(.preview-shell|.neu-graph)` 同一块，见 §41 卡内滚动层）。
+- **整页卡版式契约（外部/应用卡）**：这两类卡是独立 iframe 文档，**拿不到宿主的任何版式**（CSS 变量不跨文档）——`.view-card:has(.ext-shell) > .view-scroll` 被压成 `padding:0; scrollbar-gutter:auto; overflow:hidden`，`.ext-frame` 只提供 `var(--chat-bg)` 底。卡要与管理页逐像素对齐须**自复刻**：内容列 920px（详情 820px）居中、内边距 24/20/8 + 右侧 8px 滑条槽折进 `body` 右内边距（不预留 `scrollbar-gutter`）、字体栈同 `--text-font`、主题读同源 `localStorage['floria-theme']` 设 `html[data-theme]`（并监听 `storage` 跟随宿主切换）。完整清单与模板见 skill `preview-card`。
 - **探针锚点**：`probes/probe-web-ext-cards.ts`（结构 + 行为真值表；网关侧解析从 `localGateway.ts` 提取、经 `Bun.Transpiler` 剥类型后直接跑，不另起网关）；**注册域隔离**另见 `probes/probe-registry-scope.ts`（D0 唯一判据 `isCardAllowedInContext` 声明并导出 / D1 三表域判据与 tab 取集同判据 / D2 语境归一 / D3 route mgr 分支按入站快照 `ctx0` 判 + 域外退首页 / D4 `cardOf` 域内才解析 + 槽内卡例外 / D5 `openCard` 域外返回 null / D6 `.mgr-tab` 委托域门 / D7 硬性「卡片注册与应用目录同步不直接调 `renderMgrTabs`，只经 `setTabRefresh` 注入回调」/ D8 域变更点显式重取 / D9 无 `setMgrScopeProvider` / 产物核对）。**会话行行为协议**另见 `probes/probe-session-row-protocol.ts`（A1 无 `bindSessClicks` / A2 `bindSessionRows` = 点击→`activateSession` + 扶起 / A3 work 页面态按 `source` 门控 / A4 `work-mount` 无 `.sess-item` 委托 / A5 `renderWorkBody` 接线只在 `innerHTML` 重写分支内 / A6 chat 三处渲染同调 / A7 滚动拍回按行容器挂 / A8 `reliftAfterRebuild` 两侧共用 / 产物核对）。
 
 ## 43. 侧栏 chat / work 双模式（Prism 式工作区）
@@ -800,7 +801,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 - **硬编码面全面令牌化**（浅值不减）：输入栏白卡 / 各弹层（mention/proj/cmd/model/popup/search/rename/neu/row-menu）/ toast（反色陷阱 → 用 `--bg`/`--text` 语义对）/ `.sess-item.lift`/`.wk-row.lift` / `.preview-overlay` / 用户气泡与 system 底 `/ 代码块 / 开关滑块 / 各类语义底色（warn `--warn-*` / danger `--danger-*` / ok `--ok-*` / accent-soft `--accent-*`）/ 坑位（`--knob`/`--inset-bg`/`--inset-shadow`）——逐块替换为语义令牌。**运行时注入的审批卡 / QA 提问卡**（`web-src/engine/gateway.js` 内 `<style>` 拼串）同样改 `var(--...)`（注入在 `#app` 内，令牌可继承）；白字压蓝面（`.appr-allow` / `.qa-opt.sel` 等）保持不变。
 - **编辑器语法高亮**（`styles.css`）：`--hl-*` 令牌在 `:root` 持浅值、`html[data-theme="dark"]` 覆盖暗值（kw/str/num/h/b/i/code/link/type/fn/attr/op…）——CM6 `HighlightStyle` 颜色直接引用 `var(--hl-*)`，切主题零重建即变色（§54）。暗值取 Obsidian/One Dark 一族低饱和色（kw `#c678dd` / str `#98c379` / num `#d19a66` / h·fn·link `#61afef` / b `#e06c75` / i `#56b6c2` / type `#e5c07b` / op `#abb2bf`），替代原 `#4ade80` 一类高亮色。
 - **神经画布**（2026-10-10 起为工作区根应用卡 `.claude/preview/neurons/index.html`，原 `web-src/views/cards/neurons/neurons-card.js`）：绘图按 `prefers-color-scheme` 返回一组描线/标签色（浅：白环 + 深标签；暗：深环 + 浅标签），重绘时取用。**画布每帧 rAF 重绘，切主题下一帧自动生效，无需事件**。
-- **刻意不改（保持内容原色）**：`#gate-screen` 门态白板（图片定案）、`.preview-frame`/`.ext-frame` 与 `.chart-embed` iframe（外部内容无暗色版，不反色，只外壳/边框改令牌）、彩色调色板 / 状态点 / 危险红。
+- **刻意不改（保持内容原色）**：`#gate-screen` 门态白板（图片定案）、`.preview-frame` 与 `.chart-embed` iframe（外部内容无暗色版，不反色，只外壳/边框改令牌）、彩色调色板 / 状态点 / 危险红。**`.ext-frame` 例外**：应用/外置卡是 Floria 自产、随主题的卡（卡内自设 `html[data-theme]`），iframe 元素底改 `var(--chat-bg)` 跟随卡体——否则卡内透明区 / 滑条预留槽在暗色下透出白底（见 §42 整页卡版式契约）。
 - **cache-bust**：`web/sw.js` `CACHE` 与 `web/index.html` 两处 `?v=` 同值（本期 v461）。
 
 ## 57. 数学公式渲染（KaTeX，仅 web；CLI 不渲染）（2026-10-06）
@@ -1107,7 +1108,7 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用途：预览卡在 iframe 内嵌真实前端做布局缩略图（`.claude/preview/floria-map/`），也便于无后端演示/截图。
 
 - **加载序**：`index.html` 在 `/app.js` **之前**引入 `/demo-data.js`、`/demo-mode.js`（classic script，同步可用）。两者不进 `sw.js` CORE（演示帧联网即取）。
-- **`demo-data.js`**：`window.FLORIA_DEMO_DATA` = `sessions`（`/gateway/sessions` 形状：workspace/groups/sessions）/ `session`（单会话：messages/context/model/effort）/ `models` / `project`（files 树）/ `previewCards`（`cards`/`previewCards`/`hasIndex`/`indexEnabled`）/ `plugins`。项目/会话一律用通用 label `WorkFlie`（`dir` 同名、非真实路径），`previewCards` 置空且 `hasPreview:false` / `hasIndex:false` —— 演示帧不指向任何真实目录、不渲染任何预览页，避免泄露宿主项目信息。
+- **`demo-data.js`**：`window.FLORIA_DEMO_DATA` = `sessions`（`/gateway/sessions` 形状：workspace/groups/sessions）/ `session`（单会话：messages/context/model/effort）/ `models` / `project`（files 树）/ `previewCards`（`cards`/`previewCards`/`hasIndex`/`indexEnabled`）/ `plugins`。项目组用通用 label `WorkFlie`（`dir` 同名、非真实路径）；演示会话是**全局根会话**（`projectScope:'global'`、`projectLabel:''`），chat 侧栏不显示任何项目标签或项目分组。`previewCards` 置空且 `hasPreview:false` / `hasIndex:false` —— 演示帧不指向任何真实目录、不渲染任何预览页，避免泄露宿主项目信息。
 - **`demo-mode.js`**：检测 `demo=1` → 置 `window.__FLORIA_DEMO__ = true` 并装四处垫片：
   1. `fetch`：仅拦 `/gateway/*`，按 `demo-data.js` 路由表回 JSON；未知 `/gateway/*` 回 `{}`；其余请求原样透传（app.js / CSS / webui 资源仍真实加载）。
   2. `EventSource` / `WebSocket`：惰性空实现（不连后端）。
@@ -1129,3 +1130,14 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 - **Top 工具 / Top 附件**：各取前 5，估算带 `~`；工具名经 `esc()` 转义（名字来自转录，属不可信文本），过长省略号。
 - **无数据即隐藏**：无 `context`、`usedTokens` 非法或 `contextWindow ≤ 0` 时圆环 `hidden` 且面板收合。
 - **高度**：面板沿用底栏弹层统一上限 `max-height: min(420px, var(--bar-room, 420px))`（`--bar-room` 口径见底栏子件同源收口），超限自身滚动。
+
+## 75. 预览卡文件变化自动刷新（`preview-changed`）
+
+网关监听 `<项目>/.claude/preview`（含全局根）并发 SSE `preview-changed`（事件契约见 gateway.md §23），前端据此自更新，无需手动刷新整页。
+
+- **接线**：`engine/live.js` 的 `handleSseMessage` 增 `preview-changed` 分支，经 `setPreviewChangedHook` 交给 `feature/preview-frame.js`（engine 不 import feature，处理函数由 feature 模块加载时注入）。`floria-preview-changed` 是宿主 UI 通知事件，由 `sidebar/work/work-preview.js` 监听。
+- **两条载体**：①目录卡帧（`.preview-body` 池里的 `.preview-frame`，`mountPreview` 建）；②应用卡 / 项目外部卡（`preview.json` `cards[]` → `views/cards/ext/ext-card.js` 的 `.ext-frame`，iframe 带 `data-ext-label`/`data-ext-card` 归属标记）。两类都刷新，缺一即「改了 github 卡要手刷整页」。
+- **卡内文件变化**（`meta:false` + `card` 命中）：只重载该卡 iframe。URL 追加 `_r=<时间戳>` 绕 304 缓存（同 URL 重设 `src` 不保证重新请求）；目录卡帧重载前复位该帧的 `__railItems/__wkTools/__pvLoaded`，两类都 `cardBus.registerFrame`（新文档的申报与总线状态整份作废；`registerFrame` 按 el 身份复用 key 并清卡态）。池内其他卡不重载，页码/滚动状态保留。
+- **卡表结构变化**（`meta:true`：`card.json` / `preview.json` / 顶层文件 / 新增删除 / 编辑器原子保存）：先 `syncExtCards(label)` 重拉 `/gateway/preview-cards`，按新卡表重挂目录卡帧（新增卡、`entry` 改动走 `mountPreview`；当前卡被删则归一 default/首张）并重载该项目全部 `.ext-frame`；工作区根 label 另调 `syncGlobalPlugins()` 重拉应用目录（侧栏 `app:` tab 随 `preview.json` 更新）。最后广播 `floria-preview-changed`（work 右栏 `applyPvTab` 重渲 tab 条与归一激活卡）与 `floria-cards-changed`（`inputbar/toolbar/elements.js` 作废 @ 元素缓存）。
+- **容器反查**：`mountPreview` 建 shell 时把宿主容器回指到 `.preview-body.__pvHost`；`previewHosts(label)` 按此找在场容器。宿主侧（主区预览卡 / work 右栏）不各自实现刷新链，帧层唯一实现归 `feature/preview-frame.js`。
+- **不变量**：预览刷新只走网关事件驱动，不做前端轮询；无 SSE 连接时网关不建 watch（不产生空转）。
