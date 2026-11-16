@@ -960,8 +960,10 @@ async function callInner(
 
     const fs = getFsImplementation()
     const stats = await fs.stat(resolvedFilePath)
+    // 仅「PDF 可直送 + 体积超阈值」时才需要抽页（抽页结果只用于日志/后续图路）。
+    // 不支持直送时下面立刻抛错，抽页纯属白跑。
     const shouldExtractPages =
-      !isPDFSupported() || stats.size > PDF_EXTRACT_SIZE_THRESHOLD
+      isPDFSupported() && stats.size > PDF_EXTRACT_SIZE_THRESHOLD
 
     if (shouldExtractPages) {
       const extractResult = await extractPDFPages(resolvedFilePath)
@@ -982,9 +984,8 @@ async function callInner(
 
     if (!isPDFSupported()) {
       throw new Error(
-        'Reading full PDFs is not supported with this model. Use a newer model (Sonnet 3.5 v2 or later), ' +
-          `or use the pages parameter to read specific page ranges (e.g., pages: "1-5", maximum ${PDF_MAX_PAGES_PER_READ} pages per request). ` +
-          'Page extraction requires poppler-utils: install with `brew install poppler` on macOS or `apt-get install poppler-utils` on Debian/Ubuntu.',
+        `Reading PDFs is not supported by the current model/endpoint (${getMainLoopModel()}): its document API does not accept inline base64 PDF blocks. ` +
+          'Convert the PDF to text (e.g. `pdftotext`) or to images first, or switch to a model/endpoint that accepts inline PDF documents.',
       )
     }
 

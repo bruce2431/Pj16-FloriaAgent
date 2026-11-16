@@ -35,6 +35,8 @@
 
 复验锚点 `probes/probe-session-model.ts`（31 断言：`resolveSendMode` 的 model 归属、网关启动模型表/spawn `--model`、main.tsx 启动段 provider 配对、`session_send` 工具链、前端待定模型随 wsession 下发、cache-bust 三处同号）。
 
+**PDF 直读能力闸门（provider 能力声明）**：`ProviderConfig.pdfDocuments?: boolean`（`utils/credentials/types.ts`，手工声明只读），访问器 `getActiveProviderPdfDocuments()`（`pool.ts`，会话绑定同 baseUrl/apiKey）。`isPDFSupported()`（`utils/pdfUtils.ts`）= 模型名不含 `claude-3-haiku` **且** 端点声明 `pdfDocuments: true`；未命中 provider 配置（firstParty/Bedrock/Vertex 等官方链）视为支持。官方 Anthropic 端点接受 base64 document 块，第三方 anthropic 兼容端点（deepseek/kimi/glm 等）只接受 `file`/`text` source、回 400，故须显式声明才开路。不支持时 `FileReadTool.readPDF` 前置报错（提示先转文本/图片或换端点），**不在转录里落 `{type:'document',source:{type:'base64'}}` 块**——被拒的 document 块会持久化进会话，之后每个请求都 400（该会话只能剥离该块才可用）。
+
 ## 生图能力层（provider-neutral，`services/imagegen/`）
 
 生图模型（如 Gemini `*-image`）走 `chat/completions` 时 Google 兼容层**不回传生成图**（有时 400 `Image generation is not yet supported on the chat.completions endpoint`，有时 200 但 `message.content` 为空＝**静默丢图**）。故生图请求绕开协议适配器，改由**与厂商无关的能力层**直接对接各厂商原生接口。**Gemini 是第一个实现，不是架构本身**——新增一家（OpenAI/GLM/Grok…）= 实现 `ImageGenerationAdapter` + `registerImageAdapter()`，公共层与展示链零改动。

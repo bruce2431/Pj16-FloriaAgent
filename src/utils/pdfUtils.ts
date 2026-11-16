@@ -1,3 +1,4 @@
+import { getActiveProviderPdfDocuments } from './credentials/pool.js'
 import { getMainLoopModel } from './model/model.js'
 
 // Document extensions that are handled specially
@@ -50,14 +51,19 @@ export function parsePDFPageRange(
 }
 
 /**
- * Check if PDF reading is supported with the current model.
- * PDF document blocks work on all providers (1P, Vertex, Bedrock, Foundry).
- * Haiku 3 is the only remaining model that predates PDF support; users on
- * it fall back to the page-extraction path (poppler-utils). Substring match
- * covers all provider ID formats (Bedrock prefixes, Vertex @-dates).
+ * Check if inline PDF document blocks are supported with the current model/endpoint.
+ * Two independent gates:
+ *  - model: Haiku 3 predates PDF support (substring match covers Bedrock/Vertex ID forms);
+ *  - endpoint: the bound provider must accept base64 document sources. Official Anthropic
+ *    (1P / Vertex / Bedrock / Foundry) does; third-party anthropic-compatible endpoints
+ *    (DeepSeek, Kimi, GLM…) only accept `file`/`text` document sources and 400 on base64,
+ *    so they stay off unless the provider declares `pdfDocuments: true`.
+ * When false, FileReadTool refuses up front — a rejected document block would otherwise be
+ * persisted into the transcript and poison every later request in the session.
  */
 export function isPDFSupported(): boolean {
-  return !getMainLoopModel().toLowerCase().includes('claude-3-haiku')
+  if (getMainLoopModel().toLowerCase().includes('claude-3-haiku')) return false
+  return getActiveProviderPdfDocuments()
 }
 
 /**

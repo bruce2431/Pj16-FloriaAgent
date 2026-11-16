@@ -44,6 +44,16 @@ export interface ProviderConfig {
    * restart.
    */
   protocol?: string
+  /**
+   * Endpoint accepts Anthropic base64 PDF document blocks (`source.type:'base64'`).
+   * Declared by hand, read-only at runtime (same convention as `capabilities`).
+   * ABSENT = NOT supported for pool providers: third-party Anthropic-compatible
+   * endpoints (e.g. DeepSeek) only accept `file` / `text` document sources and
+   * reject base64 with a 400. When false, FileReadTool refuses PDF reads up front
+   * instead of injecting a document block that poisons the transcript. Official
+   * Anthropic (no pool provider bound) is always supported.
+   */
+  pdfDocuments?: boolean
   /** Pool of API keys for this provider */
   keys: ApiKeyEntry[]
   /** Index into keys[] of the currently active key */

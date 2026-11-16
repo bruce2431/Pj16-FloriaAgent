@@ -828,7 +828,12 @@ function setConnUp(v) { connUp = v }
     // 非 file-cache 链接仍走普通外链。
     s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => {
       if (MD_ATT_CODE.test(u)) {
-        return `<span class="mention-chip m-path m-att" title="${u}"><span class="mc-ic">${fileIcon(u)}</span><span class="mc-t">${t}</span></span>`
+        // 链接文字可能是行内代码占位符（fileLinkMarkdown 形态 `` `名` `` 先被抽走）——经 codes 还原，
+        // 展示名统一走 cm6 的 attLinkLabel（去反引号 / 空则回落路径末段），与底栏、编辑卡 chip 同口径。
+        const ph = /^\u0000(\d+)\u0000$/.exec(t)
+        const raw = ph ? (codes[+ph[1]] || '') : t
+        const label = window.FloriaCM6 && window.FloriaCM6.attLinkLabel ? window.FloriaCM6.attLinkLabel(raw, u) : raw
+        return `<span class="mention-chip m-path m-att" title="${u}"><span class="mc-ic">${fileIcon(u)}</span><span class="mc-t">${label}</span></span>`
       }
       // 文件引用 `[`名`](路径:行号)`：解析与展示文本口径归 @floria/cm6（parseFileLink 单真源），
       // 这里只落 chip DOM（与 @ 文件 chip 同族 + 行号跳转凭据），点击由 feature/mention-nav 派发。

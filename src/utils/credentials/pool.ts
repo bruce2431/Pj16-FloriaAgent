@@ -247,6 +247,19 @@ export function getActiveProviderProtocol(): string {
 }
 
 /**
+ * Whether this session's endpoint accepts Anthropic base64 PDF document blocks.
+ * No pool provider bound (official Anthropic direct) = supported. Pool providers
+ * must declare `pdfDocuments: true` (declaration convention, read-only at runtime);
+ * absent = unsupported (third-party anthropic-compatible endpoints only accept
+ * file/text document sources). Session-bound like protocol/baseUrl/apiKey.
+ */
+export function getActiveProviderPdfDocuments(): boolean {
+  const cfg = getActiveProviderConfig()
+  if (!cfg) return true
+  return cfg.pdfDocuments === true
+}
+
+/**
  * Per-model image-generation capabilities of this session's bound provider
  * (2026-10-11). Session-bound like protocol/baseUrl/apiKey (same invariant) —
  * the 生图能力层 dispatch is credential-adjacent and must not drift across
