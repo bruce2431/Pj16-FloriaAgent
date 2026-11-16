@@ -15166,7 +15166,8 @@ function wkMerge3(base, local, remote) {
     // （images.js uploadedMentionItems），只列行不渲缩略图（2026-10-22 定案：缩略图只在底栏胶囊）。
     items.push(...uploadedMentionItems().map((it) => ({ ...it, desc: it.attKind === 'img' ? '插入图片引用' : '插入文件引用', grp: '上传' })))
     // 首屏四个入口是导航不是数据：底栏有文字也不过滤（否则「有文字点 +」会只剩上传两行，像坏了）
-    for (const v of cmdViews()) items.push({ kind: 'entry', view: v.view, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
+    // src 必须随行带到点击处（cmdSelect 写入 cmd.elementSrc）：否则元素入口全退化为「全部元素」。
+    for (const v of cmdViews()) items.push({ kind: 'entry', view: v.view, src: v.src, name: v.name, desc: v.desc, icon: v.icon, grp: '浏览' })
     return items
   }
   function currentChoice() {
