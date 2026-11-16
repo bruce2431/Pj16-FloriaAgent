@@ -1986,6 +1986,15 @@ function relocateToolReferenceSiblings(
   return result
 }
 
+/**
+ * Provider rejection of inline base64 document sources (third-party
+ * anthropic-compatible endpoints). Matched against the persisted synthetic
+ * error text, which may be the raw SDK JSON envelope — hence a substring
+ * regex over a literal message constant.
+ */
+const DOCUMENT_SOURCE_REJECTED_RE =
+  /only\s+`?file`?\s+and\s+`?text`?\s+document sources are supported/i
+
 export function normalizeMessagesForAPI(
   messages: Message[],
   tools: Tools = [],
@@ -2026,7 +2035,17 @@ export function normalizeMessagesForAPI(
     if (!errorText) {
       continue
     }
-    const blockTypesToStrip = errorToBlockTypes[errorText]
+    // Pattern-matched recovery for endpoint capability rejections (2026-11-16):
+    // third-party anthropic-compatible endpoints only accept `file`/`text`
+    // document sources. The persisted error text is the raw provider JSON
+    // (not one of the constants above), so the exact-match map can't catch it
+    // — without this branch the base64 document block is re-sent verbatim on
+    // every request (live or resumed) and the session 400s forever.
+    const blockTypesToStrip =
+      errorToBlockTypes[errorText] ??
+      (DOCUMENT_SOURCE_REJECTED_RE.test(errorText)
+        ? new Set(['document'])
+        : undefined)
     if (!blockTypesToStrip) {
       continue
     }

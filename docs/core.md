@@ -35,7 +35,7 @@
 
 复验锚点 `probes/probe-session-model.ts`（31 断言：`resolveSendMode` 的 model 归属、网关启动模型表/spawn `--model`、main.tsx 启动段 provider 配对、`session_send` 工具链、前端待定模型随 wsession 下发、cache-bust 三处同号）。
 
-**PDF 直读能力闸门（provider 能力声明）**：`ProviderConfig.pdfDocuments?: boolean`（`utils/credentials/types.ts`，手工声明只读），访问器 `getActiveProviderPdfDocuments()`（`pool.ts`，会话绑定同 baseUrl/apiKey）。`isPDFSupported()`（`utils/pdfUtils.ts`）= 模型名不含 `claude-3-haiku` **且** 端点声明 `pdfDocuments: true`；未命中 provider 配置（firstParty/Bedrock/Vertex 等官方链）视为支持。官方 Anthropic 端点接受 base64 document 块，第三方 anthropic 兼容端点（deepseek/kimi/glm 等）只接受 `file`/`text` source、回 400，故须显式声明才开路。不支持时 `FileReadTool.readPDF` 前置报错（提示先转文本/图片或换端点），**不在转录里落 `{type:'document',source:{type:'base64'}}` 块**——被拒的 document 块会持久化进会话，之后每个请求都 400（该会话只能剥离该块才可用）。
+**PDF 直读能力闸门（provider 能力声明）**：`ProviderConfig.pdfDocuments?: boolean`（`utils/credentials/types.ts`，手工声明只读），访问器 `getActiveProviderPdfDocuments()`（`pool.ts`，会话绑定同 baseUrl/apiKey）。`isPDFSupported()`（`utils/pdfUtils.ts`）= 模型名不含 `claude-3-haiku` **且** 端点声明 `pdfDocuments: true`；未命中 provider 配置（firstParty/Bedrock/Vertex 等官方链）视为支持。官方 Anthropic 端点接受 base64 document 块，第三方 anthropic 兼容端点（deepseek/kimi/glm 等）只接受 `file`/`text` source、回 400，故须显式声明才开路。不支持时 `FileReadTool.readPDF` 前置报错（提示先转文本/图片或换端点），**不在转录里落 `{type:'document',source:{type:'base64'}}` 块**——被拒的 document 块会持久化进会话，之后每个请求都 400（该会话只能剥离该块才可用）。**已落盘的毒化转录在发送边界自愈**：`normalizeMessagesForAPI`（`utils/messages.ts`）既有的错误→剔除映射（`errorToBlockTypes`，精确文案 → 该块类型）在精确匹配之外追加模式匹配 `only \`file\` and \`text\` document sources are supported` → 从最近一条 isMeta user 消息剔 `document` 块；旧版落盘的原始 SDK JSON 错误文案同样命中，reload/resume 后首个请求即不再重发坏块。
 
 ## 生图能力层（provider-neutral，`services/imagegen/`）
 
