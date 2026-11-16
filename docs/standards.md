@@ -100,12 +100,14 @@
 ---
 name: <英文短横线名，如 json-canvas>
 description: <何时用/怎么用，一句话，供 Skill 工具自动命中>
+repo: https://github.com/<owner>/<repo>
 ---
 # <标题>
 ## 工作流
 1. ...
 ```
 - frontmatter 必填 `name` + `description`；name 用英文短横线。
+- `repo` 填技能来源的上游仓库 URL（从 GitHub 仓库移植/整理而来的技能一律填），显示在插件卡「应用」详情的「上游仓库」行；后端只认 `repo`/`repository` 键，前端只把 `http(s)://` 渲成链接。
 - 复杂脚本/工具全文存插件的 `l3.raw/`，SKILL.md 只写工作流 + 相对路径引用（见 §7）。
 
 ### 4.4 发现与注册（无 manifest 门槛）
@@ -129,10 +131,12 @@ description: <何时用/怎么用，一句话，供 Skill 工具自动命中>
   "version": "1.0.0",
   "description": "一句话说明",
   "author": { "name": "bruce2431" },
-  "homepage": "https://…（可选）"
+  "homepage": "https://…（可选）",
+  "repository": "https://github.com/<owner>/<repo>"
 }
 ```
 - 必填：`name`（英文短横线、无空格）。建议：`version`(semver)、`description`、`author`。
+- `repository`（字符串或 `{ "url": "…" }`）填上游仓库 URL，是插件卡「应用」详情「上游仓库」行的来源；缺省时回落 `homepage`（仅认 `https://github.com/` 形态）。
 - 完整 schema（`PluginManifestSchema`，顶层均为可选 partial）还支持：`hooks` / `commands` / `agents` / `skills` / `outputStyles` / `channels` / `mcpServers`（内联或「相对 JSON 路径 / `.mcpb`」引用）/ `lspServers` / `settings`（合并时只保留白名单键）/ `userConfig`。
 - 运行时未知顶层字段被静默剥掉（容错）；开发期用 `claude plugin validate` 严格校验（typo/非 kebab-case/缺字段会给告警）。
 
