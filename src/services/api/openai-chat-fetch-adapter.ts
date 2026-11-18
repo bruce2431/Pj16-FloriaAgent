@@ -347,7 +347,14 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
 
       let nextIndex = 0
       let textIndex: number | null = null
-      const toolIndexByOai = new Map<number, number>()
+      // Tool-call slots are keyed by the upstream `index` when present, else by
+      // the call id. Gemini's OpenAI-compatible endpoint streams every call
+      // whole (id + name + complete arguments in one chunk) with no `index`;
+      // keying those by a default 0 merged parallel calls into one block,
+      // concatenating their JSON into an unparseable string (the core then
+      // falls back to `{}`, so the tool ran with no arguments).
+      const toolBlockByKey = new Map<string, number>()
+      const toolKeyById = new Map<string, string>()
       let hadToolCalls = false
       let finishReason: string | null = null
       let sawDone = false
@@ -372,7 +379,7 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
       const closeOpenBlocks = () => {
         const indices: number[] = []
         if (textIndex !== null) indices.push(textIndex)
-        for (const idx of toolIndexByOai.values()) indices.push(idx)
+        for (const idx of toolBlockByKey.values()) indices.push(idx)
         indices.sort((a, b) => a - b)
         for (const index of indices) {
           emit('content_block_stop', { type: 'content_block_stop', index })
@@ -439,14 +446,30 @@ function translateChatStreamToAnthropic(upstream: Response, model: string): Resp
                 approxOutput += delta.content.length
               }
 
-              for (const tc of delta?.tool_calls ?? []) {
-                const oaiIndex = tc.index ?? 0
-                let blockIndex = toolIndexByOai.get(oaiIndex)
+              for (const [position, tc] of (delta?.tool_calls ?? []).entries()) {
+                // Same id always continues its own slot (a provider may split
+                // one call across chunks, with or without an index); a chunk
+                // without index or id falls back to its position in the frame.
+                const knownById =
+                  typeof tc.id === 'string' && tc.id
+                    ? toolKeyById.get(tc.id)
+                    : undefined
+                const oaiKey =
+                  knownById ??
+                  (typeof tc.index === 'number'
+                    ? `i:${tc.index}`
+                    : typeof tc.id === 'string' && tc.id
+                      ? `id:${tc.id}`
+                      : `p:${position}`)
+                if (typeof tc.id === 'string' && tc.id) {
+                  toolKeyById.set(tc.id, oaiKey)
+                }
+                let blockIndex = toolBlockByKey.get(oaiKey)
                 if (blockIndex === undefined) {
                   blockIndex = nextIndex++
-                  toolIndexByOai.set(oaiIndex, blockIndex)
+                  toolBlockByKey.set(oaiKey, blockIndex)
                   hadToolCalls = true
-                  const baseId = tc.id || `toolu_${Date.now()}_${oaiIndex}`
+                  const baseId = tc.id || `toolu_${Date.now()}_${blockIndex}`
                   // Gemini ships thought_signature on the same delta as the id
                   // and the function name, so the id can carry it from the
                   // outset — no side store, no deferred block start.

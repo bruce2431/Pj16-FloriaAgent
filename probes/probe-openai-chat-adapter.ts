@@ -238,6 +238,111 @@ async function run() {
     'replay: signed tool_result stays role:tool',
   )
 
+  // ── Test A3: Gemini 整块并行调用（无 index）各自成块 ────────────────
+  // Gemini 的 OpenAI 兼容端把每个 function call 整块吐出、不带 `index`。
+  // 旧实现按 `index ?? 0` 归槽 ⇒ 多个调用的参数被拼进同一块、JSON 非法，
+  // 核心回落成 `{}`，工具以空参数执行（ToolSearch 报 required parameter
+  // `query` is missing 的实际来源）。
+  console.log('Test A3: parallel whole tool calls without an index')
+  const geminiChunks = [
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                id: 'call_a',
+                type: 'function',
+                function: { name: 'ToolSearch', arguments: '{"query":"Read","max_results":5}' },
+                extra_content: { google: { thought_signature: 'SIGA' } },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { id: 'call_b', type: 'function', function: { name: 'Read', arguments: '{"file_path":"a.md"}' } },
+            ],
+          },
+        },
+      ],
+    },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+  ]
+  const fetchGem = createOpenAIChatFetch({
+    baseUrl: 'https://example.test/v1beta/openai',
+    apiKey: 'KEY',
+    innerFetch: makeInner(geminiChunks, null),
+  })
+  const respGem = await fetchGem('https://example.test/v1beta/openai/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gemini-3.8-flash', max_tokens: 50, stream: true, messages: [{ role: 'user', content: 'go' }] }),
+  })
+  const gemEvents = parseSSE(await respGem.text())
+  const gemStarts = gemEvents.filter(e => e.event === 'content_block_start' && e.data.content_block.type === 'tool_use')
+  ok(gemStarts.length === 2, `no-index calls: two tool_use blocks (${gemStarts.length})`)
+  ok(
+    gemStarts[0]?.data.content_block.id.split('__fs')[0] === 'call_a' &&
+      gemStarts[0]?.data.content_block.name === 'ToolSearch',
+    'no-index calls: first block keeps its own id/name',
+  )
+  ok(
+    gemStarts[1]?.data.content_block.id === 'call_b' && gemStarts[1]?.data.content_block.name === 'Read',
+    'no-index calls: second block keeps its own id/name',
+  )
+  const gemArgs = new Map<number, string>()
+  for (const e of gemEvents) {
+    if (e.event !== 'content_block_delta' || e.data.delta.type !== 'input_json_delta') continue
+    gemArgs.set(e.data.index, (gemArgs.get(e.data.index) ?? '') + e.data.delta.partial_json)
+  }
+  const parsedA = JSON.parse(gemArgs.get(gemStarts[0]!.data.index) ?? 'null')
+  const parsedB = JSON.parse(gemArgs.get(gemStarts[1]!.data.index) ?? 'null')
+  ok(parsedA?.query === 'Read' && parsedA?.max_results === 5, 'no-index calls: first call input intact')
+  ok(parsedB?.file_path === 'a.md', 'no-index calls: second call input intact')
+  ok(
+    gemEvents.filter(e => e.event === 'content_block_stop').length === 2,
+    'no-index calls: every block closed',
+  )
+
+  // 同一 id 分片续写（带 id 但不带 index）必须落回同一块
+  const fragChunks = [
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { id: 'call_f', type: 'function', function: { name: 'Read', arguments: '{"file' } },
+            ],
+          },
+        },
+      ],
+    },
+    { choices: [{ delta: { tool_calls: [{ id: 'call_f', function: { arguments: '_path":"b.md"}' } }] } }] },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+  ]
+  const fetchFrag = createOpenAIChatFetch({
+    baseUrl: 'https://example.test/v1beta/openai',
+    apiKey: 'KEY',
+    innerFetch: makeInner(fragChunks, null),
+  })
+  const respFrag = await fetchFrag('https://example.test/v1beta/openai/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gemini-3.8-flash', max_tokens: 50, stream: true, messages: [{ role: 'user', content: 'go' }] }),
+  })
+  const fragEvents = parseSSE(await respFrag.text())
+  const fragStarts = fragEvents.filter(e => e.event === 'content_block_start' && e.data.content_block.type === 'tool_use')
+  const fragJson = fragEvents
+    .filter(e => e.event === 'content_block_delta' && e.data.delta.type === 'input_json_delta')
+    .map(e => e.data.delta.partial_json)
+    .join('')
+  ok(fragStarts.length === 1, `id fragment: one block (${fragStarts.length})`)
+  ok(JSON.parse(fragJson).file_path === 'b.md', 'id fragment: arguments joined')
+
   // ── Test B: 非流式 ────────────────────────────────────────────────
   console.log('Test B: non-streaming')
   const fetchB = createOpenAIChatFetch({
