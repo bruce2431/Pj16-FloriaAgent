@@ -3714,13 +3714,17 @@ function ensureSseWatches(root: string): void {
 // meta 处理：整项目重拉卡表，不猜归属。
 function notePreviewChange(label: string, eventType: string, filename: string | Buffer | null): void {
   if (sseClients.size === 0) return
+  const f = (typeof filename === 'string' ? filename : filename ? filename.toString() : '').replace(/\\/g, '/')
+  const segs = f.split('/').filter(Boolean)
+  // 噪声剔除：后端日志（backend.log 等）随每次请求追加、卡内 backend/ 实现目录（运行时/pyc 缓存在其下）
+  // 与页面无关，照旧当 meta 会让前端反复重挂卡帧（PDF 跳回首页、日志卡重读）。其余文件照常判归属，
+  // 保留传统静态预览（根目录 index.html + 样式/脚本）的自动刷新。
+  if (/\.log$/i.test(f) || /\.pyc$/i.test(f) || segs.some((s) => s === 'backend' || s === '__pycache__' || s.startsWith('.'))) return
   let entry = previewDebounce.get(label)
   if (!entry) {
     entry = { cards: new Set(), meta: false, timer: null }
     previewDebounce.set(label, entry)
   }
-  const f = (typeof filename === 'string' ? filename : filename ? filename.toString() : '').replace(/\\/g, '/')
-  const segs = f.split('/').filter(Boolean)
   const card = segs.length > 1 && /^[a-zA-Z0-9_-]{1,32}$/.test(segs[0]) ? segs[0] : ''
   if (!card || segs[segs.length - 1] === 'card.json' || eventType === 'rename') entry.meta = true
   else entry.cards.add(card)

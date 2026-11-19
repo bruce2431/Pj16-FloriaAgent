@@ -467,6 +467,16 @@ import { cmtRangesFor } from '../../feature/comment/comment-data.js'
   // 顶栏文件 pill 的多枚开放集由 applyPanes 兜底并入（`wkEnsureFileTab(state.workFile)`），故此处不必另加。
   async function openWorkFile(p) {
     if (!p) return
+    // 目标就是已打开的那篇：零操作（不重读盘 = 编辑区不滚回顶部，不重建文档 = 未保存编辑不丢），
+    // 也不再广播 file-open（预览卡会按同一路径再走一遍打开链）。仅当人不在文件页时切回文件页。
+    if (p === state.workFile && wkEdFile === p && wkEdProj === state.workProj) {
+      if (state.wkMainTab !== 'file') {
+        state.wkMainTab = 'file'
+        applyPanes()
+        renderWorkBody()
+      }
+      return
+    }
     if (p !== state.workFile) {
       // 切文件前先记住**旧文件**的滚动位置（键取自此刻仍有效的 state.workFile），再 flush 旧文件编辑
       wkEdCaptureScroll()

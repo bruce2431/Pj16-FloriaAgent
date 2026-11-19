@@ -1,5 +1,5 @@
 import { isTempProjLabel } from '../../core/util.js'
-import { activePreviewFrame, enabledPreviewCardsFor, setPreviewActiveHook, setRailExtItems, takePendingCardPayload, warmProjectBackend } from '../../feature/preview-frame.js'
+import { activePreviewFrame, enabledPreviewCardsFor, prefetchPreviewCards, setPreviewActiveHook, setRailExtItems, takePendingCardPayload, warmProjectBackend } from '../../feature/preview-frame.js'
 import { renderRailExt } from '../rail-ext.js'
 // 右栏预览与工具页态：预览帧挂载 renderWorkPreview / 页态唯一写口 setPvPane（setPvTab 与侧栏 api setPane('workspace') 是它的入口）/ 顶栏「工具栏」胶囊（#wk-tb-tool）+ tab 条渲染。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
 /* @module sidebar/work/work-preview.js */
@@ -118,6 +118,9 @@ import { renderRailExt } from '../rail-ext.js'
     const next = previewCardNormId(state.workProj, id)
     if (!next) return
     const same = next === state.wkPvCard && !state.wkPvTab && state.wkPreview
+    // 目标卡已经亮着且没有新交接数据：零操作。重复点同一枚卡 tab 不得再走一遍落地链
+    // （applyPanes / syncPvContent / 重挂校验），否则每点一次都可能触发一次帧重载与跳页。
+    if (same && payload === undefined) return
     if (!same && payload !== undefined) setPendingCardPayload(state.workProj, next, payload)
     state.wkPreview = true
     state.wkPvTab = ''
@@ -224,14 +227,15 @@ import { renderRailExt } from '../rail-ext.js'
     state.wkPvCard = cardId
     const f = wkFrame()
     if (f && f.dataset.label === label && (f.dataset.card || '') === cardId) {
-      // 同项目同卡已亮着：零操作（不重载 = 零导航扰动）。
+      // 同项目同卡已亮着：零操作（不重载 = 零导航扰动）。只补一次预热——其余卡若还没进池就拉起来。
+      prefetchPreviewCards(el, label, cardId)
       return
     }
     clearWkFrameTools() // 帧换文档：上一份预览页申报的工具 tab 失效（不变量同 rail-ext）
     wkFrameSentId = null
     // 建帧 / 池内切显隐都是异步回程，激活帧落地后由 setPreviewActiveHook 统一收尾
-    // （见下方 hook：恢复帧工具、侧栏按钮、补发交接数据）。
-    mountPreview(el, label, hasPreviewOf(label), cardId)
+    // （见下方 hook：恢复帧工具、侧栏按钮、补发交接数据）。prefetch = 同一时刻把其余卡也建进帧池。
+    mountPreview(el, label, hasPreviewOf(label), cardId, { prefetch: true })
   }
 
   // 预览卡文件变化（网关监听 .claude/preview → SSE → feature/preview-frame 重拉卡表后广播）：

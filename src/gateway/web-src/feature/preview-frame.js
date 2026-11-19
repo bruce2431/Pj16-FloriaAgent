@@ -250,7 +250,9 @@ import { navigate } from '../chat/route.js'
   // iframe 在场（data-label 锚定）= 软重入——不重写 shell，三级链照跑但 mount 按 iframe 现有 src 校正
   // （同 src 零操作 = 零导航扰动；异 src 只换 src 纠正，覆盖 backend 就绪升级/default 换真源）；
   // 异 label 或 iframe 不在场 = 硬挂载。
-  function mountPreview(container, label, hasPreview, cardId) {
+  // opts.prefetch = 后台预热（2026-11-19）：把项目里其余已启用卡一并建进帧池但不显示，
+  // 用户切过去时内容已在内存里（PDF 不用重新载入、日志卡已读完），不再出现启动缓冲/「正在读取」。
+  function mountPreview(container, label, hasPreview, cardId, opts) {
     if (!container) return
     // 换项目 = 换源：上一份的帧留不得（软重入 / 卡池只对同 label 成立）
     const prevLabel = container.__pvLabel || ''
@@ -262,7 +264,7 @@ import { navigate } from '../chat/route.js'
       container.__pvWaitLabel = label
       ensurePreviewDecls(label, hard).then(() => {
         if (container.__pvWaitLabel === label) container.__pvWaitLabel = ''
-        if (container.isConnected) mountPreview(container, label, hasPreview, cardId)
+        if (container.isConnected) mountPreview(container, label, hasPreview, cardId, opts)
       })
       return
     }
@@ -270,7 +272,6 @@ import { navigate } from '../chat/route.js'
     // 卡选择只在**已启用**卡里做：停用卡不挂载（点它的 tab 也已在渲染层消失）。
     const list = enabledPreviewCardsFor(label)
     const card = list.length ? (list.find((c) => c.id === cardId) || list.find((c) => c.default) || list[0]) : null
-    const cardActual = card ? card.id : ''
     if (hard && prevLabel) {
       // 换项目 = 上一项目的整池帧彻底拆除：逐帧当场注销（不等 isConnected 失格）
       pvClear(container)
@@ -300,12 +301,12 @@ import { navigate } from '../chat/route.js'
       if (emptyBody) emptyBody.__pvHost = container
       state.previewMounted = label
     }
-    const mount = (src, name, already) => {
+    const mount = (src, name, already, forCardId, show) => {
       // 异步回程守卫：三级链是异步的，回来时容器可能已离场（槽位换卡 / work 关掉预览栏）
       if (!container.isConnected) return
       const body = container.querySelector('.preview-body')
       if (!body) return
-      const key = cardActual || ''
+      const key = forCardId || ''
       const cur = pvPool(body).get(key)
       if (cur) {
         // 池内已有这张卡：只切显隐，**不重载**（页码/滚动/展开项原样保留 = 切换瞬时）。
@@ -320,9 +321,9 @@ import { navigate } from '../chat/route.js'
           cur.el.setAttribute('src', src)
           cardBus.registerFrame({ kind: 'preview', label, el: cur.el }) // 同 el 复用 key，重置 ns/ready/cmds
         }
-        cur.el.dataset.card = cardActual
+        cur.el.dataset.card = forCardId || ''
         state.previewMounted = label
-        pvShow(container, key)
+        if (show !== false) pvShow(container, key)
         return
       }
       // 覆盖层遮住后端前端加载时的深色初始化画面（2026-08-20 三轮反馈后定稿 v81）：
@@ -333,18 +334,19 @@ import { navigate } from '../chat/route.js'
       //    还需数秒，缓冲 8s 自动淡出（不再永远卡转圈），点击仍可提前关闭（focus iframe 移交内部焦点）。
       // ④ 2026-08-28 生命周期解耦：already=后端进程已在跑（复用/收养）→ 不渲染覆盖层，iframe 直挂秒开
       //    （后端常驻后刷新/重进预览不再见「正在启动」，仅冷启动时显示）。
-      clearRailExt() // 新文档重挂 → 清上一份预览页注册的侧栏快捷按钮（不变量见 sidebar/rail-ext.js）
+      if (show !== false) clearRailExt() // 新文档重挂 → 清上一份预览页注册的侧栏快捷按钮（不变量见 sidebar/rail-ext.js）
       const loading = body.querySelector('.preview-loading')
       if (loading) loading.remove()
       const frame = document.createElement('iframe')
       frame.className = 'preview-frame'
       frame.title = `${label} 项目主页`
       frame.dataset.label = label
-      frame.dataset.card = cardActual
+      frame.dataset.card = forCardId || ''
       frame.src = src
+      if (show === false) frame.hidden = true // 预热帧：建好就藏着，切卡时才亮
       body.appendChild(frame)
       let overlay = null
-      if (!already) {
+      if (!already && show !== false) {
         overlay = document.createElement('div')
         overlay.className = 'preview-overlay'
         overlay.innerHTML =
@@ -356,8 +358,10 @@ import { navigate } from '../chat/route.js'
       pvPool(body).set(key, { el: frame, overlay })
       state.previewMounted = label
       // 挂进卡片总线：预览页（如 Pj18 的 floria-pv）说 `<ns>-cmd`/`<ns>-event` 即被总线认领
-      cardBus.registerFrame({ kind: 'preview', label, el: frame })
-      pvShow(container, key)
+      const frameKey = cardBus.registerFrame({ kind: 'preview', label, el: frame })
+      // 预热帧不显示也不可被指令寻址（同 label 多帧时「目标卡不唯一」）
+      if (show !== false) pvShow(container, key)
+      else if (frameKey) cardBus.setFrameActive(frameKey, false)
       let autoDismiss = null
       const dismiss = () => {
         if (autoDismiss) { clearTimeout(autoDismiss); autoDismiss = null }
@@ -365,12 +369,13 @@ import { navigate } from '../chat/route.js'
       }
       frame.addEventListener('load', () => {
         frame.__pvLoaded = true
-        frame.focus()
+        if (!frame.hidden) frame.focus() // 预热帧不抢焦点
         // 卡片身份 + 交接数据（卡→卡跳转）：以 dataset 为准（换 src 时闭包里的 card 已过期）。
         // 无卡（传统单页预览）不发，旧页不受影响。
         const liveCard = frame.dataset.card || ''
         if (liveCard) {
-          const payload = takePendingCardPayload(label, liveCard)
+          // 预热帧不消费交接数据（留给真正切到它的那一刻，见 setPreviewActiveHook）
+          const payload = show === false ? undefined : takePendingCardPayload(label, liveCard)
           try { frame.contentWindow.postMessage({ type: 'floria-wk-card-init', card: liveCard, payload }, '*') } catch { /* 帧已销毁：丢弃 */ }
         }
         if (!overlay) return
@@ -385,36 +390,65 @@ import { navigate } from '../chat/route.js'
     // ① Web 容器：backend 优先（/gateway/* 受网关 token 校验）。
     // 卡自己声明了 backend ⇒ 带 card 拉起该卡专属后端；无卡级声明 ⇒ 走项目级 backend（旧链），
     // 项目也没声明则 404 → 静态 preview。
-    const cardQ = card && card.hasBackend ? `&card=${encodeURIComponent(card.id)}` : ''
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
-      .then((d) => {
-        if (!(d && d.url)) throw new Error('no-backend')
-        // 2026-08-27 远程端分流：127.0.0.1 直连仅在本机浏览器成立，手机等远程宿主一律改走
-        // 网关同源代理 /backend/<label>/（访问票由上一拍 /gateway/backend 响应种下的 HttpOnly cookie 提供）
-        const remotePage =
-          location.protocol.startsWith('http') && ['127.0.0.1', 'localhost'].indexOf(location.hostname) < 0
-        // 卡页 = 卡目录内 entry（默认 index.html）；无卡 = 后端根（传统单页预览）
-        const rel = card ? `${encodeURIComponent(card.id)}/${cardEntryPath(card)}` : ''
-        mount(remotePage ? `/backend/${encodeURIComponent(label)}/${rel}` : d.url + rel, d.name, !!d.alreadyRunning)
-        if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
-        window.__backendHeartbeat = setInterval(() => {
-          fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
-        }, 60000)
-      })
-      .catch(() => {
-        // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
-        if (!hasPreview || (!card && !previewHasIndexPage(label))) { mountEmpty(); return }
-        const previewSrc = card
-          ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(card.id)}/${cardEntryPath(card)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
-          : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
-        fetch(previewSrc, { method: 'GET' })
-          .then((r) => {
-            if (!r.ok) throw new Error('HTTP ' + r.status)
-            mount(previewSrc)
-          })
-          .catch(mountEmpty)
-      })
+    const resolveCard = (cardSel, show) => {
+      const cardQ = cardSel && cardSel.hasBackend ? `&card=${encodeURIComponent(cardSel.id)}` : ''
+      fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+        .then((d) => {
+          if (!(d && d.url)) throw new Error('no-backend')
+          // 2026-08-27 远程端分流：127.0.0.1 直连仅在本机浏览器成立，手机等远程宿主一律改走
+          // 网关同源代理 /backend/<label>/（访问票由上一拍 /gateway/backend 响应种下的 HttpOnly cookie 提供）
+          const remotePage =
+            location.protocol.startsWith('http') && ['127.0.0.1', 'localhost'].indexOf(location.hostname) < 0
+          // 卡页 = 卡目录内 entry（默认 index.html）；无卡 = 后端根（传统单页预览）
+          const rel = cardSel ? `${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}` : ''
+          mount(remotePage ? `/backend/${encodeURIComponent(label)}/${rel}` : d.url + rel, d.name, !!d.alreadyRunning, cardSel ? cardSel.id : '', show)
+          if (show === false) return // 预热帧不占心跳（显示帧的心跳由主链负责）
+          if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
+          window.__backendHeartbeat = setInterval(() => {
+            fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
+          }, 60000)
+        })
+        .catch(() => {
+          // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
+          // 预热帧拉不到静态页就静默放弃（绝不 mountEmpty 清掉显示帧的容器）。
+          if (!hasPreview || (!cardSel && !previewHasIndexPage(label))) { if (show !== false) mountEmpty(); return }
+          const previewSrc = cardSel
+            ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
+            : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
+          fetch(previewSrc, { method: 'GET' })
+            .then((r) => {
+              if (!r.ok) throw new Error('HTTP ' + r.status)
+              mount(previewSrc, '', false, cardSel ? cardSel.id : '', show)
+            })
+            .catch(() => { if (show !== false) mountEmpty() })
+        })
+    }
+    resolveCard(card, !(opts && opts.hide))
+    // 预热其余卡（用户「打开工具页时全部卡都该就绪」）：前端切卡只切显隐，内容与数据早已读好。
+    if (opts && opts.prefetch) {
+      const body = container.querySelector('.preview-body')
+      const pool = body ? pvPool(body) : null
+      for (const c of list) {
+        if (c === card || (pool && pool.has(c.id))) continue
+        resolveCard(c, false)
+      }
+    }
+  }
+
+  // 预热项目内其余已启用卡（隐藏帧进池，不改变当前显示帧）。宿主在右栏预览列落地时调用：
+  // 之后切卡只需切显隐，PDF 不重载、日志卡早已读完，不会出现「正在读取」。
+  function prefetchPreviewCards(container, label, activeCardId) {
+    if (!container || !label) return
+    const body = container.querySelector('.preview-body')
+    if (!body) return
+    const list = enabledPreviewCardsFor(label)
+    if (list.length < 2) return
+    const pool = pvPool(body)
+    for (const c of list) {
+      if (c.id === activeCardId || pool.has(c.id)) continue
+      mountPreview(container, label, container.__pvHasPreview !== false, c.id, { hide: true })
+    }
   }
 
   // ---------- 预览卡文件变化自刷新（网关 preview-changed）----------
@@ -517,6 +551,7 @@ export {
   previewLegacyIndexCard,
   previewPaneCardDef,
   previewCardNormId,
+  prefetchPreviewCards,
   previewCardsFor,
   previewCardsReadyFor,
   railExtItems,
