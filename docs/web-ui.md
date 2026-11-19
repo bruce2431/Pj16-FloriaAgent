@@ -1144,3 +1144,13 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 - **零操作短路**：同一卡 tab 重复点击（无新 payload）`setPvCard` 直接返回；同项目同卡帧已亮 `renderWorkPreview` 只补预热不重挂；打开的文件就是编辑器当前文件（`workFile`/`wkEdFile`/`wkEdProj` 三者一致）时 `openWorkFile` 不重读盘、不广播 `file-open`，仅在不在文件页时切回文件页。
 - **容器反查**：`mountPreview` 建 shell 时把宿主容器回指到 `.preview-body.__pvHost`；`previewHosts(label)` 按此找在场容器。宿主侧（主区预览卡 / work 右栏）不各自实现刷新链，帧层唯一实现归 `feature/preview-frame.js`。
 - **不变量**：预览刷新只走网关事件驱动，不做前端轮询；无 SSE 连接时网关不建 watch（不产生空转）。
+
+## 76. 工具状态行两级展开（调用详情 → 输入与输出）
+
+消息流内每条工具行是独立 `<details class="tool-step">`，summary 即原 `.tool-line`（图标 + 中文动作 + detail）。点 summary 展开一级详情，详情内再点「输入与输出」展开二级详情。
+
+- **一级详情**（`.tool-step-body`）：入参逐项成行（`.tool-arg`：键 `ta-k` / 值 `ta-v`，值超 300 字截断并注明原长），随后是输出前缀预览（`.tool-out-pre`，600 字上限）；未拿到结果且非运行态显示「（无输出）」。运行中的工具步（`toolCurHtml`）同样可展开看入参，输出位显示「运行中，尚无输出」。
+- **二级详情**（`.tool-io` 内层 details）：完整入参 `JSON.stringify(input, null, 2)`（8000 字上限）+ 完整输出（20000 字上限），两个 `<pre class="tool-pre">` 各自限高 320px 内滚动；长文本全链路上限，不因展开把 DOM 撑爆。
+- **数据源**：输出唯一来源 = FIFO 队列吸附的 `tool_result.text`（`renderer.js` 标记 done 时写入 `item.result` 并重生成该行 HTML；lazy 历史段由 `closeSeg` 惰性补生成时带上 `result`）。不另拉接口、不从正文反解。
+- **开合态**：交给 `live.js` 的 `foldKey`（段 `data-m|data-t` + 首个类名 + 段内同类序号）在全量/增量重建后恢复；新增折叠保留 HTML 默认（收起）。工具行不存额外 UI 状态。
+- **构造唯一处**：`chat/messages.js` 的 `toolStepHtml`（`toolLine(block, result)` 与 `toolCurHtml(block)` 两个出口同源）；样式在 `styles.css` 的 `.tool-step*` / `.tool-arg*` / `.tool-out-pre` / `.tool-io*` / `.tool-pre`。

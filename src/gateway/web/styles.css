@@ -477,6 +477,49 @@ html:not([data-theme="dark"]) #chat-area.work { background: var(--chat-bg); }
   margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 2px;
 }
+/* 工具状态行两级展开：summary = 工具行（点击展开一级详情：参数逐项 + 输出预览），
+   内层 .tool-io「输入与输出」再点开二级详情（完整入参 JSON + 完整输出）。
+   开合态由 live.js foldKey 自动保留；summary 复用 .tool-line 几何，行内不再出浏览器三角。 */
+.tool-step { margin: 1px 0; }
+.tool-step > summary { list-style: none; cursor: pointer; user-select: none; border-radius: 6px; }
+.tool-step > summary::-webkit-details-marker { display: none; }
+.tool-step > summary:hover { background: var(--hover, rgba(0, 0, 0, 0.045)); }
+.tool-step-body {
+  margin: 2px 0 4px; padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--border-soft, rgba(0, 0, 0, 0.08));
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0;
+}
+.tool-args { display: flex; flex-direction: column; gap: 2px; }
+.tool-arg { display: flex; gap: 8px; min-width: 0; font-size: 12px; line-height: 1.6; }
+.tool-arg .ta-k {
+  flex: none; min-width: 72px; color: var(--text-3);
+  font-family: var(--mono); word-break: break-all;
+}
+.tool-arg .ta-v { min-width: 0; color: var(--text-2); font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
+.tool-out-pre {
+  margin: 0; padding: 6px 8px; border-radius: 6px;
+  background: var(--field-2, rgba(0, 0, 0, 0.03));
+  color: var(--text-2); font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow: auto;
+}
+.tool-out-pre.ta-empty { background: none; padding: 0; color: var(--text-3); }
+.tool-io > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  font-size: 12px; color: var(--text-3); padding: 1px 0;
+}
+.tool-io > summary::-webkit-details-marker { display: none; }
+.tool-io > summary:hover { color: var(--text-2); }
+.tool-io-body { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.tool-io-h { font-size: 12px; color: var(--text-3); }
+.tool-pre {
+  margin: 0; padding: 6px 8px; border-radius: 6px;
+  background: var(--field-2, rgba(0, 0, 0, 0.03));
+  color: var(--text-2); font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 320px; overflow: auto;
+}
 /* 2026-08-21 折叠 chevron 统一 DSH IconChevronRightOutline14（「>」箭头，替代旧 ▸ 小三角）；
    展开旋转 90° 指向下。done-fold/tool-fold/think-row 三处共用 */
 .d-chev svg { width: 14px; height: 14px; display: block; }

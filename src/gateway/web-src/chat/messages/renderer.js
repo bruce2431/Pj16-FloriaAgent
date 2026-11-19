@@ -126,7 +126,7 @@ import { CHEV } from './icons.js'
       // 气泡化（reply 项 → 折叠体外），不进 texts
       for (const t of s.texts) s.items[t.idx].html = processTextHtml(t.text)
       // 惰性帧渲染段补生成（2026-09-18）：lazy 切段置空的行在此补齐（仅末段真渲染会走到）。
-      // ask 按吸附后的 answer 终态生成（切段时 false 缓存失效）；tool 行 html 恒为完成行基线
+      // ask 按吸附后的 answer 终态生成（切段时 false 缓存失效）；tool 行按吸附的 result 生成完成行
       //（toolLine 产物，运行态由 flushTools 按改写分派 toolCurHtml，与原切段即生成等价）。
       if (lazy) {
         for (const it of s.items) {
@@ -134,7 +134,7 @@ import { CHEV } from './icons.js'
           if (it.kind === 'think') it.html = thinkRowHtml(it.text, false)
           else if (it.kind === 'ask') it.html = askLineHtml(it.answer != null)
           else if (it.kind === 'reply') it.html = replyBubbleHtml(s.key, it.text, it.usage, it.ts, it.model)
-          else if (it.kind === 'tool') it.html = toolLine(it.block)
+          else if (it.kind === 'tool') it.html = toolLine(it.block, it.result)
         }
       }
       // 思考行不做 running 态回填（思考永不独立成行：真空态=liveFoldBody 工具行内 .fold-state
@@ -311,7 +311,15 @@ import { CHEV } from './icons.js'
           const fc = normalizeFileChange(b.fileChange) || parseFileChange(b.text); if (fc) mergeChanges(seg.changes, fc)
           // 2026-08-26 实时折叠：该工具步已收到结果 → 标记 done，groupTools/liveFoldBody 对完成的工具步
           // 显示为普通文本行（「当这一步工具调用完成后，折叠为文本」，不再显示「正在运行」）
-          if (seg.pendingTools.length) { const pi = seg.pendingTools.shift(); seg.items[pi].done = true }
+          // 工具结果吸附到对应工具步（两级展开的「输出」数据源）：done 后按结果重生成行 HTML
+          //（tool_use 时还不知道输出；lazy 历史段 html 仍置空，由 closeSeg 惰性补生成时带上 result）
+          if (seg.pendingTools.length) {
+            const pi = seg.pendingTools.shift()
+            const it = seg.items[pi]
+            it.done = true
+            it.result = typeof b.text === 'string' ? b.text : ''
+            it.html = lazy ? '' : toolLine(it.block, it.result)
+          }
           seg.lastStep = 'result'
           // AskUserQuestion 答案关联：最近的未回答提问卡吸附该 tool_result 文本并标出所选
           if (seg.lastAsk && seg.lastAsk.answer == null && b.text) {

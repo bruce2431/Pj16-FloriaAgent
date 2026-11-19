@@ -47,9 +47,43 @@ import { toolIcon } from './messages/icons.js'
     const detail = inp ? (inp.file_path || inp.filePath || inp.query || inp.pattern || inp.command || inp.toolName || inp.path || '') : ''
     return { name, zh, detail: typeof detail === 'string' && detail ? String(detail).slice(0, 120) : '' }
   }
-  function toolLine(block) {
+  // 工具状态行两级展开（用户需求：展开看调用详情，再次点击看更详细的输入和输出）：
+  //   一级 = summary 点击 → 入参逐项 + 输出前缀预览；
+  //   二级 = 详情内的「输入与输出」折叠 → 完整入参 JSON + 完整输出（限高滚动）。
+  // 用嵌套 <details> 承载：开合态由 live.js 的 foldKey 机制（段 + 首个类名 + 段内同类序号）
+  // 在全量/增量重建后自动保留，不需要额外状态存储。
+  const TOOL_ARG_CLIP = 300 // 一级单个参数值上限
+  const TOOL_OUT_PREVIEW_CLIP = 600 // 一级输出预览上限
+  const TOOL_JSON_CLIP = 8000 // 二级入参 JSON 上限
+  const TOOL_RESULT_CLIP = 20000 // 二级输出上限（pre 内滚动）
+  function clipText(s, max) {
+    const t = s == null ? '' : String(s)
+    return t.length > max ? t.slice(0, max) + `\n…（已截断，原长 ${t.length} 字）` : t
+  }
+  function argValue(v) {
+    if (typeof v === 'string') return v
+    try { return JSON.stringify(v) } catch { return String(v) }
+  }
+  function toolStepHtml(block, result, running) {
     const t = toolMeta(block)
-    return `<span class="tool-line" data-name="${esc(t.name)}"><span class="t-ico">${toolIcon(t.name)}</span><span class="tl-text">${esc(t.zh)}${t.detail ? ' ' + esc(t.detail) : ''}</span></span>`
+    const inp = block.input && typeof block.input === 'object' && !Array.isArray(block.input) ? block.input : null
+    const argRows = inp
+      ? Object.keys(inp).map((k) => `<div class="tool-arg"><span class="ta-k">${esc(k)}</span><span class="ta-v">${esc(clipText(argValue(inp[k]), TOOL_ARG_CLIP))}</span></div>`).join('')
+      : ''
+    const argsHtml = argRows || '<div class="tool-arg"><span class="ta-v">（无参数）</span></div>'
+    const out = typeof result === 'string' ? result : ''
+    const outPre = out
+      ? `<pre class="tool-out-pre">${esc(clipText(out, TOOL_OUT_PREVIEW_CLIP))}</pre>`
+      : (running ? '' : '<div class="tool-out-pre ta-empty">（无输出）</div>')
+    const jsonText = block.input != null ? clipText(JSON.stringify(block.input, null, 2), TOOL_JSON_CLIP) : '（无参数）'
+    const outFull = out ? clipText(out, TOOL_RESULT_CLIP) : (running ? '（运行中，尚无输出）' : '（无输出）')
+    const ioHtml = `<details class="tool-io"><summary>输入与输出</summary><div class="tool-io-body"><div class="tool-io-h">输入</div><pre class="tool-pre">${esc(jsonText)}</pre><div class="tool-io-h">输出</div><pre class="tool-pre">${esc(outFull)}</pre></div></details>`
+    const sum = `<summary class="tool-line${running ? ' tool-running' : ''}" data-name="${esc(t.name)}"><span class="t-ico">${toolIcon(t.name)}</span><span class="tl-text">${esc(t.zh)}${t.detail ? ' ' + esc(t.detail) : ''}</span></summary>`
+    return `<details class="tool-step">${sum}<div class="tool-step-body"><div class="tool-args">${argsHtml}</div>${outPre}${ioHtml}</div></details>`
+  }
+  // result = 对应 tool_result 文本（未完成/未拿到时 undefined）；running = 实时段运行态行
+  function toolLine(block, result) {
+    return toolStepHtml(block, result, false)
   }
   // 提问在消息流里的紧凑行（DSH 工具行语义）：icon + 「提问」+ 状态（等待回答 / 已回答）。
   // 2026-09-11 ④ 用户定案移除只读提问卡（`questionCardHtml` 静态不可交互的输入栏接管卡，
@@ -258,8 +292,7 @@ import { toolIcon } from './messages/icons.js'
   // 当前正在运行的工具步（实时段专用）：复用原灰色工具行（tool-line）的 inline 形态，仅加 .tool-running
   // 光泽扫动标识运行态（无蓝点、无 <details> 提示行、无输入 JSON，用户 2026-08-26 定案）。
   function toolCurHtml(block) {
-    const t = toolMeta(block)
-    return `<span class="tool-line tool-running" data-name="${esc(t.name)}"><span class="t-ico">${toolIcon(t.name)}</span><span class="tl-text">${esc(t.zh)}${t.detail ? ' ' + esc(t.detail) : ''}</span></span>`
+    return toolStepHtml(block, undefined, true)
   }
 
 export {
