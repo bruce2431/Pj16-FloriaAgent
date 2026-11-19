@@ -3670,7 +3670,7 @@ function setLastNavHash(v) { lastNavHash = v }
     return Number.isFinite(v) && v > 0 ? v.toLocaleString('en-US') : '0'
   }
   // 「用量」按钮 + 点击弹出的明细面板（2026-10-04 还原 dsh 回复底部：按钮点开显示本轮 token 明细）。
-  // 数据源 = DisplayMessage.usage 明细 + DisplayMessage.model；提供方由 modelProviderOf(模型名) 派生。
+  // 数据源 = DisplayMessage.turnUsage（后端按回合收口的合计）+ DisplayMessage.model；提供方由 modelProviderOf(模型名) 派生。
   // 面板置于 .msg-actions 内 → messageCopyText 剔除 `.msg-actions` 时一并排除，不污染复制文本。
   function usageButtonHtml(usage, model) {
     const d = usage || {}
@@ -3791,9 +3791,10 @@ function setLastNavHash(v) { lastNavHash = v }
     // end_turn 正式回复气泡（流内 reply 项用，形态与原 reply 特判渲染一致）
     // 2026-10-04 还原 dsh 回复操作条：复制按钮之后依次「用量 X tok」按钮（点击弹出本轮 token 明细面板）+ 时间（HH:MM）。
     // 均置于 .msg-actions 内 → messageCopyText 剔除 `.msg-actions` 时一并排除，不污染复制文本。
-    function replyBubbleHtml(key, text, usage, ts, model) {
+    function replyBubbleHtml(key, text, turnUsage, ts, model) {
       const clock = fmtClock(ts)
-      const useBtn = usage ? usageButtonHtml(usage, model) : ''
+      // 回合用量由后端投影收口（只挂在回合末条 assistant 上），前端只负责渲染
+      const useBtn = turnUsage ? usageButtonHtml(turnUsage, model) : ''
       const meta = `${useBtn}${clock ? `<span class="msg-time">${clock}</span>` : ''}`
       return `<div class="msg assistant" data-m="${key}" data-t="a"><div class="body md-scope"><div class="blocks">${mdHtml(text)}</div><div class="msg-actions"><button class="msg-copy" title="复制" aria-label="复制">${ICON_COPY}</button>${meta}</div></div></div>`
     }
@@ -3842,7 +3843,7 @@ function setLastNavHash(v) { lastNavHash = v }
           if (it.html) continue
           if (it.kind === 'think') it.html = thinkRowHtml(it.text, false)
           else if (it.kind === 'ask') it.html = askLineHtml(it.answer != null)
-          else if (it.kind === 'reply') it.html = replyBubbleHtml(s.key, it.text, it.usage, it.ts, it.model)
+          else if (it.kind === 'reply') it.html = replyBubbleHtml(s.key, it.text, it.turnUsage, it.ts, it.model)
           else if (it.kind === 'tool') it.html = toolLine(it.block, it.result)
         }
       }
@@ -3994,7 +3995,7 @@ function setLastNavHash(v) { lastNavHash = v }
           // 不统一沉到段尾；纯文本消息（无 tool_use）仍在循环后整体追加（保持同消息多 text 块拼接为一条的语义）。
           // end_turn/stop_sequence 正式回复（理论不带 tool_use，防御分支）→ 流内 reply 气泡，不进 texts
           if (isEndStop(m.stopReason)) {
-            seg.items.push({ kind: 'reply', html: lazy ? '' : replyBubbleHtml(seg.key, b.text, m.usage, m.timestamp, m.model), text: b.text, usage: m.usage, model: m.model, ts: m.timestamp })
+            seg.items.push({ kind: 'reply', html: lazy ? '' : replyBubbleHtml(seg.key, b.text, m.turnUsage, m.timestamp, m.model), text: b.text, turnUsage: m.turnUsage, model: m.model, ts: m.timestamp })
             seg.replyTs = m.timestamp
           } else {
             seg.items.push({ kind: 'text', html: '', text: b.text })
@@ -4044,7 +4045,7 @@ function setLastNavHash(v) { lastNavHash = v }
         // closeSeg 时原位填充。
         const text = m.blocks.filter((b) => b.kind === 'text').map((b) => b.text).join('')
         if (m.stopReason === undefined || isEndStop(m.stopReason)) {
-          seg.items.push({ kind: 'reply', html: lazy ? '' : replyBubbleHtml(seg.key, text, m.usage, m.timestamp, m.model), text, usage: m.usage, model: m.model, ts: m.timestamp })
+          seg.items.push({ kind: 'reply', html: lazy ? '' : replyBubbleHtml(seg.key, text, m.turnUsage, m.timestamp, m.model), text, turnUsage: m.turnUsage, model: m.model, ts: m.timestamp })
           seg.replyTs = m.timestamp
         } else {
           seg.items.push({ kind: 'text', html: '', text })

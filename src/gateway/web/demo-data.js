@@ -39,7 +39,7 @@ window.FLORIA_DEMO_DATA = (() => {
       timestamp: t0 + 21000,
       stopReason: 'end_turn',
       sid: 'demo-m4',
-      usage: { input: 18240, cacheRead: 96000, cacheWrite: 3200, output: 1180 },
+      turnUsage: { input: 18240, cacheRead: 96000, cacheWrite: 3200, output: 1180 },
       model: 'deepseek-v4',
     },
   ]

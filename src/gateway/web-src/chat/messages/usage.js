@@ -30,7 +30,7 @@ import { modelProviderOf } from '../../sidebar/mgr-data.js'
     return Number.isFinite(v) && v > 0 ? v.toLocaleString('en-US') : '0'
   }
   // 「用量」按钮 + 点击弹出的明细面板（2026-10-04 还原 dsh 回复底部：按钮点开显示本轮 token 明细）。
-  // 数据源 = DisplayMessage.usage 明细 + DisplayMessage.model；提供方由 modelProviderOf(模型名) 派生。
+  // 数据源 = DisplayMessage.turnUsage（后端按回合收口的合计）+ DisplayMessage.model；提供方由 modelProviderOf(模型名) 派生。
   // 面板置于 .msg-actions 内 → messageCopyText 剔除 `.msg-actions` 时一并排除，不污染复制文本。
   function usageButtonHtml(usage, model) {
     const d = usage || {}

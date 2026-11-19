@@ -68,13 +68,14 @@ export type DisplayMessage = {
    */
   stopReason?: string
   /**
-   * 该条 assistant 记录的 token 用量明细（2026-10-04 新增；web 回复操作条「用量 X tok」按钮 +
-   * 点击弹出的明细面板数据源）：input=未缓存输入(input_tokens)、cacheRead=缓存读取(cache_read_input_tokens)、
-   * cacheWrite=缓存写入(cache_creation_input_tokens)、output=输出(output_tokens)。
-   * 合计 = 四者之和（消费端相加；与主区上下文占用 extractContextUsage 同源口径，差别只在多算 output）。
-   * 仅 assistant 消息携带；无 usage 字段/全 0 → undefined（消费端不渲染）。
+   * 回合 token 用量（web 回复操作条「用量 X tok」按钮 + 明细面板的唯一数据源）：
+   * 统计单元 = 一个回合（两条真实用户消息之间），把该回合内**每一次** API 响应的 usage
+   * 按 message.id 去重后求和——prompt 每次重发都计入（与厂商账单/dsh turn-usage 同口径）。
+   * input=未缓存输入、cacheRead=缓存读取、cacheWrite=缓存写入、output=输出；合计 = 四者之和。
+   * 只挂在回合最后一条 assistant 消息上；回合起点不在投影输入窗口内（增量尾部窗口从回合
+   * 中途开始）时无法证明完整，不挂——消费端不渲染，不做估算。
    */
-  usage?: { input: number; cacheRead: number; cacheWrite: number; output: number }
+  turnUsage?: DisplayUsage
   /**
    * 该条 assistant 记录的请求模型名（2026-10-04 新增；回复操作条弹出面板「提供方 / 模型」行数据源）。
    * 仅 assistant 消息携带；无 model 字段 → undefined。
@@ -103,7 +104,15 @@ export type DisplayMessage = {
 
 export type DisplayMode = 'prompt' | 'transcript' | 'prompt-tail-think'
 
-/** 逐次 API 调用的 token 用量结构（assistant 记录 message.usage；→ DisplayMessage.usage 合计） */
+/** 回合用量四桶（DisplayMessage.turnUsage 的形状） */
+export type DisplayUsage = {
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+}
+
+/** 逐次 API 调用的 token 用量结构（assistant 记录 message.usage；→ 按回合求和成 DisplayUsage） */
 type TokenUsage = {
   input_tokens?: number
   cache_creation_input_tokens?: number
@@ -138,12 +147,14 @@ type SourceMessage = {
     imagePasteIds?: number[]
   }
   message?: {
+    /** API 响应 id（同一响应的多条拆分/快照记录共享；回合用量去重键） */
+    id?: string
     role?: string
     /** 该条 assistant 记录的实际请求模型名（模型切换派生提示的数据源） */
     model?: string
     content?: Array<{ type?: string; text?: string; thinking?: string; name?: string; input?: unknown; content?: unknown }>
     stop_reason?: string
-    /** 该条 assistant 记录的 token 用量（逐次 API 调用；→ DisplayMessage.usage 合计） */
+    /** 该条 assistant 记录的 token 用量（逐次 API 调用；→ 按回合求和为 DisplayMessage.turnUsage） */
     usage?: TokenUsage
   }
 }
@@ -354,11 +365,11 @@ function tsMs(ts: number | string | undefined): number | undefined {
 }
 
 /**
- * 单条 assistant 记录的 token 用量明细（→ DisplayMessage.usage）：
+ * 单次 API 响应的 token 用量明细（回合求和的输入单元）：
  * input=未缓存输入、cacheRead=缓存读取、cacheWrite=缓存写入、output=输出。
- * 三项输入 token 缺省按 0（部分商只报 output）；四者合计全 0 / 无 usage 返回 undefined（消费端不渲染）。
+ * 三项输入 token 缺省按 0（部分商只报 output）；四者合计全 0 / 无 usage 返回 undefined。
  */
-function usageDetail(u: TokenUsage | undefined): DisplayMessage['usage'] | undefined {
+function usageDetail(u: TokenUsage | undefined): DisplayUsage | undefined {
   if (!u || typeof u !== 'object') return undefined
   const x = u as Record<string, unknown>
   const n = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0)
@@ -393,6 +404,43 @@ export function filterConversationForDisplay(
 
   const out: DisplayMessage[] = []
   let lastModel: string | undefined = opts?.initialLastModel
+  // ── 回合 token 用量收口（2026-11-19，dsh turn-usage 口径）──
+  // 统计单元 = 回合（两条真实用户消息之间）；回合内每一次 API 响应的 usage 都计入（prompt
+  // 每次重发都算，与厂商账单一致）。同一响应的多条记录（并行工具调用拆分 / 流式快照）共享
+  // message.id 与同一 usage，逐字段取最大后按 id 去重，避免重复计。
+  // 结果挂到回合最后一条 assistant 投影的 turnUsage；回合起点不在输入窗口内（CLI 增量上报
+  // 的尾部窗口从回合中途开始）时无法证明完整 → 不挂，不估算。
+  let turnUsageById = new Map<string, DisplayUsage>()
+  let turnHasStart = false
+  let turnLastAssistant = -1
+  const foldAttemptUsage = (id: string, detail: DisplayUsage): void => {
+    const cur = turnUsageById.get(id) ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }
+    cur.input = Math.max(cur.input, detail.input)
+    cur.cacheRead = Math.max(cur.cacheRead, detail.cacheRead)
+    cur.cacheWrite = Math.max(cur.cacheWrite, detail.cacheWrite)
+    cur.output = Math.max(cur.output, detail.output)
+    turnUsageById.set(id, cur)
+  }
+  const closeTurnUsage = (): void => {
+    if (turnHasStart && turnLastAssistant >= 0 && turnUsageById.size > 0) {
+      let input = 0
+      let cacheRead = 0
+      let cacheWrite = 0
+      let output = 0
+      for (const u of turnUsageById.values()) {
+        input += u.input
+        cacheRead += u.cacheRead
+        cacheWrite += u.cacheWrite
+        output += u.output
+      }
+      if (input + cacheRead + cacheWrite + output > 0) {
+        out[turnLastAssistant]!.turnUsage = { input, cacheRead, cacheWrite, output }
+      }
+    }
+    turnUsageById = new Map()
+    turnHasStart = false
+    turnLastAssistant = -1
+  }
   /** 居中灰字系统提示行（2026-08-27 定案：指令信息/中断/模型切换统一此形态，role:'system' 下发） */
   const pushSystemHint = (text: string, ts: number | string | undefined, uuid?: string): void => {
     out.push({ role: 'system', blocks: [{ kind: 'text', text }], timestamp: tsMs(ts), ...(uuid ? { uuid } : {}) })
@@ -501,6 +549,13 @@ export function filterConversationForDisplay(
         continue
       }
       if (!shouldShowUserMessage(msg, isTranscript)) continue
+      // 真实用户消息 = 回合边界：先结算上一回合的用量，再开启本回合。
+      // tool_result 的 user 记录是回合内的工具回填（同一回合仍可能有后续请求），不是真实输入，不切回合。
+      const isToolResultRecord = Array.isArray(content) && content.some((b) => b?.type === 'tool_result')
+      if (!isToolResultRecord) {
+        closeTurnUsage()
+        turnHasStart = true
+      }
       const blocks: DisplayBlock[] = []
       let imgIdx = 0
       // 跨会话消息（2026-09-15 会话间协作）：user 记录里正文同样带包装（落盘即包装文本），
@@ -610,16 +665,21 @@ export function filterConversationForDisplay(
         pushSystemHint(noticeText, timestamp, msg.uuid)
         continue
       }
+      // 用量先入回合账（纯 thinking/无可见块被过滤的记录同样是已计费的 API 响应）
+      const usage = usageDetail(msg.message?.usage)
+      if (usage) foldAttemptUsage(msg.message?.id ?? msg.uuid ?? '', usage)
       if (blocks.length) {
-        const usage = usageDetail(msg.message?.usage)
         const model = typeof msg.message?.model === 'string' && msg.message.model ? msg.message.model : undefined
-        out.push({ role: 'assistant', blocks, timestamp, stopReason: msg.message?.stop_reason as string | undefined, uuid: msg.uuid, ...(usage !== undefined ? { usage } : {}), ...(model !== undefined ? { model } : {}) })
+        out.push({ role: 'assistant', blocks, timestamp, stopReason: msg.message?.stop_reason as string | undefined, uuid: msg.uuid, ...(model !== undefined ? { model } : {}) })
+        turnLastAssistant = out.length - 1
       }
       continue
     }
 
     // tool / progress / 其它 system 子类型：CLI 已把 tool_result 收进 user 消息，此处跳过
   }
+  // 末回合结算（回合进行中时也随时给出当前累计，流式过程中按钮数值随每次响应更新）
+  closeTurnUsage()
   // ── 归一化稳定键赋值（2026-09-10 长会话 delta 对齐根修，勿删）──
   // 问题：normalizeMessages 的 uuid 派生受 isNewChain 粘性标志影响（遇多块消息后恒派生），
   // 而该标志取决于「在输入数组中的位置」——CLI 侧输入是 capRenderedMessages 的 200 条尾部
