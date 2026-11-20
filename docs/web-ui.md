@@ -312,6 +312,8 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 
 **引用件的删除规则（2026-10-22 定案，全形态统一）**：凡渲染成 chip / 行内节点的引用一律**整体存在、整体删除**——① 底栏 `composer-cm` 的 `cmChipPlugin` 令牌（`[@引用:…]` / `[@引用PDF:…]` / `[@引用回复:…]` / `[会话:…]` / `[插件:…]` / `[@目录|文件:…]`）以及 `[名](file-cache/…)` 附件引用（由 `CM_ATT_LINK` 并入同一令牌表，带 ×，前导 `!` 的图片除外）；② 编辑卡 `work-cm` 的 `edAttImgPlugin` / `edAttFilePlugin`。统一走 `EditorView.atomicRanges`：游标进不去、退格/Delete 整块删，**不得逐字符退化成源码**。底栏 × 与退格还须把引用块（锚点 `[@引用回复:…]` 到收口 `[/引用回复]` / `[/引用PDF]` 之间的原文正文）**整块删**（`cmTokenSpan` / `cmBackspaceChip`），只删锚点会留下大片源码。
 
+**文件链接（`[名](路径)`）的删除口径**：底栏与编辑卡的文件引用是 Markdown 行内链接（`fileLinkMarkdown`），由 `edFileLinkPlugin` 渲成 chip，不在 `cmChipPlugin` 的令牌表里。底栏把它并入 `cmBackspaceChip` / `cmDeleteChip` 的整块删除链：`cmDeletableItems = cmTokenRanges(doc) + collectFileLinks(state)`（后者是 `@floria/cm6` `kernel/file-link.js` 的渲染与删除唯一扫描口），退格/Delete 连同分隔空白整体带走。**不靠 atomicRanges**：`edFileLinkPlugin` 在选区与链接区间相邻/相交时撤装饰露出 md 源码（供编辑链接原文），原子区间随之消失，退格又会退回逐字删。
+
 **atomicRanges 实现不变量（2026-10-25 根因）**：每个源各注册**一个** `EditorView.atomicRanges.of(v => plugin.decorations)`（底栏两个：`cmChipPlugin` / `edAttImgPlugin`；work 两个：`edAttImgPlugin` / `edAttFilePlugin`）。facet 本身多值合法——CM 内部按 `facet(atomicRanges).map(f => f(view))` 逐个 `between` 查询。**禁自行合并两套 set**：`DecorationSet.iter()` 返回 `HeapCursor`（不可迭代），`set.push(...d.iter())` 抛 `TypeError`，而该 facet 在 `moveByChar` / `deleteByChar` / `MouseSelection` 构造里都会被求值 ⇒ 一次异常打断**全部**光标移动、退格与鼠标选择（表现为：箭头键过不去 chip、图片退格删不掉、点选异常）。`cmBackspaceChip` 的原子件清单必须含**附件图片区间**（`edAttImgPlugin` 的 replace 区间），否则退格在图片后只删源码一个字符。
 
 ## 24. 会话间通信来源行：提及 chip 带 sid + 气泡/排队区灰字
