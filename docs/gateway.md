@@ -303,6 +303,7 @@ CLI（`src/utils/gatewayClient.ts`）主动上报的会话态信号经 `/clients
 | `stream-text` | 无状态转发 | — | 流式字符暂态（'' = 块边界/落盘/打断清除） |
 | `restored` | 无状态转发 | — | 撤回链（文本回填输入栏） |
 | `compact-state` | 无状态转发 | — | 压缩实时态起止（网关无状态，前端按 `live.compactFlags` Map + TTL 自管） |
+| `spinner-state` | 无状态转发 | — | 等待台词（CLI Spinner 当前 `effectiveVerb`：任务 activeForm 或内置随机动词，≤60 字）。网关原样 SSE 群发 `{session, label}`，web 按 `live.spinnerLabel` Map 自管；台词唯一真源 = CLI，web 状态行优先显示该句，缺省回落「正在思考/正在生成」。CLI 变化即报（去重），重连 open 补发 |
 | `queue-state` | 镜像 `sessionQueues`（无时间 TTL） | `.queued` | CLI `subscribeToCommandQueue` 订阅 + 重连补发；**每项可带 `from:{title,sid?}`（会话间通信来源）**——CLI 上报前已 `parseSessionMessage` 剥壳，网关只做形状边界白名单（title ≤200、可选 sid ≤200），见 §13 |
 | `task-state` | **镜像 `sessionTasks`（无时间 TTL）** | `.tasks` | CLI `useTasksV2.getSnapshot()` 单源上报 + 重连补发；形状边界 `normalizeGatewayTasks` 只此一处（非对象/缺 id/缺 subject 丢弃、未知 status→pending、subject 截 500、blockedBy 只留字符串）。生命周期=upsert + detach 清 + 重连补发（时间 TTL 与「载荷不变不发」矛盾——活跃会话清单 10 分钟不变即被清仓 → web 浮窗消失） |
 | `activity` | 镜像 `sessionActivity`（TTL 10min + REPL 60s 心跳） | `.state`（`/gateway/sessions` 列表） | 会话状态点判定兼需 `isPidAlive(act.pid)`（busy 绿/idle 红/waiting 橘/停止无点） |
