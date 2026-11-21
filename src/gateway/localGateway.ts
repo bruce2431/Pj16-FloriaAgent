@@ -56,6 +56,7 @@ import {
   clearGatewayTokenFromDisk,
   saveGatewayPortToDisk,
   clearGatewayPortFromDisk,
+  loadGatewayPortFromDisk,
   loadGatewayTokenFromDisk,
   isGatewayTicket,
   touchGatewayTicket,
@@ -6959,7 +6960,144 @@ function stampGatewayConsole(): void {
   console.warn = wrap(console.warn)
 }
 
-export function startLocalGateway(opts?: { host?: string; port?: number; token?: string }): LocalGatewayInfo {
+// ============================================================================
+// 单实例仲裁（2026-11-21）：Windows 上 Bun 的监听不是排他的——两个 --gateway 进程抢 8124 时
+// 日志会出现「EADDRINUSE」与「监听成功」同一秒并存：双方都 bind 成功，后绑定者接管全部连接，
+// 先绑定者成为收不到流量的影子（bpSessions 等内存票证为空 → 既有页面 /backend 全 401），
+// 影子空闲退场时还会 stopLocalGateway 清掉 live 网关的 token/port。
+// 根修 = 网关目录排他锁：只有锁持有者允许 bind 与发布 token/port；失去仲裁的进程不 bind、
+// 不写盘、直接退出（--gateway）或抛错（进程内调用）。
+// 不变量：同一便携根同时至多一个进程执行监听并写入 token/port。
+// ============================================================================
+const GATEWAY_LOCK_GRACE_MS = 15_000
+let gatewayLockHeld = false
+const gatewayLockPath = (): string => join(gatewayDir(), 'gateway.lock')
+const lockSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+function releaseGatewayLock(): void {
+  if (!gatewayLockHeld) return
+  gatewayLockHeld = false
+  try {
+    unlinkSync(gatewayLockPath())
+  } catch {
+    /* 已被移除 */
+  }
+}
+
+function readGatewayLock(): { pid: number; createdAt: number } | null {
+  try {
+    const raw = readFileSync(gatewayLockPath(), 'utf8').trim()
+    if (!raw) return null
+    try {
+      const j = JSON.parse(raw) as { pid?: unknown; createdAt?: unknown }
+      const pid = Number(j.pid) || 0
+      return pid > 0 ? { pid, createdAt: Number(j.createdAt) || 0 } : null
+    } catch {
+      const pid = Number(raw) || 0
+      return pid > 0 ? { pid, createdAt: 0 } : null
+    }
+  } catch {
+    return null
+  }
+}
+
+/** 裸 TCP 探活（不经 fetch，避开系统代理劫持回环地址）。 */
+function probeGatewayHealth(port: number, host = '127.0.0.1', timeoutMs = 1200): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false
+    let sock: ReturnType<typeof netCreateConnection> | null = null
+    const finish = (v: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try {
+        sock?.destroy()
+      } catch {
+        /* 忽略 */
+      }
+      resolve(v)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    timer.unref?.()
+    try {
+      sock = netCreateConnection({ host, port })
+    } catch {
+      finish(false)
+      return
+    }
+    let buf = ''
+    sock.on('connect', () => {
+      sock?.write(`GET /gateway/health HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`)
+    })
+    sock.on('data', (d: Buffer) => {
+      buf += d.toString('utf8')
+    })
+    sock.on('end', () => finish(buf.includes('"mode":"gateway"')))
+    sock.on('error', () => finish(false))
+  })
+}
+
+async function claimGatewayLock(port: number, host = '127.0.0.1'): Promise<'owned' | 'busy'> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      mkdirSync(gatewayDir(), { recursive: true })
+      writeFileSync(gatewayLockPath(), JSON.stringify({ pid: process.pid, createdAt: Date.now() }), {
+        encoding: 'utf8',
+        flag: 'wx',
+      })
+      gatewayLockHeld = true
+      return 'owned'
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return 'busy' // 建不了锁也不能冒险双开
+    }
+    const owner = readGatewayLock()
+    if (!owner) {
+      try {
+        unlinkSync(gatewayLockPath())
+      } catch {
+        /* 对方已清 */
+      }
+      continue
+    }
+    if (owner.pid === process.pid) {
+      gatewayLockHeld = true
+      return 'owned'
+    }
+    if (!isPidAlive(owner.pid)) {
+      // 进程已死（硬杀/崩溃未清锁）→ 清掉重新抢
+      try {
+        unlinkSync(gatewayLockPath())
+      } catch {
+        /* 对方已清 */
+      }
+      continue
+    }
+    // 持有者进程存活：给它的监听窗口留时间；超宽限期仍无网关应答才判僵死锁（PID 复用/卡死）
+    const deadline = Date.now() + 3_000
+    while (Date.now() < deadline) {
+      if (await probeGatewayHealth(port, host)) return 'busy'
+      await lockSleep(300)
+    }
+    if (Date.now() - (owner.createdAt || 0) > GATEWAY_LOCK_GRACE_MS) {
+      // 宽限期外先看盘上端口（网关可能起在顺延端口）：持有者仍在别处服务就不抢锁
+      const diskPort = loadGatewayPortFromDisk()
+      if (diskPort && diskPort !== port) {
+        if (await probeGatewayHealth(diskPort, host)) return 'busy'
+        if (host !== '127.0.0.1' && (await probeGatewayHealth(diskPort))) return 'busy'
+      }
+      try {
+        unlinkSync(gatewayLockPath())
+      } catch {
+        /* 对方已清 */
+      }
+      continue
+    }
+    return 'busy'
+  }
+  return 'busy'
+}
+
+export async function startLocalGateway(opts?: { host?: string; port?: number; token?: string }): Promise<LocalGatewayInfo> {
   stampGatewayConsole()
   gatewayStopping = false
   if (server) {
@@ -6974,6 +7112,25 @@ export function startLocalGateway(opts?: { host?: string; port?: number; token?:
   }
   currentHost = opts?.host || process.env.GATEWAY_HOST || '0.0.0.0'
   currentPort = Number(opts?.port || process.env.GATEWAY_PORT || 8124)
+  // 单实例仲裁（2026-11-21，见 claimGatewayLock 注）：失去仲裁者不 bind、不写 token/port。
+  const isGatewayProc = process.argv.includes('--gateway')
+  const bailOut = (reason: string): never => {
+    console.log(`[gateway] ${reason}，本进程不接管网关`)
+    if (isGatewayProc) process.exit(0)
+    throw new Error(`gateway: ${reason}`)
+  }
+  const probeHost = currentHost === '0.0.0.0' ? '127.0.0.1' : currentHost
+  if (await probeGatewayHealth(currentPort, probeHost)) bailOut(`端口 ${currentPort} 已有存活网关在服务`)
+  const diskGatewayPort = loadGatewayPortFromDisk()
+  if (diskGatewayPort && diskGatewayPort !== currentPort && (await probeGatewayHealth(diskGatewayPort, probeHost))) {
+    bailOut(`端口 ${diskGatewayPort} 已有存活网关在服务`)
+  }
+  if ((await claimGatewayLock(currentPort, probeHost)) !== 'owned') bailOut('另一网关进程已持有单实例锁')
+  // 抢到锁后再确认一次：老版本 exe 的网关不持锁，可能在上一探测之后才完成 bind
+  if (await probeGatewayHealth(currentPort, probeHost)) {
+    releaseGatewayLock()
+    bailOut(`端口 ${currentPort} 已有存活网关在服务`)
+  }
   // 2026-09-18 token 竞态根治：读盘-or-创建的稳定密钥。盘上有值即复用——多进程抢起网关时
   // 各方持有同一秘密，竞态从「毒化源」降级为无害事件（败者转 client 后天然可注册赢家）；
   // 显式 opts/env 覆盖仍最高；盘上无值（首次启动或 /server off 清盘后）才随机生成。
@@ -7449,6 +7606,8 @@ export function startLocalGateway(opts?: { host?: string; port?: number; token?:
       server = null
     }
     console.error(`[gateway] 启动失败: ${(err as Error).message}`)
+    // 启动失败不发布 token/port（落盘只在 listen 成功回调里），并交还单实例锁供下次启动。
+    releaseGatewayLock()
     // P5（2026-08-28）：--gateway 独立进程 listen 失败（EADDRINUSE 等）→ 直接退出，
     // 不留无监听僵尸进程驻留（实测 8199 冲突进程不退，干扰下轮诊断）。
     if (process.argv.includes('--gateway') && !gatewayListened) process.exit(1)
@@ -7557,7 +7716,10 @@ export function stopLocalGateway(): boolean {
   if (server) {
     server.close()
     server = null
+    // 交还单实例锁：只在监听真正停止后放锁，下一任网关才不会撞上「已无锁但端口未释放」的窗口
+    releaseGatewayLock()
     return true
   }
+  releaseGatewayLock()
   return false
 }

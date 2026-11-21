@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     const port = Number(process.env.GATEWAY_PORT || 8124);
     const token = process.env.SERVER_TOKEN || undefined;
     // node:http server 保持事件循环，进程自然长驻
-    startLocalGateway({ host, port, token });
+    await startLocalGateway({ host, port, token });
     const shutdown = () => {
       stopLocalGateway();
       process.exit(0);

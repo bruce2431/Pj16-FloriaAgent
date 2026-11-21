@@ -34,6 +34,8 @@
 
 **gateway/token 稳定密钥**：token 改「读盘-or-创建」（`startLocalGateway` 与 `/server on` spawn 链同序：显式覆盖 > 读盘 > 随机），仅 `/server off` 清盘后轮换；落盘时机在 **listen 成功回调**（否则多进程抢起网关时 bind 失败者会覆盖盘上胜者 token → 全部 CLI `/clients` 注册 401：侧栏无状态 / web 误 spawn resume / 消息悬空 / session-delta 断流）。**不变量**：「盘上 token/port 恒描述现网关，只有端口持有者可发布」。CLI 侧 `gatewayClient` 每轮探测重读盘上 token（3s TTL），对齐后 ≤10s 自动重连，无需重启进程。
 
+**单实例仲裁（网关锁）**：Windows 上 Bun 的监听不排他——两个 `--gateway` 抢同一端口时双方都可能 bind 成功（日志同一秒内 EADDRINUSE 与「监听成功」并存），后绑定者接管全部连接、先绑定者成为影子（`bpSessions` 等内存票证为空 → 既有页面 `/backend` 全 401，影子空闲退场还会清掉 live 网关的 token/port）。因此启动序为：探测 `currentPort` 与盘上 port 上的 `/gateway/health` → 抢占 `.claude/gateway/gateway.lock`（JSON `{pid,createdAt}`，`wx` 排他创建）→ 再探一次（兼容不持锁的旧 exe 网关）→ 才 bind。失去仲裁者**不 bind、不写 token/port**，`--gateway` 进程以 0 退出（进程内调用抛错）。锁随 `stopLocalGateway` 在 `server.close()` 之后释放；硬杀遗留的锁按 pid 存活判定清理，持有者存活但超宽限期（15s）仍无网关应答时视为僵死锁（复用 pid / 卡死）。**不变量**：同一便携根同时至多一个进程监听并发布 token/port。
+
 **前端门控**：`needToken()` =「`GATEWAY && !gateVerified`」（gateVerified 声明提前）；`initGateway` 统一先 `connect()`（cookie 有效 WS 直过 → `hideGate` 直进空态，无效 onclose 回 token 门）；门内输入 token 先 HTTP 预验证（种 cookie）再 connect；`apiUrl` 仍附加 gToken（空串无害，网关看 cookie）。
 
 **访问地址（mDNS 自广播 `floria.local`）**：同 WiFi/热点设备一律 `http://floria.local:<port>/`，换网络/换 IP 免配置免重授权（授权按设备码恒定）；**仅支持 Apple/Windows**（`/server` 只输出该唯一地址、不列 IP 直连；Android `.local` 解析差不支持）。本机 hosts `127.0.0.1 floria.local` → 本机走 hosts、远程走 mDNS（floria.com 是公网真实注册域名，勿用作别名）。**红线：该 hosts 条目只允许存在于网关所在机**（解析到自身，经 `0.0.0.0` 监听可达）；其它设备一律靠 mDNS，在非网关设备上写 `127.0.0.1 floria.local` 会使其把域名解析到自身、页面恒打不开（网关代码从不读写 hosts，此条纯人工，**勿在客户端抄用**）。
