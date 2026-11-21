@@ -30,9 +30,9 @@ export const PROMPT = `Use this tool to update a task in the task list.
 ## Fields You Can Update
 
 - **status**: The task status (see Status Workflow below)
-- **subject**: Change the task title (imperative form, e.g., "Run tests")
+- **subject**: Change the task title (imperative form, e.g., "Run tests"). Write it in the same language the user is using.
 - **description**: Change the task description
-- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., "Running tests")
+- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., "正在运行测试"). Write it in the same language the user is using, and keep it short (it renders on a single spinner line).
 - **owner**: Change the task owner (agent name)
 - **metadata**: Merge metadata keys into the task (set a key to null to delete it)
 - **addBlocks**: Mark tasks that cannot start until this one completes

@@ -41,9 +41,9 @@ NOTE that you should not use this tool if there is only one trivial task to do. 
 
 ## Task Fields
 
-- **subject**: A brief, actionable title in imperative form (e.g., "Fix authentication bug in login flow")
+- **subject**: A brief, actionable title in imperative form (e.g., "Fix authentication bug in login flow"). Write it in the same language the user is using.
 - **description**: What needs to be done
-- **activeForm** (optional): Present continuous form shown in the spinner when the task is in_progress (e.g., "Fixing authentication bug"). If omitted, the spinner shows the subject instead.
+- **activeForm** (optional): Present continuous form shown in the spinner when the task is in_progress (e.g., "正在修复登录认证问题"). If omitted, the spinner shows the subject instead. Write it in the same language the user is using, and keep it short (it renders on a single spinner line).
 
 All tasks are created with status \`pending\`.
 

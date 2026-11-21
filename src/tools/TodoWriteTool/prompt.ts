@@ -149,8 +149,8 @@ The assistant did not use the todo list because this is a single command executi
    - completed: Task finished successfully
 
    **IMPORTANT**: Task descriptions must have two forms:
-   - content: The imperative form describing what needs to be done (e.g., "Run tests", "Build the project")
-   - activeForm: The present continuous form shown during execution (e.g., "Running tests", "Building the project")
+   - content: The imperative form describing what needs to be done (e.g., "Run tests", "Build the project"). Write it in the same language the user is using.
+   - activeForm: The present continuous form shown during execution (e.g., "正在运行测试", "正在构建项目"). Write it in the same language the user is using, and keep it short.
 
 2. **Task Management**:
    - Update task status in real-time as you work
@@ -175,7 +175,7 @@ The assistant did not use the todo list because this is a single command executi
    - Use clear, descriptive task names
    - Always provide both forms:
      - content: "Fix authentication bug"
-     - activeForm: "Fixing authentication bug"
+     - activeForm: "正在修复登录认证问题"
 
 When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
 `
