@@ -30,7 +30,7 @@ import { loadMgrData, loadModelsData } from './sidebar/mgr-data.js'
 import { closeMentionPop, onInputChange } from './inputbar/mention.js'
 // 分层治理 4C/4D（2026-10-10）：engine/{live,gateway,auth}.js 的 feature 端口实参——入口（layer 4）统一接线。
 import { absorbPending, fmtDur, getCharNote, getLastSegInfo, getPendingUserMsgs, isEndStop, isRealUser, messagesHtml, queueClaimAdopt, setPendingUserMsgs, stampMsgIn, statusFlags } from './chat/messages.js'
-import { claimStartTs, clearTakeover, getTakeover, renderSettle, renderTaskDock, renderTransient, syncTurnLive, addSystem, getApprovalPending, renderApproval, setApprovalPending, showApprovalError, sendSubscribe } from './inputbar/approval.js'
+import { claimStartTs, clearTakeover, getTakeover, getShownApprovalId, renderSettle, renderTaskDock, renderTransient, syncTurnLive, addSystem, getApprovalPending, renderApproval, setApprovalPending, showApprovalError, sendSubscribe } from './inputbar/approval.js'
 import { renderCtxMeter } from './inputbar/ctx-meter.js'
 
 /* @module __app__ */
@@ -152,7 +152,7 @@ import { renderCtxMeter } from './inputbar/ctx-meter.js'
     // engine/auth.js（解锁后界面重渲 + 数据补拉 + 发送态同步）的 feature 端口——与 4C 同点接线；
     // 早于下方 initGateway()（其 connect→WS onopen/hideGate 经端口回写）。
     setGatewayPorts({
-      approval: { addSystem, clearTakeover, renderApproval, showApprovalError, sendSubscribe, getTakeover, getApprovalPending, setApprovalPending },
+      approval: { addSystem, clearTakeover, renderApproval, showApprovalError, sendSubscribe, getTakeover, getShownApprovalId, getApprovalPending, setApprovalPending },
       send: { syncGwSend },
       mention: { onInputChange },
     })

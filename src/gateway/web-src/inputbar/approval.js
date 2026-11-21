@@ -239,9 +239,13 @@ import { firstSendHash } from '../sidebar/recent.js'
   //      向上滑出；输入栏几何/外观/焦点完全不动（不隐藏输入内容组、不改高度、不 blur），草稿天然存活；
   //      聊天区不让位（不改 #chat-scroll padding）——底栏衍生 UI 一律是消息流之上的覆盖层。 ----
   let takeover = null
+  // 当前接管卡对应的审批 requestId：多端同看一个会话时，本端未提交过 approve（无 approvalPending），
+  // 网关的 approval-confirmed 此前只认本端 pending ⇒ 其它端答完、本端提问栏残留。按 id 比对撤卡。
+  let shownApprovalId = null
   // 分层治理 4C（2026-10-10）：engine/live.js 的读取口（写侧仍是尾部 setTakeover）——每次现读，
   // 调用方严禁缓存返回值。
   function getTakeover() { return takeover }
+  function getShownApprovalId() { return shownApprovalId }
   const takeoverEl = () => $('composer-takeover')
   // 2026-10-24 重做（用户定案「不要用低栏变形，从底栏滑出、悬浮在其上；聊天区不用让位；
   // 底栏衍生的一切 UI 都是消息流上面一个图层」）：
@@ -276,6 +280,7 @@ import { firstSendHash } from '../sidebar/recent.js'
     if (!takeover) return
     const my = ++tkToken
     takeover = null
+    shownApprovalId = null
     const t = takeoverEl()
     if (!t) { inputBarEl.classList.remove('tk-open'); renderTaskDock(); return }
     t.classList.remove('tk-in')
@@ -390,6 +395,7 @@ import { firstSendHash } from '../sidebar/recent.js'
   }
 
   function renderApproval(a) {
+    shownApprovalId = a && a.requestId ? String(a.requestId) : null
     // 2026-08-24 提问答复（web 与 CLI 均可）：AskUserQuestion 审批卡渲染为交互表单，逐题选答案，
     // 提交后经 approve 带 {input, answers} 回 CLI（网关 updatedInput 透传 → 工具拿到 answers）。
     const qs = a.input && Array.isArray(a.input.questions) ? a.input.questions : null
@@ -818,6 +824,8 @@ export {
   renderTransient,
   sendApprove,
   sendSubscribe,
+  getShownApprovalId,
+  getTakeover,
   setBtnMode,
   showApprovalError,
   showTakeover,

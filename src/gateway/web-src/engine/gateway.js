@@ -275,6 +275,11 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
           gwApproval.setApprovalPending(null)
           gwApproval.clearTakeover()
           gwApproval.addSystem(wasAllow ? '已允许该工具调用' : '已拒绝该工具调用')
+        } else if (gwApproval.getTakeover() === 'approval' && gwApproval.getShownApprovalId() === String(msg.requestId)) {
+          // 2026-11-21 多端同步：本端没提交过该请求（无 approvalPending）但卡面就是它——另一 web 端
+          // 作答后网关广播的是 confirmed 而非 dismiss，此前只认本端 pending ⇒ 其它端提问栏/审批栏残留。
+          gwApproval.clearTakeover()
+          gwApproval.addSystem('该请求已在其它端处理')
         }
       } else if (msg.type === 'approval-rejected') {
         // 2026-08-26 P0：目标 CLI 不在线 → 保留卡片 + 可见错误 + 重试
