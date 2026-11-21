@@ -14,6 +14,7 @@ import { formatDuration, formatNumber, formatSecondsShort } from '../utils/forma
 import type { Theme } from 'src/utils/theme.js';
 import { activityManager } from '../utils/activityManager.js';
 import { getSpinnerVerbs } from '../constants/spinnerVerbs.js';
+import { notifySpinnerState } from '../utils/gatewayClient.js';
 import { MessageResponse } from './MessageResponse.js';
 import { TaskListV2 } from './TaskListV2.js';
 import { useTasksV2 } from '../hooks/useTasksV2.js';
@@ -169,6 +170,12 @@ function SpinnerWithVerbInner({
   const leaderVerb = overrideMessage ?? currentTodo?.activeForm ?? currentTodo?.subject ?? randomVerb;
   const effectiveVerb = foregroundedTeammate && !foregroundedTeammate.isIdle ? foregroundedTeammate.spinnerVerb ?? randomVerb : leaderVerb;
   const message = effectiveVerb + '…';
+
+  // 等待台词同步（web 台词从 CLI 后端获取）：本会话 spinner 台词变化即上报网关，
+  // web 状态行优先显示同一句；上报失败静默，非关键路径。
+  useEffect(() => {
+    notifySpinnerState(leaderVerb);
+  }, [leaderVerb]);
 
   // Track CLI activity when spinner is active
   useEffect(() => {

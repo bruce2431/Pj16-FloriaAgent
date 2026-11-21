@@ -178,7 +178,7 @@ import { CHEV } from './icons.js'
       // 状态标识与工具行同一行）；已处理/被打断段 = groupTools（连续工具合并概括折叠，思考/旁白/
       // 引导原位穿插）。2026-08-30 恢复 182358 形态（v163 stackBody 重写误删工具折叠，用户实测
       // 「工具行折叠的功能消失」退回）。处理中恒渲染（即使空体——刚发消息乐观折叠语义）；完成态空体跳过。
-      const bodyHtml = processing ? liveFoldBody(foldItems, vacuumState, vacuumStart) : groupTools(foldItems)
+      const bodyHtml = processing ? liveFoldBody(foldItems, vacuumState, vacuumStart, live.spinnerLabel.get(live.curUuid)) : groupTools(foldItems)
       if (bodyHtml || processing) {
         // dur 计时（CLI spinner 对应物）：t1=段开启消息 ts（开启消息/新回合段首引导），endTs=回复落盘 ts/段末 ts
         const t1 = (s.user && s.user.timestamp) || s.startTs || (isFinal ? lastUserTs : 0)

@@ -7312,6 +7312,8 @@ export async function startLocalGateway(opts?: { host?: string; port?: number; t
             from?: unknown
             /** 2026-09-20 会话间协作·拉起新会话：新会话落在哪个项目的 label（见 session-create 分支） */
             project?: unknown
+            /** 等待台词（CLI spinner 当前这句，见 spinner-state 分支） */
+            label?: unknown
           }
           try {
             m = JSON.parse(data.toString())
@@ -7375,6 +7377,17 @@ export async function startLocalGateway(opts?: { host?: string; port?: number; t
             sweepStaleMaps()
             const s = `data: ${JSON.stringify({ type: 'task-state', session: sid, tasks })}\n\n`
             sendAll(sseClients, (c) => { c.res.write(s) })
+            return
+          }
+          // 等待台词同步：CLI Spinner 的 effectiveVerb（任务 activeForm 或内置口语台词）变化 →
+          // /clients WS {type:'spinner-state', label} → SSE 群发。无状态转发（web 自持 per-session
+          // 当前句），台词唯一真源 = CLI；web 状态行优先显示该句，缺省才回落「正在思考/正在生成」。
+          if (m.type === 'spinner-state') {
+            const label = typeof m.label === 'string' ? m.label.slice(0, 60) : ''
+            if (label) {
+              const s = `data: ${JSON.stringify({ type: 'spinner-state', session: sid, label })}\n\n`
+              sendAll(sseClients, (c) => { c.res.write(s) })
+            }
             return
           }
           // 2026-09-04 压缩实时态：CLI onCompactProgress → /clients WS {type:'compact-state', active}

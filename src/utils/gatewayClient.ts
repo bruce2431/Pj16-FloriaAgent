@@ -309,6 +309,8 @@ function openSocket(token: string): void {
     sendQueueState()
     // 2026-09-10 任务清单快照：同队列——重连补发当前可见清单，web 底栏任务浮窗对齐
     sendTaskState()
+    // 等待台词：重连补发当前这句，web 状态行不失同步
+    resendSpinnerState()
     // 2026-08-31 跨网关重启 pending 补发：仍挂起的审批/提问逐条重发 → 网关重新暂存+broadcast，
     // web 补弹可交互卡（重启前弹的卡随网关内存清空丢失，此前只剩只读兜底卡无法作答）
     resendPendingApprovalRequests()
@@ -657,6 +659,32 @@ export function notifySessionDelta(seq: number, anchorSid: string, messages: unk
       /* 断开忽略 */
     }
   }
+}
+
+/**
+ * CLI 等待台词同步链（web 台词从 CLI 后端获取）：Spinner 的 effectiveVerb（任务 activeForm /
+ * 内置随机台词）变化 → /clients WS {type:'spinner-state', label} → 网关 SSE 群发 →
+ * web 状态行优先显示该句（缺省才回落「正在思考/正在生成」）。台词唯一真源 = CLI，
+ * web 不再自造。每回合随机一次 + 任务切换时变化，低频；断线重连后 onopen 补发一次。
+ */
+let lastSpinnerLabel = ''
+function sendSpinnerState(label: string): void {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type: 'spinner-state', label }))
+    } catch {
+      /* 断开忽略 */
+    }
+  }
+}
+export function notifySpinnerState(label: string): void {
+  const text = typeof label === 'string' ? label.trim().slice(0, 60) : ''
+  if (!text || text === lastSpinnerLabel) return
+  lastSpinnerLabel = text
+  sendSpinnerState(text)
+}
+function resendSpinnerState(): void {
+  if (lastSpinnerLabel) sendSpinnerState(lastSpinnerLabel)
 }
 
 /**

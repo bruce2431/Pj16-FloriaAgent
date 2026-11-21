@@ -237,6 +237,15 @@ import { toast } from '../core/util.js'
         live.deltaSeq = ev.seq
         renderSessionBody(live.localMessages, { force: false, hash: state.currentHash })
       }
+      else if (ev.type === 'spinner-state') {
+        // 等待台词同步（web 台词从 CLI 后端获取）：CLI Spinner 当前这句（任务 activeForm 或内置
+        // 口语台词）→ 网关 SSE 群发。per-session 记当前句；当前会话收到即重渲状态行（台词变化
+        // 低频：每回合随机一次 + 任务切换）。缺失时 messages.js 回落「正在思考/正在生成」。
+        if (typeof ev.session === 'string' && typeof ev.label === 'string' && ev.label) {
+          live.spinnerLabel.set(ev.session, ev.label)
+          if (ev.session === live.curUuid) refreshSession()
+        }
+      }
       else if (ev.type === 'compact-state') {
         // 2026-09-04 压缩实时态（queue-state 同款链）：CLI onCompactProgress → 网关 SSE 群发。
         // 压缩进行中 jsonl 零写入 → SSE 'updated' 不来，本事件是「正在压缩」唯一实时源。

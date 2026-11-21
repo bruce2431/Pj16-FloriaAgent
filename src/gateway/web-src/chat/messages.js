@@ -172,10 +172,13 @@ import { toolIcon } from './messages/icons.js'
   // （正在思考/正在生成/正在压缩会话中……）；join=true = 并发尾缀，接在「正在运行：<工具> · <detail>」
   // 之后成同一行同一句（用户原话「思考和搜索同时进行就显示正在搜索xxx并思考」）。
   // 文案经 data-label 落到 DOM，live.js tick 只读该字段补计时，不在第二处复刻 mode→label 映射。
-  function vacuumLabel(mode, join) {
+  // 独立状态行优先用 CLI 上报的等待台词（spinLabel，web 台词从 CLI 后端获取）；并发尾缀需与
+  // 「正在运行：<工具>」拼成一句，仍用「并思考/并生成」短词；缺省回落既有文案。
+  function vacuumLabel(mode, join, spinLabel) {
     if (mode === 'compact') return join ? '并压缩中' : '正在压缩会话中……'
-    if (mode === 'generating') return join ? '并生成' : '正在生成'
-    return join ? '并思考' : '正在思考'
+    if (join) return mode === 'generating' ? '并生成' : '并思考'
+    if (spinLabel) return spinLabel + '…'
+    return mode === 'generating' ? '正在生成' : '正在思考'
   }
   // 僵死/断连红标阈值：引擎最后产出（turn-beat）落后该秒数 = 无产出（live.js tick / approval.js
   // claimTick 同基准，两处共用本常量，不再各写 150）。
@@ -204,7 +207,7 @@ import { toolIcon } from './messages/icons.js'
   // 不轮转（v267 的 summary 轮转方案废弃）。
   // 思考永不独立成行（if (it.kind === 'think') continue）。引导气泡（kind 'guide'）按非 tool
   // 项原样穿插，打断工具组时组照常收口。
-  function liveFoldBody(items, vacuumState, vacuumStart) {
+  function liveFoldBody(items, vacuumState, vacuumStart, spinLabel) {
     let html = ''
     let tools = []
     // 状态显示行并入走构造期拼接（2026-09-09 三轮根治）：stateAppend 仅循环后那次
@@ -216,7 +219,7 @@ import { toolIcon } from './messages/icons.js'
     // 状态显示行原子件（唯一构造点）：join=false + withIcon=true → 独立状态行（行首图标槽）；
     // join=true → 并发尾缀，无独立图标（同一行已有工具图标，避免第二个图标槽=视觉堆叠）。
     const stateSpan = (join, withIcon) => {
-      const label = vacuumLabel(vacuumState, join)
+      const label = vacuumLabel(vacuumState, join, spinLabel)
       return `<span class="think-state${join ? ' ts-join' : ''}" data-ts="${vacuumStart || ''}" data-mode="${vacuumState}" data-label="${esc(label)}">${withIcon ? `<span class="t-ico">${THINK_ICON}</span>` : ''}<span class="ts-text">${esc(label)}</span></span>`
     }
     const flushTools = (isTail) => {
