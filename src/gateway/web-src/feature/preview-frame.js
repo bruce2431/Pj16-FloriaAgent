@@ -2,7 +2,7 @@
 // feature 层）：渲染实现（iframe 三级链）与「当前预览文档」域的状态清点同属 feature，engine 契约
 // （registry/ext-decl）只做表编排——engine 永不 import views。唯一手改处，web/app.js 为生成物。
 
-import { gToken } from '../engine/gateway.js'
+import { apiUrl } from '../engine/gateway.js'
 import { state } from '../engine/state.js'
 import { esc } from '../core/util.js'
 import { deactivateCard, openCard, viewBody } from '../engine/registry.js'
@@ -198,7 +198,7 @@ import { navigate } from '../chat/route.js'
     const seq = ++extCardsSeq
     clearExtCards()
     clearQuoteActions()
-    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(apiUrl(`/gateway/preview-cards?label=${encodeURIComponent(label)}`))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== extCardsSeq) return
@@ -223,7 +223,7 @@ import { navigate } from '../chat/route.js'
   function warmProjectBackend(label, cardId) {
     if (!label) return
     const q = cardId ? `&card=${encodeURIComponent(cardId)}` : ''
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${q}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${q}`))
       .catch(() => {})
   }
 
@@ -392,7 +392,7 @@ import { navigate } from '../chat/route.js'
     // 项目也没声明则 404 → 静态 preview。
     const resolveCard = (cardSel, show) => {
       const cardQ = cardSel && cardSel.hasBackend ? `&card=${encodeURIComponent(cardSel.id)}` : ''
-      fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+      fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}`))
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
         .then((d) => {
           if (!(d && d.url)) throw new Error('no-backend')
@@ -406,16 +406,18 @@ import { navigate } from '../chat/route.js'
           if (show === false) return // 预热帧不占心跳（显示帧的心跳由主链负责）
           if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
           window.__backendHeartbeat = setInterval(() => {
-            fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
+            fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}`)).catch(() => {})
           }, 60000)
         })
         .catch(() => {
           // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
           // 预热帧拉不到静态页就静默放弃（绝不 mountEmpty 清掉显示帧的容器）。
           if (!hasPreview || (!cardSel && !previewHasIndexPage(label))) { if (show !== false) mountEmpty(); return }
-          const previewSrc = cardSel
-            ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
-            : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
+          const previewSrc = apiUrl(
+            cardSel
+              ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}`
+              : `/preview/${encodeURIComponent(label)}/index.html`,
+          )
           fetch(previewSrc, { method: 'GET' })
             .then((r) => {
               if (!r.ok) throw new Error('HTTP ' + r.status)

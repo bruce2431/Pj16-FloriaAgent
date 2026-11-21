@@ -1,6 +1,6 @@
 /* 遥测 · 会话查看器 — Service Worker（静态资源缓存 + 离线兜底） */
 /* 2026-08-28 CORE 改绝对路径：SPA 路径路由（/session/<hash>）下 SW scope=/，相对路径等价但显式绝对防歧义 */
-const CACHE = 'floria-v783'
+const CACHE = 'floria-v784'
 // /vendor/katex/*（2026-10-06 公式渲染）：js+css+woff2 字体一并预缓存，保证离线时公式仍可排版
 // /cm6/*（2026-10-24）：@floria/cm6 全局 IIFE（CM6 依赖全内联）随包预缓存，离线编辑可用
 const CORE = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.ico',
@@ -23,8 +23,14 @@ const CORE = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/
   '/char/1.jpg', '/char/2.jpg', '/char/3.jpg', '/char/4.jpg',
   '/gate/state-token.webp', '/gate/state-newchat.webp', '/gate/transition.webm', '/gate/transition.mp4']
 
+// 逐项预缓存：任一资源缺失不让整次安装失败（addAll 一个 404 即整体 reject，
+// 旧 SW 会继续服役，造成新页面配旧资源的混版）。
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()))
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.allSettled(CORE.map((u) => c.add(u))))
+      .then(() => self.skipWaiting()),
+  )
 })
 
 self.addEventListener('activate', (e) => {
@@ -60,6 +66,8 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy))
         return res
       })
-      .catch(() => caches.match(e.request).then((m) => m || caches.match('/'))),
+      // 只回退该请求自身的缓存；绝不拿 '/'（index.html）顶替 JS/CSS——那会让脚本拿到 HTML
+      // 解析失败，window.FloriaWeb/FloriaCM6 缺失，图标与整个 app 启动一起崩。
+      .catch(() => caches.match(e.request).then((m) => m || Response.error())),
   )
 })

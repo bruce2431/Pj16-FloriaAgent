@@ -5038,8 +5038,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const i = card.path.indexOf('#')
     const file = i >= 0 ? card.path.slice(0, i) : card.path
     const frag = i >= 0 ? card.path.slice(i) : ''
-    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
-    return `/preview/${encodeURIComponent(label)}/${file}${q}${frag}`
+    return withToken(`/preview/${encodeURIComponent(label)}/${file}`) + frag
   }
 
 
@@ -5185,8 +5184,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 目录并按新表重建 tab。失败抛错交给调用方回滚（不本地先改状态，避免与盘上真值漂移）。
   async function setAppEnabled(id, on) {
     if (typeof id !== 'string' || !id) return false
-    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
-    const res = await fetch('/gateway/preview-cards/enable' + q, {
+    const res = await fetch(apiUrl('/gateway/preview-cards/enable'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: GLOBAL_LABEL, card: id, enabled: !!on }),
@@ -5234,7 +5232,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   // 拉一次工作区根应用清单（seq 守卫 = 只有最后一次响应可落目录；失败保持现有目录）。
   function loadAppCatalog() {
     const seq = ++appSeq
-    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(apiUrl(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}`))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== appSeq) return
@@ -6186,7 +6184,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     const seq = ++extCardsSeq
     clearExtCards()
     clearQuoteActions()
-    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(label)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(apiUrl(`/gateway/preview-cards?label=${encodeURIComponent(label)}`))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== extCardsSeq) return
@@ -6211,7 +6209,7 @@ function setFirstSendHash(v) { firstSendHash = v }
   function warmProjectBackend(label, cardId) {
     if (!label) return
     const q = cardId ? `&card=${encodeURIComponent(cardId)}` : ''
-    fetch(`/gateway/backend?label=${encodeURIComponent(label)}${q}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${q}`))
       .catch(() => {})
   }
 
@@ -6380,7 +6378,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     // 项目也没声明则 404 → 静态 preview。
     const resolveCard = (cardSel, show) => {
       const cardQ = cardSel && cardSel.hasBackend ? `&card=${encodeURIComponent(cardSel.id)}` : ''
-      fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+      fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}`))
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
         .then((d) => {
           if (!(d && d.url)) throw new Error('no-backend')
@@ -6394,16 +6392,18 @@ function setFirstSendHash(v) { firstSendHash = v }
           if (show === false) return // 预热帧不占心跳（显示帧的心跳由主链负责）
           if (window.__backendHeartbeat) clearInterval(window.__backendHeartbeat)
           window.__backendHeartbeat = setInterval(() => {
-            fetch(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}&token=${encodeURIComponent(gToken || '')}`).catch(() => {})
+            fetch(apiUrl(`/gateway/backend?label=${encodeURIComponent(label)}${cardQ}`)).catch(() => {})
           }, 60000)
         })
         .catch(() => {
           // ② 静态 preview；项目未申报 preview 目录、或无卡且传统单页被停用 → 空态
           // 预热帧拉不到静态页就静默放弃（绝不 mountEmpty 清掉显示帧的容器）。
           if (!hasPreview || (!cardSel && !previewHasIndexPage(label))) { if (show !== false) mountEmpty(); return }
-          const previewSrc = cardSel
-            ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
-            : `/preview/${encodeURIComponent(label)}/index.html${gToken ? '?token=' + encodeURIComponent(gToken) : ''}`
+          const previewSrc = apiUrl(
+            cardSel
+              ? `/preview/${encodeURIComponent(label)}/${encodeURIComponent(cardSel.id)}/${cardEntryPath(cardSel)}`
+              : `/preview/${encodeURIComponent(label)}/index.html`,
+          )
           fetch(previewSrc, { method: 'GET' })
             .then((r) => {
               if (!r.ok) throw new Error('HTTP ' + r.status)
@@ -14065,10 +14065,14 @@ function wkMerge3(base, local, remote) {
   // 2026-08-28 门控条件从「有无 gToken」改为「是否已验证」：cookie 授权设备刷新后直接可拉数据，
   // 未验证（无 cookie 且无首链 token）时请求不发，待 connect 失败回门 / hideGate 解锁后补拉。
   const needToken = () => GATEWAY && !gateVerified
-  function apiUrl(path) {
+  // 凭据拼接唯一出口：持 token 的会话带 query；设备票证 cookie 授权的会话 gToken 为空，
+  // 原样返回靠 cookie 通过。各模块一律 import 本函数，不再各自判 gToken。
+  function withToken(path) {
+    if (!gToken) return path
     const q = path.includes('?') ? '&' : '?'
     return path + q + 'token=' + encodeURIComponent(gToken)
   }
+  const apiUrl = (path) => withToken(path)
   // 模型/思考等级切换（POST /gateway/model：持久化写 settings.json + 广播实时生效）。
   // 2026-10-05 自 inputbar/model-select.js 迁入——网关客户端是 needToken/apiUrl/gToken 的唯一持有者，
   // 卡片与输入栏都经此调用（去卡片→inputbar 横向依赖）。needToken 门：未验证返回 false 由调用方提示。
@@ -17650,6 +17654,9 @@ function setViewportAdapter(a) { stageSyncFn = a.syncStage }
       if (d.review) GATEWAY_REVIEW = true
       if (d.hotReload) HOT_RELOAD = true
       if (typeof d.boot === 'number') gwBoot = d.boot
+      // 凭据授权结果由网关一次答复（token 或设备票证 cookie），不再只靠 WS onopen 置位：
+      // WS 不可用/握手慢时，已授权设备也能直接拉起数据链，而不是停在空白门态。
+      if (d.auth && !gateVerified) gateVerified = true
     } catch { /* 非网关环境（静态托管）忽略 */ }
   }
 

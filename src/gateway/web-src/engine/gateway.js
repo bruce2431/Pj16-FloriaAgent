@@ -36,10 +36,14 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
   // 2026-08-28 门控条件从「有无 gToken」改为「是否已验证」：cookie 授权设备刷新后直接可拉数据，
   // 未验证（无 cookie 且无首链 token）时请求不发，待 connect 失败回门 / hideGate 解锁后补拉。
   const needToken = () => GATEWAY && !gateVerified
-  function apiUrl(path) {
+  // 凭据拼接唯一出口：持 token 的会话带 query；设备票证 cookie 授权的会话 gToken 为空，
+  // 原样返回靠 cookie 通过。各模块一律 import 本函数，不再各自判 gToken。
+  function withToken(path) {
+    if (!gToken) return path
     const q = path.includes('?') ? '&' : '?'
     return path + q + 'token=' + encodeURIComponent(gToken)
   }
+  const apiUrl = (path) => withToken(path)
   // 模型/思考等级切换（POST /gateway/model：持久化写 settings.json + 广播实时生效）。
   // 2026-10-05 自 inputbar/model-select.js 迁入——网关客户端是 needToken/apiUrl/gToken 的唯一持有者，
   // 卡片与输入栏都经此调用（去卡片→inputbar 横向依赖）。needToken 门：未验证返回 false 由调用方提示。
@@ -332,6 +336,9 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       if (d.review) GATEWAY_REVIEW = true
       if (d.hotReload) HOT_RELOAD = true
       if (typeof d.boot === 'number') gwBoot = d.boot
+      // 凭据授权结果由网关一次答复（token 或设备票证 cookie），不再只靠 WS onopen 置位：
+      // WS 不可用/握手慢时，已授权设备也能直接拉起数据链，而不是停在空白门态。
+      if (d.auth && !gateVerified) gateVerified = true
     } catch { /* 非网关环境（静态托管）忽略 */ }
   }
 
@@ -352,6 +359,7 @@ export {
   GATEWAY_REVIEW,
   HOT_RELOAD,
   apiUrl,
+  withToken,
   apiSetModel,
   connect,
   detectGateway,

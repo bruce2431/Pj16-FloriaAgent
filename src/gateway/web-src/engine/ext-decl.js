@@ -4,7 +4,7 @@
 // 契约链路归 engine，engine 永不 import views。extCardSrc 取网关 token（engine→engine 合法）。
 // 唯一手改处，web/app.js 为生成物。
 
-import { gToken } from './gateway.js'
+import { withToken } from './gateway.js'
 /* @module engine/ext-decl.js */
   // 卡片字段校验（唯一一份）：preview.json 来源在网关已校过一遍，但 postMessage 这条不经过网关，
   // 必须同款再校——两条来源共用本函数，不给两处各写一套。host 只认 view（本版唯一定义的位置）。
@@ -59,8 +59,7 @@ import { gToken } from './gateway.js'
     const i = card.path.indexOf('#')
     const file = i >= 0 ? card.path.slice(0, i) : card.path
     const frag = i >= 0 ? card.path.slice(i) : ''
-    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
-    return `/preview/${encodeURIComponent(label)}/${file}${q}${frag}`
+    return withToken(`/preview/${encodeURIComponent(label)}/${file}`) + frag
   }
 
 export {

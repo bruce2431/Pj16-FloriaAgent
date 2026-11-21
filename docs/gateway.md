@@ -26,17 +26,21 @@
 
 ## 2. 认证：token 出 URL + cookie 票证 + 设备配对
 
-**机制**：首链带 `?token=<hex>`（CLI `/server on` 打印的 localUrl/lanUrl 即首链）→ 网关 `handleRequest` 开头 query token 命中即种 `floria_auth` HttpOnly cookie（Path=/、SameSite=Lax、1 年；票证 `randomBytes(24)` 落盘便携根 `.claude/gateway/tickets` JSON 数组，`gatewayToken.ts` 存取，上限 64）；此后 `/gateway/*`、`/preview/*` 与 WS 升级改「query token 或 cookie 票证二选一」——浏览器 URL 不再带 token（`hideGate()` 清 query）。
+**机制**：首链带 `?token=<hex>`（CLI `/server on` 打印的 localUrl/lanUrl 即首链）→ 网关 `handleRequest` 对 **GET + Accept 含 text/html 的导航请求**在 token 命中时换发 `floria_auth` HttpOnly cookie（Path=/、SameSite=Lax、1 年；票证 `randomBytes(24)` 落盘便携根 `.claude/gateway/tickets` JSON 数组，`gatewayToken.ts` 存取，上限 64）；此后 `/gateway/*`、`/preview/*` 与 WS 升级改「query token 或 cookie 票证二选一」——浏览器 URL 不再带 token（`hideGate()` 清 query），刷新与 iframe 预览仍凭 cookie 授权。API/CLI 链路（非 HTML 导航）只放行、不种 cookie。
 
-**设备认证配对**：授权只走手动配对——①设备未授权 → 前端门显示**设备请求码**（8 位 hex，localStorage `floria-device-code` 持久、同设备恒定）；②PC `/server auth add <请求码>` 加入授权名单（票证=码本身，`.claude/gateway/tickets` {id,created} 数组，上限 64）；③设备端门态每 2.5s 轮询 `GET /gateway/activate?code=`（公开端点，防枚举靠码熵；命中 → 种 HttpOnly floria_auth 1 年）→ 自动 connect 进门过渡动画。`/server auth` 列设备、`auth off <n>` 撤销。**无任何 token 授权通道**：query token 仅剩 CLI 内部 gateway-token（上报/WS/关闭，不种 cookie）；/server on/status 不打印 token。
+**设备认证配对**：授权只走手动配对——①设备未授权 → 前端门显示**设备请求码**（8 位 hex，localStorage `floria-device-code` 持久、同设备恒定）；②PC `/server auth add <请求码>` 加入授权名单（票证=码本身，`.claude/gateway/tickets` {id,created} 数组，上限 64）；③设备端门态每 2.5s 轮询 `GET /gateway/activate?code=`（公开端点，防枚举靠码熵；命中 → 种 HttpOnly floria_auth 1 年）→ 自动 connect 进门过渡动画。`/server auth` 列设备、`auth off <n>` 撤销。**token 不作设备授权通道**：设备门只走配对码（`/gateway/activate`）；query token 仅用于 CLI 内部链路与首链导航换发一次设备票证（见上），其余请求即使带 token 也不种 cookie；`/server on/status` 不打印 token。
 
 **设备匹配语义**：token 是钥匙、cookie 是每台设备自己记住的钥匙——token 轮换（`/server off` 清盘后再启换新）不影响已授权设备；`/server off` 清盘时同步清票证与 custom token（全设备掉线）。
 
 **gateway/token 稳定密钥**：token 改「读盘-or-创建」（`startLocalGateway` 与 `/server on` spawn 链同序：显式覆盖 > 读盘 > 随机），仅 `/server off` 清盘后轮换；落盘时机在 **listen 成功回调**（否则多进程抢起网关时 bind 失败者会覆盖盘上胜者 token → 全部 CLI `/clients` 注册 401：侧栏无状态 / web 误 spawn resume / 消息悬空 / session-delta 断流）。**不变量**：「盘上 token/port 恒描述现网关，只有端口持有者可发布」。CLI 侧 `gatewayClient` 每轮探测重读盘上 token（3s TTL），对齐后 ≤10s 自动重连，无需重启进程。
 
+**前端资源投送（`webAssets.ts`）**：网关静态前端（index.html / app.js / sw.js / webui / cm6 / vendor / gate / char）的唯一读取口。解析顺序 = **dev 磁盘优先**（`<exe 目录>/Floria/src/gateway/web`、`<cwd>/src/gateway/web`、`<cwd>/Floria/src/gateway/web`，命中含 index.html 者）→ **exe 内嵌**（`web-assets.generated.ts`，build 时生成）。磁盘层按 mtime+size 失效缓存：重新生成 `web/` 后下一个请求即取新内容，**不必重建 exe、不必重启网关**（改 web-src 仍须 bundle-web 生成 app.js）。`/gateway/health` 返回 `web`（版本戳：磁盘 mtime 组合或内嵌长度）与 `webSource`（disk/embedded）供诊断与前端比对。内嵌路径用于拷贝部署（目标机无 `src/gateway/web`）。
+
 **单实例仲裁（网关锁）**：Windows 上 Bun 的监听不排他——两个 `--gateway` 抢同一端口时双方都可能 bind 成功（日志同一秒内 EADDRINUSE 与「监听成功」并存），后绑定者接管全部连接、先绑定者成为影子（`bpSessions` 等内存票证为空 → 既有页面 `/backend` 全 401，影子空闲退场还会清掉 live 网关的 token/port）。因此启动序为：探测 `currentPort` 与盘上 port 上的 `/gateway/health` → 抢占 `.claude/gateway/gateway.lock`（JSON `{pid,createdAt}`，`wx` 排他创建）→ 再探一次（兼容不持锁的旧 exe 网关）→ 才 bind。失去仲裁者**不 bind、不写 token/port**，`--gateway` 进程以 0 退出（进程内调用抛错）。锁随 `stopLocalGateway` 在 `server.close()` 之后释放；硬杀遗留的锁按 pid 存活判定清理，持有者存活但超宽限期（15s）仍无网关应答时视为僵死锁（复用 pid / 卡死）。**不变量**：同一便携根同时至多一个进程监听并发布 token/port。
 
-**前端门控**：`needToken()` =「`GATEWAY && !gateVerified`」（gateVerified 声明提前）；`initGateway` 统一先 `connect()`（cookie 有效 WS 直过 → `hideGate` 直进空态，无效 onclose 回 token 门）；门内输入 token 先 HTTP 预验证（种 cookie）再 connect；`apiUrl` 仍附加 gToken（空串无害，网关看 cookie）。
+**前端门控**：`needToken()` =「`GATEWAY && !gateVerified`」（gateVerified 声明提前）。`detectGateway` 读 `/gateway/health` 的 `auth`（token/设备票证命中即非空）直接置 `gateVerified`，不依赖 WS onopen——WS 不可用时已授权设备也能进入数据链。`initGateway` 统一先 `connect()`（cookie 有效 WS 直过 → `hideGate` 直进空态，无效 onclose 回 token 门）；门内输入 token 先 HTTP 预验证再 connect。凭据拼接唯一出口 `apiUrl`/`withToken`（gToken 为空即原样返回，靠 cookie），各模块不再各自判 gToken。
+
+**首链与 /backend 自愈**：设备票证缺失且请求只有 token 时，`/gateway/health` 的 `auth` 仍为 'token'，前端据此进入；`/preview/*` iframe 用 `withToken` 带同 token。`bpSessions` 是内存态（网关重启即空），`/backend/*` 命中空票证但网关授权有效（token 或设备票证）时就地重建票证并放行，不再整片 401。
 
 **访问地址（mDNS 自广播 `floria.local`）**：同 WiFi/热点设备一律 `http://floria.local:<port>/`，换网络/换 IP 免配置免重授权（授权按设备码恒定）；**仅支持 Apple/Windows**（`/server` 只输出该唯一地址、不列 IP 直连；Android `.local` 解析差不支持）。本机 hosts `127.0.0.1 floria.local` → 本机走 hosts、远程走 mDNS（floria.com 是公网真实注册域名，勿用作别名）。**红线：该 hosts 条目只允许存在于网关所在机**（解析到自身，经 `0.0.0.0` 监听可达）；其它设备一律靠 mDNS，在非网关设备上写 `127.0.0.1 floria.local` 会使其把域名解析到自身、页面恒打不开（网关代码从不读写 hosts，此条纯人工，**勿在客户端抄用**）。
 
@@ -70,7 +74,7 @@
 **动机**：iframe 直连 `http://127.0.0.1:<port>/` 只在本机浏览器成立——远程宿主上 127.0.0.1 指向设备自身 → 连接拒绝；`/preview/*` 静态兜底因子资源不带 query token 全 401，不可用。
 
 - **路由**：`/backend/<label>/<path>?<query>` → `http://127.0.0.1:<port>/<path>?<query>`。rest/search 原样透传（保留原始 %xx 编码，不二次解码重组，防中文路径双重编码错乱）；`proxyBackendRequest` 双向流式管道（媒体大文件不落盘），请求侧剥 hop-by-hop + host + cookie（不向项目后端泄露 floria_bp 票证），响应侧剥 hop-by-hop + 上游 set-cookie（防作用域泄漏），Location 改写回 `/backend` 前缀。后端仍只绑回环。（旧 /bp/ 保留解析兼容不再生成。）
-- **鉴权**：不靠 query token（页面内相对子请求必裸奔）。`/gateway/backend` 成功响应种 `HttpOnly` cookie `floria_bp`（Path=/backend、SameSite=Lax、24h）；票证存网关内存 Map（含 label 白名单，多项目并行预览互不顶掉，sweep 过期）。`/backend/*` 凭 cookie + 白名单放行，否则 401；label 须命中 findProjects 且 hasBackend，否则 404。
+- **鉴权**：不靠 query token（页面内相对子请求必裸奔）。`/gateway/backend` 成功响应种 `HttpOnly` cookie `floria_bp`（Path=/backend、SameSite=Lax、24h）；票证存网关内存 Map（含 label 白名单，多项目并行预览互不顶掉，sweep 过期）。`/backend/*` 凭 cookie + 白名单放行；票证缺失/无该 label 但请求本身已网关授权（token 或 floria_auth）时就地重建票证（复用原 cookie key）并继续转发。label 须命中 findProjects 且 hasBackend，否则 404。
 - **前端分流**：`openProjectPreview` 按 `location.hostname ∉ {127.0.0.1, localhost}` 判远程宿主 → iframe 用 `/backend/<label>/`（cookie 由上一拍 `/gateway/backend` 响应种下，子请求自动携带）；本机直连零开销。心跳 60s `GET /gateway/backend`（保 lastActive + 续票证）。
 - **配套约束**：**经 /backend 代理的项目前端 API 一律相对路径**（根绝对路径 `/delete` 等在 /backend 前缀下会指回网关根 404）。
 

@@ -7,7 +7,7 @@
 // 本件不 import registry（表变更后的重渲经 setTabRefresh 注入的回调触发，同 setExtCardRenderer 手法）。
 
 import { iconBaseFor } from '../core/icon-spec.js'
-import { gToken } from './gateway.js'
+import { apiUrl } from './gateway.js'
 import { patchUI, readUI } from '../core/storage.js'
 import { normExtCards, normQuoteActions } from './ext-decl.js'
 /* @module engine/ext-runtime.js */
@@ -154,8 +154,7 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
   // 目录并按新表重建 tab。失败抛错交给调用方回滚（不本地先改状态，避免与盘上真值漂移）。
   async function setAppEnabled(id, on) {
     if (typeof id !== 'string' || !id) return false
-    const q = gToken ? '?token=' + encodeURIComponent(gToken) : ''
-    const res = await fetch('/gateway/preview-cards/enable' + q, {
+    const res = await fetch(apiUrl('/gateway/preview-cards/enable'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: GLOBAL_LABEL, card: id, enabled: !!on }),
@@ -203,7 +202,7 @@ import { normExtCards, normQuoteActions } from './ext-decl.js'
   // 拉一次工作区根应用清单（seq 守卫 = 只有最后一次响应可落目录；失败保持现有目录）。
   function loadAppCatalog() {
     const seq = ++appSeq
-    return fetch(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}${gToken ? '&token=' + encodeURIComponent(gToken) : ''}`)
+    return fetch(apiUrl(`/gateway/preview-cards?label=${encodeURIComponent(GLOBAL_LABEL)}`))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
         if (seq !== appSeq) return

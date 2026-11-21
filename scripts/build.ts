@@ -347,3 +347,45 @@ if (existsSync(builtPath)) {
     console.warn(`[build] icon post-process failed (exit ${post.exitCode}); keeping bun-embedded icon`)
   }
 }
+
+// dev 构建即部署：8124 上运行的若是别的 exe，构建完直接换成本次产物。
+// 杀/起必须交给唯一重启模板（同进程零间隙，防旧会话 60s 节流抢先拉起旧网关）。
+// 只对 --dev 生效；--compile 发布产物不碰现网。
+function portHolderName(port: number): string | null {
+  const out = runCommand(['netstat', '-ano'])
+  if (!out) return null
+  const pids = new Set<string>()
+  for (const line of out.split('\n')) {
+    if (!line.includes(`:${port}`) || !line.includes('LISTENING')) continue
+    const cols = line.trim().split(/\s+/)
+    pids.add(cols[cols.length - 1])
+  }
+  const pid = [...pids][0]
+  if (!pid) return null
+  const name = runCommand([
+    'powershell', '-NoProfile', '-Command',
+    `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").Name`,
+  ])
+  return name ? name.trim() : null
+}
+
+if (dev && existsSync(builtPath)) {
+  const holder = portHolderName(8124)
+  const newName = builtPath.replace(/\\/g, '/').split('/').pop()!
+  if (holder && holder !== newName) {
+    const nextRoot = resolve(process.cwd(), '..')
+    const restart = join(nextRoot, '.claude', 'neturon', 'neurons', 'Neuron-Pj16', 'l3.raw', 'files', '20261006192000-restart-gateway.ts')
+    if (existsSync(restart)) {
+      console.log(`[build] 8124 由 ${holder} 持有 → 重启网关为 ${newName}`)
+      const r = Bun.spawnSync({
+        cmd: [BUN_BIN, restart, newName],
+        cwd: nextRoot,
+        stdout: 'inherit',
+        stderr: 'inherit',
+      })
+      if (r.exitCode !== 0) console.warn(`[build] 网关重启失败（exit ${r.exitCode}），可手动重跑模板`)
+    } else {
+      console.warn(`[build] 未找到网关重启模板（${restart}），跳过自动重启`)
+    }
+  }
+}

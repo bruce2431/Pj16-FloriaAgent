@@ -364,9 +364,10 @@ AppState store 是 React Provider 内 `useState` 创建**非模块单例**，Rea
 
 - **不变量**：进预览必须先 `clearSessionSlots()`（见 §34）——堵「实时流按残留 `live.curUuid` 命中守卫把预览洗成 chat」。
 - **两级重入**：同 label 且 iframe 在场（`data-label` 锚定）= **软重入**：不重写 shell、不清槽，mount 按 iframe 现有 src 校正（同 src 零操作 = 零导航扰动；异 src 只换 src），分支统一 return；异 label 或 iframe 不在场 = 硬挂载（原全流程）。理由：`hideGate` 恢复链每次 WS 重连都跑，若整区重写 shell + iframe 重载，iOS 上 iframe 二次导航会污染主历史诱发自发后退落到 `/session/<hash>`。
-- **取证注意**：bytecode exe 内嵌资产不可 grep，验证资产版本直接 `curl http://127.0.0.1:8124/sw.js` 与 `/app.js`。
+- **取证注意**：dev 本机网关静态资源优先读 `<项目根>/Floria/src/gateway/web/`（见 gateway.md §2「前端资源投送」），`curl http://127.0.0.1:8124/sw.js` 即磁盘当前字节；拷贝部署（无源码目录）才回落 exe 内嵌资产，此时 bytecode 内嵌不可 grep，改用 `/gateway/health` 的 `web`/`webSource` 判版本。
 - **前端资产版本自愈**：换 exe 后旧标签页只重连不重载 JS。修 = `live.js` 在 hello（每次 SSE 建连/重连都发）时 fetch `/sw.js` 提取 CACHE 版本与页面基线比对，漂移即 toast + 自动 reload（输入栏有内容只提示）。**守护不变量 = 运行中的前端代码 = 网关当前资产版本**。
 - **HTML 导航网络优先**：SW fetch 离线兜底会把缓存里的旧 index.html → 旧 app.js 静默回喂。修 = `sw.js` 对 `e.request.mode === 'navigate'`（覆盖全部 SPA 路由导航）**只 fetch 网络不回退缓存**，静态资产兜底保留。**守护不变量 = 导航拿到的 HTML 永远来自网关当前服务字节**。
+- **静态资源回退不跨类型**：离线兜底只回 `caches.match(e.request)`，绝不拿 `/`（index.html）顶替 JS/CSS——否则脚本拿到 HTML 解析失败，`window.FloriaWeb`/`FloriaCM6` 缺失，`core/icons.js` 直接抛错，表现为界面无图标、启动白屏。预缓存用逐项 `Promise.allSettled`，单个资源 404 不让整次 SW 安装失败（旧 SW 继续服役会造成新页面配旧资源）。**守护不变量 = 同 URL 的回退响应与请求类型同源**。
 
 ## 28. 侧栏会话 tab 排序：有状态置顶 + 创建时间新→旧
 

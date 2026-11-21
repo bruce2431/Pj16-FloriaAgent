@@ -60,6 +60,7 @@ import {
   loadGatewayTokenFromDisk,
   isGatewayTicket,
   touchGatewayTicket,
+  addGatewayTicket,
   gatewayDir,
 } from '../utils/gatewayToken.js'
 
@@ -82,7 +83,9 @@ import { AUTOCOMPACT_BUFFER_TOKENS, getEffectiveContextWindowSize } from '../ser
 // 会话重命名（2026-08-24 修复）：直接复用 CLI /rename 的落盘函数（saveCustomTitle + saveAgentName），
 // 不本地复刻写盘格式——与 CLI 完全同路径，保证含 sessionId、CLI resume 能读到、退出不回退。
 import { saveAgentName, saveCustomTitle } from '../utils/sessionStorage.js'
-import { webAssets } from './web-assets.generated.js'
+// 静态前端投送（磁盘 dev 优先、内嵌兜底）与 HTTP 鉴权判定，各自收口为独立模块。
+import { readWebAsset, webAssetSource, webAssetStamp } from './webAssets.js'
+import { AUTH_COOKIE_NAME, BP_COOKIE_NAME, isProtectedPath, parseCookieHeader, resolveAuth } from './httpAuth.js'
 // 统一设置服务（2026-08-26 E）：写 effortLevel 走官方 updateSettingsForSource、读侧走官方
 // getSettingsForSource（带缓存，写后自动失效），均不本地手解 settings.json。
 // userSettings 在便携模式下解析到便携根 .claude/settings.json。
@@ -280,10 +283,6 @@ let gatewayStopping = false
 // 解法：后端仍只绑回环（访问面不变），流量经网关主端口转发（/backend/<label>/）。鉴权不靠 query token
 // （页面内相对子请求不带 token，参考 /preview/* 子资源全 401 的教训），改用票证 cookie：
 // /gateway/backend 本身受 token 校验，成功时种 HttpOnly cookie 作为 /backend/* 凭据（票证内含 label 白名单）。
-const BP_COOKIE_NAME = 'floria_bp'
-// 2026-08-28 floria 设备记忆票证：首链 ?token= 校验通过 → 种 HttpOnly cookie，之后 URL 不再携带 token。
-// 校验二选一（query token 或本 cookie），票证落盘见 gatewayToken.ts；/server off 清盘全设备掉线。
-const AUTH_COOKIE_NAME = 'floria_auth'
 const BP_COOKIE_TTL_MS = 24 * 60 * 60 * 1000
 const BP_COOKIE_KEY_RE = /^[0-9a-f]{32}$/
 interface BpSession {
@@ -291,22 +290,6 @@ interface BpSession {
   expires: number
 }
 const bpSessions = new Map<string, BpSession>()
-
-/** 解析 Cookie 请求头为键值表（值按 URI 组件反转义；无头/坏段安全跳过） */
-function parseCookieHeader(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {}
-  if (!header) return out
-  for (const part of header.split(';')) {
-    const i = part.indexOf('=')
-    if (i < 0) continue
-    try {
-      out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim())
-    } catch {
-      /* 反转义失败跳过该段 */
-    }
-  }
-  return out
-}
 
 /** 清扫过期票证（拷贝遍历防迭代中删除） */
 function sweepBpSessions(now = Date.now()): void {
@@ -1059,18 +1042,7 @@ function publicDir(root: string): string {
   return join(root, 'SubPj1-遥测网页', 'public')
 }
 
-// 内嵌 web 资源（打包进 exe，gen-web-assets.ts 生成）；命中则内存 serve，磁盘 SubPj public 仅作开发兜底。
-// base64 解码结果惰性缓存，避免每次静态请求重复解码 index.html/app.js 等常驻资源。
-const webAssetCache = new Map<string, Buffer>()
-function readWebAsset(name: string): Buffer | null {
-  const cached = webAssetCache.get(name)
-  if (cached) return cached
-  const b64 = webAssets[name]
-  if (b64 === undefined) return null
-  const buf = Buffer.from(b64, 'base64')
-  webAssetCache.set(name, buf)
-  return buf
-}
+// 静态前端资源读取见 ./webAssets.ts：dev 磁盘优先（改动刷新即生效）、内嵌 exe 资源兜底。
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -3878,20 +3850,25 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   //    → 设备 GET /gateway/activate?code=<码> 种 cookie）→ 授权设备 URL 干净、永久免认证。
   //  - query token 仅剩网关 token（CLI 上报/内部链路），只放行请求、不种 cookie（浏览器不可用
   //    它获得授权；浏览器 URL 也不再出现 token）。
-  const qToken = url.searchParams.get('token')
-  const qOk = qToken != null && qToken !== '' && qToken === currentToken
-  const cookieVal = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME]
-  const cookieOk = isGatewayTicket(cookieVal)
-  const isProtected =
-    (url.pathname.startsWith('/gateway/') && url.pathname !== '/gateway/health' && url.pathname !== '/gateway/activate') ||
-    url.pathname.startsWith('/preview/')
-  if (isProtected && !qOk && !cookieOk) {
+  const auth = resolveAuth(req, url, { token: currentToken, isTicket: isGatewayTicket })
+  const isProtected = isProtectedPath(url.pathname)
+  if (isProtected && !auth) {
     sendJson(res, 401, { error: 'unauthorized' })
     return
   }
   // 授权设备活跃回写（2026-09-01 /server auth 设备情况展示：UA/IP/lastSeen，60s 写盘节流）
-  if (isProtected && cookieOk) {
-    touchGatewayTicket(cookieVal, req.headers['user-agent'], remoteIPv4(req.socket.remoteAddress))
+  if (isProtected && auth === 'ticket') {
+    touchGatewayTicket(parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME], req.headers['user-agent'], remoteIPv4(req.socket.remoteAddress))
+  }
+  // 首链 token（浏览器导航）换发设备票证 cookie：之后 URL 无 token、刷新、切 iframe 预览都仍授权。
+  // 只对 HTML 导航生效（API/CLI 链路不种）；token 本身是最高凭据，换票证不扩权。
+  if (auth === 'token' && req.method === 'GET' && String(req.headers.accept || '').includes('text/html')) {
+    const cur = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME]
+    if (!cur || !isGatewayTicket(cur)) {
+      const ticket = randomBytes(24).toString('hex')
+      addGatewayTicket(ticket)
+      res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${ticket}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`)
+    }
   }
   // 设备配对激活（公开端点，防枚举靠请求码熵）：码在授权名单（/server auth add）→ 种 HttpOnly
   // floria_auth cookie（票证=码本身，1 年）；不在名单 → 403。前端门态轮询此端点实现「授权后自动进入」。
@@ -3911,7 +3888,17 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
   if (req.method === 'GET' && url.pathname === '/gateway/health') {
     // boot：本网关进程启动时刻。前端用它判定「是否换了网关」——同一网关刷新保留工具栏开合，
     // 换网关（boot 变）则复位为折叠（2026-11-07 用户定案）。
-    sendJson(res, 200, { ok: true, mode: 'gateway', boot: GATEWAY_BOOT_AT })
+    // auth：该请求凭据是否已授权（token/cookie）。前端据此直接越过 token 门进入数据链，
+    // 不再等 WS onopen——WS 不可用时旧判定会让已授权设备停在空白门态。
+    // web：前端资源版本戳（磁盘 mtime / 内嵌长度）。换版后前端比对可自愈重载。
+    sendJson(res, 200, {
+      ok: true,
+      mode: 'gateway',
+      boot: GATEWAY_BOOT_AT,
+      auth: auth ?? false,
+      web: webAssetStamp(),
+      webSource: webAssetSource(),
+    })
     return
   }
   // 2026-08-17 独立网关优雅关闭端点（受上方 /gateway/* token 校验保护）：/server off 调用。
@@ -5307,12 +5294,26 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     } catch {
       bpLabel = bpMatch[1]
     }
+    // bpSessions 是内存态，网关重启即清空；但网关授权（token/设备票证）仍在。
+    // 已授权浏览器命中空票证时就地重建（复用原 cookie key，避免 Set-Cookie 抖动），
+    // 不再让重启后的 iframe 子资源整片 401。
     const bpJar = parseCookieHeader(req.headers.cookie)
-    const bpCookieKey = bpJar[BP_COOKIE_NAME]
-    const bpTicket = bpCookieKey ? bpSessions.get(bpCookieKey) : undefined
+    let bpCookieKey = bpJar[BP_COOKIE_NAME]
+    let bpTicket = bpCookieKey && BP_COOKIE_KEY_RE.test(bpCookieKey) ? bpSessions.get(bpCookieKey) : undefined
     if (!bpTicket || !bpTicket.labels.has(bpLabel)) {
-      sendJson(res, 401, { error: 'unauthorized' })
-      return
+      if (!auth) {
+        sendJson(res, 401, { error: 'unauthorized' })
+        return
+      }
+      sweepBpSessions()
+      if (!bpTicket) {
+        if (!bpCookieKey || !BP_COOKIE_KEY_RE.test(bpCookieKey)) bpCookieKey = randomBytes(16).toString('hex')
+        bpTicket = { labels: new Set<string>(), expires: 0 }
+        bpSessions.set(bpCookieKey, bpTicket)
+        res.setHeader('Set-Cookie', `${BP_COOKIE_NAME}=${bpCookieKey}; Path=/backend; HttpOnly; SameSite=Lax; Max-Age=86400`)
+      }
+      bpTicket.labels.add(bpLabel)
+      bpTicket.expires = Date.now() + BP_COOKIE_TTL_MS
     }
     const bpProj = findProjects(root).find((g) => g.label === bpLabel && g.hasPreview)
     if (!bpProj) {
@@ -7192,17 +7193,15 @@ export async function startLocalGateway(opts?: { host?: string; port?: number; t
     const url = new URL(req.url ?? '/', `http://${req.headers.host || 'localhost'}`)
     // 2026-08-28 与 HTTP 一致：网关 token（CLI 内部链路）或 floria_auth cookie 票证二选一；
     // 浏览器授权全靠 cookie（/gateway/activate 配对激活时种下），URL 无 token。
-    const wsToken = url.searchParams.get('token') || ''
-    const qOk = wsToken !== '' && wsToken === currentToken
-    const wsCookieVal = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME]
-    const cOk = isGatewayTicket(wsCookieVal)
-    if (!qOk && !cOk) {
+    const wsAuth = resolveAuth(req, url, { token: currentToken, isTicket: isGatewayTicket })
+    if (!wsAuth) {
       socket.destroy()
       return
     }
+    const wsCookieVal = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME]
     // 授权设备活跃回写（WS 长连接是设备在线的主要形态，upgrade 即更新 UA/IP/lastSeen；
     // 设备自报类型 hint 一并更新——存量票证不经 activate，靠 WS 重连补齐）
-    if (cOk) {
+    if (wsAuth === 'ticket') {
       const hint = (url.searchParams.get('device') || '').trim()
       touchGatewayTicket(wsCookieVal, req.headers['user-agent'], remoteIPv4(req.socket.remoteAddress), hint || undefined)
     }
