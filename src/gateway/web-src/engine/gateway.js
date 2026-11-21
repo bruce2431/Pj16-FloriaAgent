@@ -47,16 +47,20 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
   // 模型/思考等级切换（POST /gateway/model：持久化写 settings.json + 广播实时生效）。
   // 2026-10-05 自 inputbar/model-select.js 迁入——网关客户端是 needToken/apiUrl/gToken 的唯一持有者，
   // 卡片与输入栏都经此调用（去卡片→inputbar 横向依赖）。needToken 门：未验证返回 false 由调用方提示。
+  // 返回网关回执体：{ok, applied}（applied=false = 目标会话未起，意图已落启动模型表，
+  // 会话注册后会补投）。失败/未验证返回 {ok:false}，调用方按 ok/applied 给提示。
   async function apiSetModel(body) {
-    if (needToken()) return false
+    if (needToken()) return { ok: false }
     try {
       const res = await fetch(apiUrl('/gateway/model'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      return res.ok
-    } catch { return false }
+      if (!res.ok) return { ok: false }
+      const data = await res.json().catch(() => null)
+      return data && data.ok ? data : { ok: true }
+    } catch { return { ok: false } }
   }
 
   // 卡片公开 API（2026-10-11）：帧能力表经 /ws 上行的唯一发送口。注入进 engine/card-bus.js（总线不

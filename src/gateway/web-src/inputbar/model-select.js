@@ -315,7 +315,9 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
         return
       }
       void apiSetModel({ model: id, sessionId: state.currentHash })
-        .then(ok => toast(ok ? `模型已切换为 ${id}` : '切换失败 · 目标会话未在线或网关未连接'))
+        .then(r => toast(!r.ok ? '切换失败 · 网关未连接' : r.applied === false
+          ? `已设为 ${id} · 会话启动后生效`
+          : `模型已切换为 ${id}`))
     } else if (msel.pane === 'effort') {
       const eff = row.effort === undefined ? undefined : row.effort
       if (MODEL_CUR.effortLevel === eff) { closeModelPop(); return }
@@ -332,7 +334,7 @@ import { MGR, MODELS, MODELS_LOADING, MODELS_ERR, loadModelsData, modelProviderO
       const payload = eff === undefined
         ? { effortLevel: 'off', ...(hash ? { sessionId: hash } : {}) }
         : { effortLevel: eff, ...(hash ? { sessionId: hash } : {}) }
-      void apiSetModel(payload).then(ok => toast(ok ? `推理等级已切换为 ${row.label}` : (hash ? '切换失败 · 目标会话未在线' : '切换失败 · 网关未连接')))
+      void apiSetModel(payload).then(r => toast(r.ok ? `推理等级已切换为 ${row.label}` : (hash ? '切换失败 · 目标会话未在线' : '切换失败 · 网关未连接')))
     }
   }
   renderModelSeat() // 初始渲染模型 seat（trigger 显示当前模型名 · 推理等级）

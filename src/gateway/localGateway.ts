@@ -415,7 +415,8 @@ const sessionEfforts = new Map<string, { effort: string | null; updatedAt: numbe
 //   网关启动 loadSessionModelLaunch() 恢复，与 websessions.json 同构）。
 // 语义 = 「该会话**下一次启动**用什么模型」的唯一状态源（区别于 sessionModels 的「在线会话
 // 当前模型镜像」——后者 CLI 断开即 detach 清，进程死后无从取）。写入点两处：
-//   ① POST /gateway/model 会话级路由成功（用户在 web 切模型，意图即「本会话此后用它」）；
+//   ① POST /gateway/model 带 sessionId（用户在 web 切模型，意图即「本会话此后用它」）——不论
+//      目标会话是否在线都先落表：在线时路由帧立即生效，离线时表值即下次启动的 --model；
 //   ② POST /gateway/model-report 落值（CLI 自报实际生效模型，含启动 --model 的 open 补报——
 //      由它闭环：新建时经 spawn --model 启动 → CLI open 补报 → 表记录 → 下次 resume 带同值）。
 // 消费点唯一：spawnWebSession resume 时查表补 --model 启动参数。条目不删（sid 为 uuid 不复用，
@@ -460,6 +461,20 @@ function recordSessionModelLaunch(sid: string, model: string, provider?: string)
   if (!sid || !model.trim()) return
   sessionModelLaunch.set(sid, { model: model.trim(), ...(provider ? { provider } : {}), updatedAt: Date.now() })
   persistSessionModelLaunch()
+}
+// 离线/启动在途的模型切换意图（2026-11-21）：POST /gateway/model 目标会话未注册（cliClients 无槽）
+// 时路由帧无处可投，但「下次启动用什么模型」的表已先落——本表补的是「已启动参数早于意图写入」
+// 的会话：spawn 在途时用户切模型，CLI 已按旧表值带 --model 起来，注册成功即补投切换帧。
+// 入口：POST /gateway/model 路由失败；出口：/clients 注册钩子 applyPendingModelSwitch、
+// model-report 收到与意图一致的上报即确认清除。sentAt = 补投帧发出时刻，用于识别切换前快照上报。
+const pendingModelSwitch = new Map<string, { model: string; provider?: string; sentAt?: number }>()
+function applyPendingModelSwitch(sid: string): void {
+  const intent = pendingModelSwitch.get(sid)
+  if (!intent) return
+  if (!routeToClient(sid, { type: 'model', value: intent.model, provider: intent.provider ?? null })) return
+  intent.sentAt = Date.now()
+  recordSessionModelLaunch(sid, intent.model, intent.provider)
+  console.log(`[gateway] /clients 注册补投模型切换 sid=${sid} model=${intent.model}`)
 }
 // 2026-08-30 共同后端队列快照（接力文档清单#2）：CLI 侧 /clients WS queue-state 上报的当前
 // 排队项（仅用户 prompt）。web 排队区置底数据源：/gateway/session.queued 首载 + SSE queue-state 增量。
@@ -4130,6 +4145,8 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       }
       // 模型归属供应商：随路由下发，目标 CLI 进程据此绑定 baseUrl/key（跨供应商会话级切换）
       let modelProvider: string | null = null
+      // 模型是否已在本回合实时下发到进程（false = 目标未注册，意图已落表/待注册补投）
+      let modelApplied = true
       if (model !== undefined) {
         modelProvider = findModelProvider(model)
         if (!modelProvider) {
@@ -4160,16 +4177,23 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         }
       }
       if (model !== undefined) {
-        // model 每会话覆盖，精确路由到目标会话；未在线/未连接则拒绝而非广播兜底（2026-08-23 用户定案）
-        // provider 一并下发：CLI 进程内绑定该供应商（baseUrl/key），与模型名同源，避免错配
-        if (!routeToClient(sessionId, { type: 'model', value: model, provider: modelProvider })) {
+        // 无 sessionId = 没有目标会话，仍按原语义拒绝（不广播兜底，2026-08-23 用户定案）。
+        if (!sessionId) {
           sendJson(res, 400, { error: '目标会话未在线，无法切换模型' })
           return
         }
-        // 路由成功即记入启动模型表：用户对该会话的切换意图 = 「此后（含重启后）用它」；
-        // CLI 随后的 model-report 上报会以实际生效值校正本条（挂起对在回合边界落地的窗口内
-        // 表值先行，进程死在该窗口时表值 = 用户意图，resume 仍按意图恢复）。
-        if (sessionId) recordSessionModelLaunch(sessionId, model, modelProvider ?? undefined)
+        // 先落启动模型表（「该会话下次启动用什么模型」的唯一状态源），再尽力实时路由：
+        // 旧实现先路由、失败即 400 丢弃意图 → 会话未起时切模型，resume 仍按上一次的表值启动
+        // （用户实测「未起时改模型，启动后沿用上一次」）。落表后意图恒有效：能路由 = 立即生效；
+        // 路由不到（离线/启动在途）= 下次启动带 --model，且在途 spawn 在注册时补投切换帧。
+        recordSessionModelLaunch(sessionId, model, modelProvider ?? undefined)
+        // provider 一并下发：CLI 进程内绑定该供应商（baseUrl/key），与模型名同源，避免错配
+        if (routeToClient(sessionId, { type: 'model', value: model, provider: modelProvider })) {
+          pendingModelSwitch.delete(sessionId)
+        } else {
+          pendingModelSwitch.set(sessionId, { model, ...(modelProvider ? { provider: modelProvider } : {}) })
+          modelApplied = false
+        }
       }
       if (effortLevel !== undefined && sessionId) {
         // 会话级思考等级：与 model 同链精确路由（未在线拒绝，不广播兜底）；落镜像供
@@ -4180,7 +4204,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         }
         sessionEfforts.set(sessionId, { effort: effortLevel, updatedAt: Date.now() })
       }
-      sendJson(res, 200, { ok: true, model: model ?? null, effortLevel: effortLevel ?? null })
+      sendJson(res, 200, { ok: true, model: model ?? null, effortLevel: effortLevel ?? null, applied: modelApplied })
     } catch (error) {
       sendReportBodyError(res, error)
     }
@@ -5521,7 +5545,19 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
         return
       }
       const modelTs = Date.now()
-      if (model) {
+      // 补投窗口防回滚（2026-11-21）：pendingModelSwitch 有该会话意图而本次上报是别的模型时，
+      // 它恒为「补投帧生效前」的启动快照（open 补报先于 CLI 处理切换帧）。此时不写镜像/启动表、
+      // 不群发，保住用户意图与 web 座显；窗口只限补投帧发出后的短时内（SENT_WINDOW），超窗或
+      // 无 pending 一律以 CLI 上报为准（终端 /model 切换不会因残留意图被吞）。
+      const PENDING_SWITCH_SENT_WINDOW_MS = 15_000
+      const intent = pendingModelSwitch.get(sid)
+      const modelConfirmed =
+        !intent ||
+        intent.model === model ||
+        !intent.sentAt ||
+        modelTs - intent.sentAt > PENDING_SWITCH_SENT_WINDOW_MS
+      if (modelConfirmed) pendingModelSwitch.delete(sid)
+      if (model && modelConfirmed) {
         sessionModels.set(sid, { model, updatedAt: modelTs })
         // 同值记入启动模型表（2026-10-13）：CLI 自报的是本会话实际生效模型——含 spawn --model
         // 启动后的 open 补报（闭环：新建带模型启动 → 表记录 → 下次 resume 带同值）与运行期
@@ -5534,7 +5570,7 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
       // task-state 同款「镜像存储 + 转发」）——此前 web 只能等下一次 /gateway/session 拉取才校准，
       // 会话空闲时可能长时间不来，「CLI 切了模型、web 底栏不动」正是这条延迟造成的。
       // modelTs = 本次上报时刻，web 端与「用户刚在 web 切过的时刻」比对，用于丢弃切换前的在途快照。
-      if (model) {
+      if (model && modelConfirmed) {
         const s = `data: ${JSON.stringify({ type: 'model', session: sid, model, modelTs })}\n\n`
         sendAll(sseClients, (c) => { c.res.write(s) })
       }
@@ -7236,6 +7272,9 @@ export async function startLocalGateway(opts?: { host?: string; port?: number; t
         }
         cliClients.set(sid, ws)
         cliRegisterAt.set(sid, Date.now())
+        // 离线期记录的模型切换：进程起来后立即补投切换帧（覆盖「spawn 在途时用户改模型」的窗口，
+        // 启动参数 --model 只读得到那一拍之前的表值）。无意图为 no-op。
+        applyPendingModelSwitch(sid)
         approvalTrailPush('cli-register', sid)
         ensureSseWatches(root) // P0：新 CLI 会话上线（web spawn / 终端在全新项目首开会话）→ 补齐其落盘目录 watch
         flushPendingDeliveries(sid) // 2026-09-06 wsession 异步化：spawn 期间暂存的消息按序补投
