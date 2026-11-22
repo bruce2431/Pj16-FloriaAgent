@@ -213,7 +213,8 @@
       if (state.busy) { body.innerHTML = ''; return }
       if (state.failure) { body.innerHTML = ''; return }
       if (state.view === 'file') { renderFileView(); return }
-      if (!round) { body.innerHTML = '<p class="ec-note">' + esc(state.note || '没有改动') + '</p>'; return }
+      // 没有既往版本（无可对比备份）时不摆提示，直接按只读文件内容渲染。
+      if (!round) { renderFileView(); return }
       if (!round.hunks.length) { body.innerHTML = '<p class="ec-note">' + esc(state.note || '该轮没有文本改动') + '</p>'; return }
 
       var hasAdd = round.hunks.some(function (h) { return h.lines.some(function (l) { return l.charAt(0) === '+' }) })

@@ -181,13 +181,16 @@ body.sb-resizing, body.sb-resizing * { cursor: col-resize !important; user-selec
   border-bottom-left-radius: 8px;
   box-shadow: -4px 4px 0 4px var(--sb-bg);
 }
-/* 卡片标签 + 关闭钮（关闭仅本次会话，内置「浏览」标签不可关） */
-.sb-tabwrap { position: relative; flex: none; display: inline-flex; }
-.sb-tabwrap .sb-tab { max-width: 150px; padding-right: 26px; }
+/* 卡片标签 + 关闭钮（关闭仅本次会话，内置「浏览」标签不可关）。
+ * 标签随数量收缩：按 150px 基准等分可收缩，最窄 64px；再窄由标签条横向滚动，新开标签会滚入可见区。 */
+.sb-tabwrap { position: relative; flex: 0 1 150px; min-width: 64px; display: inline-flex; }
+.sb-tabwrap .sb-tab { width: 100%; max-width: 150px; padding-right: 26px; }
+/* 关闭钮要压在标签之上：激活标签 z-index 1 且不透明底，不给关闭钮更高层会被盖住点不到 */
 .sb-tab-x {
   position: absolute;
   top: 4px;
   right: 4px;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;

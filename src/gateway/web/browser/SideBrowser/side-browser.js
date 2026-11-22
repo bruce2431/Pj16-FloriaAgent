@@ -129,6 +129,7 @@
 
     var tabSeq = 0
     var draftDirty = false
+    var revealTab = false
 
     // ---------- 内部页配置（Config/tabs.json） ----------
     var configUrl = typeof opts.configUrl === 'string' ? opts.configUrl : DEFAULT_CONFIG_URL
@@ -342,12 +343,27 @@
           closeTab(parseInt(b.getAttribute('data-close'), 10))
         })
       })
+      if (revealTab) {
+        revealTab = false
+        revealActiveTab()
+      }
+    }
+    /** 标签条横向溢出时把激活标签滚进可见区（左右各留 8px），只改 scrollLeft，不牵动页面。 */
+    function revealActiveTab() {
+      var el = tabBar.querySelector('.sb-tab.on')
+      if (!el) return
+      var pad = 8
+      var bar = tabBar.getBoundingClientRect()
+      var box = el.getBoundingClientRect()
+      if (box.left < bar.left + pad) tabBar.scrollLeft -= bar.left + pad - box.left
+      else if (box.right > bar.right - pad) tabBar.scrollLeft += box.right - (bar.right - pad)
     }
     function switchTab(at) {
       if (!(at >= 0 && at < state.tabs.length) || at === state.active) return
       state.open = true
       state.active = at
       draftDirty = false
+      revealTab = true
       sync()
       emit('tab-switch', { id: activeTab().id })
     }
@@ -361,6 +377,7 @@
       if (at < state.active) state.active -= 1
       else if (at === state.active) state.active = Math.min(at, state.tabs.length - 1)
       draftDirty = false
+      revealTab = true
       sync()
       emit('tab-close', { id: tab.id })
       return snapshot()
@@ -516,6 +533,7 @@
       var next = blankTab()
       state.tabs.push(next)
       state.active = state.tabs.length - 1
+      revealTab = true
       beginNavigate(next, parsed.target)
       emit('open', { url: parsed.target.url, tab: next.id })
       return snapshot()
@@ -624,10 +642,12 @@
           tab.index = 0
           state.tabs.push(tab)
           state.active = state.tabs.length - 1
+          revealTab = true
           beginLoad(tab, target)
         } else {
           state.open = true
           state.active = state.tabs.indexOf(tab)
+          revealTab = true
           sync()
         }
         state.open = true
