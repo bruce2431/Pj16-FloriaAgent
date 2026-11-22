@@ -45,34 +45,7 @@
   --sb-alert-border: #5a3333;
 }
 
-/* ---------- 收敛态：右缘竖条（靠近右侧边缘点击一下打开） ---------- */
-.sb-rail {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  bottom: 2px;
-  width: 32px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--sb-border);
-  border-radius: 10px;
-  background: var(--sb-bg);
-  color: var(--sb-text-2);
-  font: inherit;
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, .05);
-}
-.sb-rail:hover { border-color: var(--sb-accent); color: var(--sb-accent); background: var(--sb-hover); }
-.sb-rail-icon { flex: none; width: 18px; height: 18px; display: inline-flex; }
-.sb-rail-icon svg { width: 18px; height: 18px; }
-.sb-rail-text { writing-mode: vertical-rl; font-size: 11.5px; letter-spacing: .12em; }
-
-/* ---------- 展开态：从右缘弹出的抽屉卡（宽可拖） ---------- */
+/* ---------- 收敛态完全隐藏（无竖条）；展开态 = 贴右缘抽屉卡（宽可拖） ---------- */
 .sb-card {
   position: absolute;
   top: 2px;
@@ -125,8 +98,9 @@ body.sb-resizing, body.sb-resizing * { cursor: col-resize !important; user-selec
 
 /* ---------- 标签页（每个网址一页） ---------- */
 .sb-tabs {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 4px;
   flex: none;
   padding: 6px 8px 0;
@@ -134,11 +108,24 @@ body.sb-resizing, body.sb-resizing * { cursor: col-resize !important; user-selec
   overflow-y: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  border-bottom: 1px solid var(--sb-border);
-  background: var(--sb-bg);
+  background: var(--sb-plane);
+}
+/* 标签条底部分隔线画在条内（伪元素）：激活标签与其接缝可正常盖住这条线，
+ * 若用 border-bottom，条内 overflow 裁剪会让标签盖不住。 */
+.sb-tabs::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--sb-border);
+  pointer-events: none;
+  z-index: 0;
 }
 .sb-tabs::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .sb-tab {
+  position: relative;
   flex: none;
   max-width: 132px;
   height: 26px;
@@ -158,9 +145,41 @@ body.sb-resizing, body.sb-resizing * { cursor: col-resize !important; user-selec
 .sb-tab:hover { background: var(--sb-hover); color: var(--sb-text); }
 .sb-tab.on {
   border-color: var(--sb-border);
-  background: var(--sb-plane);
+  border-bottom: 0;
+  background: var(--sb-bg);
   color: var(--sb-text);
   font-weight: 600;
+  z-index: 1;
+}
+/* 激活标签与下方页面同一表面：底部两侧用凹圆角接缝（标签条底色透出为圆角外弧），
+ * 并让标签盖住标签条底部分隔线，不做两枚圆角矩形硬碰。 */
+.sb-tabwrap { z-index: 1; }
+.sb-tabwrap:has(> .sb-tab.on)::before,
+.sb-tabwrap:has(> .sb-tab.on)::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--sb-border);
+  clip-path: inset(0);
+  pointer-events: none;
+  z-index: 2;
+}
+/* 向内叠 1px（-7px）使凹角 1px 边框与标签 1px 侧边框、底部分隔线落同一轨道；
+ * 用原生 border-radius 画弧 + box-shadow 填外角表面色，与标签自身 border 同走浏览器像素对齐，任意标题长度不裂缝。 */
+.sb-tabwrap:has(> .sb-tab.on)::before {
+  left: -7px;
+  border-right: 1px solid var(--sb-border);
+  border-bottom-right-radius: 8px;
+  box-shadow: 4px 4px 0 4px var(--sb-bg);
+}
+.sb-tabwrap:has(> .sb-tab.on)::after {
+  right: -7px;
+  border-left: 1px solid var(--sb-border);
+  border-bottom-left-radius: 8px;
+  box-shadow: -4px 4px 0 4px var(--sb-bg);
 }
 /* 卡片标签 + 关闭钮（关闭仅本次会话，内置「浏览」标签不可关） */
 .sb-tabwrap { position: relative; flex: none; display: inline-flex; }

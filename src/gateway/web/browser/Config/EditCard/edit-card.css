@@ -47,27 +47,21 @@
   --ec-empty-fill: rgba(255, 255, 255, .035);
 }
 
-/* ---------- 轮次标签 ---------- */
+/* ---------- 轮次标签（文件头同一行，紧跟文件名） ---------- */
 .ec-rounds {
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--ec-border);
-  background: var(--ec-bg);
+  min-width: 0;
+  overflow: hidden;
 }
-.ec-rounds::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .ec-round {
   flex: none;
-  height: 26px;
-  padding: 0 11px;
+  height: 24px;
+  padding: 0 9px;
   border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 8px 8px 0 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--ec-text-2);
   font: inherit;
@@ -77,8 +71,6 @@
 }
 .ec-round:hover { background: var(--ec-hover); color: var(--ec-text); }
 .ec-round.on {
-  border-color: var(--ec-border);
-  background: var(--ec-plane);
   color: var(--ec-text);
   font-weight: 600;
 }
@@ -132,22 +124,6 @@
 .ec-tool svg { width: 15px; height: 15px; }
 .ec-tool:hover { background: var(--ec-hover); color: var(--ec-text); }
 .ec-tool[aria-pressed="true"] { background: var(--ec-field); color: var(--ec-text); }
-
-/* 视图切换：对比 / 文件 */
-.ec-views { display: inline-flex; flex: none; gap: 2px; align-items: center; }
-.ec-view {
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ec-text-2);
-  font-size: 12px;
-  cursor: pointer;
-}
-.ec-view:hover { background: var(--ec-hover); color: var(--ec-text); }
-.ec-view.on { background: var(--ec-field); border-color: var(--ec-border); color: var(--ec-text); }
-.ec-root[data-view="file"] .ec-tools { display: none; }
 
 /* ---------- diff 正文 ---------- */
 .ec-body {
@@ -257,3 +233,5 @@
   color: var(--ec-text-3);
   font-size: 12px;
 }
+
+.ec-rounds:empty { display: none; }

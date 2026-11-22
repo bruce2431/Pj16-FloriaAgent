@@ -506,6 +506,13 @@
         emit('blocked', { reason: parsed.reason, input: String(url), tab: tab.id })
         return { ok: false, error: REASONS[parsed.reason] || '地址无效', reason: parsed.reason }
       }
+      // 初始页（未导航过的空白标签）直接替换，不叠加空起始页；已有标签或已导航过的照常新开。
+      var cur = activeTab()
+      if (cur && !cur.entries.length && cur.nav.status === 'empty' && !cur.frame) {
+        beginNavigate(cur, parsed.target)
+        emit('open', { url: parsed.target.url, tab: cur.id })
+        return snapshot()
+      }
       var next = blankTab()
       state.tabs.push(next)
       state.active = state.tabs.length - 1

@@ -5,7 +5,7 @@
  * 正文按统一 diff hunk 渲染；并排（默认，两列同步滚动）/ 统一两种视图，可选自动换行。
  *
  * 数据契约：
- *   GET <dataUrl>[?path=<项目相对路径>&session=<会话 id>] → {
+ *   GET <dataUrl>[?label=<项目 label>&path=<项目相对或绝对路径>&session=<会话 id>] → {
  *     ok, file: { path, display }, content?, note?, rounds: [{
  *       turn, label?, added, deleted,
  *       hunks: [{ oldStart, oldLines, newStart, newLines, lines: [' ctx', '-old', '+new'] }]
@@ -15,10 +15,11 @@
  *
  * 公开面：
  *   window.UIDesignEditCard = { mount }
- *   mount(root, { dataUrl, path, session, ns, onEvent }) → controller
- *   controller：openFile({path, session}) / load() / select(turn) / setView('diff'|'file') /
+ *   mount(root, { dataUrl, label, path, session, ns, onEvent }) → controller
+ *   controller：openFile({label, path, session}) / load() / select(turn) / setView('diff'|'file') /
  *               setSplit(bool) / setWrap(bool) / state() / dispatch(cmd, args) / destroy()
- *   命令：fileopen{path, session, dataUrl?} / load / select / view{view} / split / wrap / state
+ *   命令：fileopen{label?, path, session, dataUrl?} / load / select / view{view} / split / wrap / state
+ *   快捷键：Alt+Z 切换自动换行（不设工具按钮）
  *   宿主信封（iframe 内）：parent → <ns>-cmd {cmd, args}；回收 <ns>-event {ev:'ack', cmd, ok, result|error}
  */
 (function (global) {
@@ -37,8 +38,7 @@
   }
 
   var ICONS = {
-    split: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.6"/><path d="M8 2.6v10.8"/></svg>',
-    wrap: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4 4.4h11.2M2.4 8h8.2a2 2 0 0 1 0 4H9"/><path d="m10.4 10.6-1.6 1.4 1.6 1.4"/><path d="M2.4 11.6h4"/></svg>'
+    split: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.6"/><path d="M8 2.6v10.8"/></svg>'
   }
 
   function mount(root, options) {
@@ -60,6 +60,7 @@
       view: 'diff',
       content: '',
       note: '',
+      label: typeof opts.label === 'string' ? opts.label : '',
       path: typeof opts.path === 'string' ? opts.path : '',
       session: typeof opts.session === 'string' ? opts.session : '',
       busy: false,
@@ -68,17 +69,12 @@
 
     root.classList.add('ec-root')
     root.innerHTML = [
-      '<div class="ec-rounds"></div>',
       '<div class="ec-head">',
       '  <span class="ec-file"><span class="ec-file-name"></span></span>',
+      '  <div class="ec-rounds"></div>',
       '  <span class="ec-counts"><span class="ec-added"></span><span class="ec-deleted"></span></span>',
-      '  <span class="ec-views">',
-      '    <button type="button" class="ec-view" data-view="diff">对比</button>',
-      '    <button type="button" class="ec-view" data-view="file">文件</button>',
-      '  </span>',
       '  <span class="ec-tools">',
       '    <button type="button" class="ec-tool" data-tool="split" title="切换并排 / 统一视图" aria-label="切换并排 / 统一视图">' + ICONS.split + '</button>',
-      '    <button type="button" class="ec-tool" data-tool="wrap" title="切换自动换行" aria-label="切换自动换行">' + ICONS.wrap + '</button>',
       '  </span>',
       '</div>',
       '<div class="ec-body"></div>',
@@ -92,8 +88,6 @@
     var body = root.querySelector('.ec-body')
     var statusEl = root.querySelector('.ec-status')
     var btnSplit = root.querySelector('[data-tool="split"]')
-    var btnWrap = root.querySelector('[data-tool="wrap"]')
-    var viewBtns = root.querySelectorAll('.ec-view')
 
     // ---------- 纯函数（对照 dsh FileDiff） ----------
     function esc(v) {
@@ -323,10 +317,6 @@
       addedEl.textContent = round ? '+' + round.added : ''
       deletedEl.textContent = round ? '-' + round.deleted : ''
       btnSplit.setAttribute('aria-pressed', state.split ? 'true' : 'false')
-      btnWrap.setAttribute('aria-pressed', state.wrap ? 'true' : 'false')
-      Array.prototype.forEach.call(viewBtns, function (b) {
-        b.classList.toggle('on', b.getAttribute('data-view') === state.view)
-      })
       root.setAttribute('data-view', state.view)
       statusEl.hidden = !(state.busy || state.failure)
       statusEl.textContent = state.failure ? state.failure : state.busy ? '正在读取改动…' : ''
@@ -338,6 +328,7 @@
       return {
         ns: ns,
         file: state.file ? state.file.path : '',
+        label: state.label,
         path: state.path,
         session: state.session,
         view: state.view,
@@ -377,6 +368,7 @@
       if (state.path) {
         url += (url.indexOf('?') >= 0 ? '&' : '?') + 'path=' + encodeURIComponent(state.path)
         if (state.session) url += '&session=' + encodeURIComponent(state.session)
+        if (state.label) url += '&label=' + encodeURIComponent(state.label)
       }
       render()
       // 同源宿主（Floria 网关）鉴权走 floria_auth cookie，必须带凭据；跨源部署时同源凭据策略自然不发送。
@@ -412,6 +404,7 @@
       var path = args && typeof args.path === 'string' ? args.path.trim() : ''
       if (!path) return { ok: false, error: 'fileopen 需要 path' }
       if (args && typeof args.dataUrl === 'string' && args.dataUrl) dataUrl = args.dataUrl
+      if (args && typeof args.label === 'string') state.label = args.label.trim()
       state.path = path
       // tab 标题 = 文件 basename（openFile 即生效；后续读取失败也不改回，宿主可稳定回读）
       if (doc.title !== undefined) doc.title = fileTitleOf(path) || '编辑标签页'
@@ -419,7 +412,7 @@
       state.view = 'diff'
       state.rounds = []
       state.turn = 0
-      emit('fileopen', { path: state.path, session: state.session })
+      emit('fileopen', { label: state.label, path: state.path, session: state.session })
       return load()
     }
 
@@ -482,7 +475,16 @@
     function onTool(e) {
       var tool = e.currentTarget.getAttribute('data-tool')
       if (tool === 'split') setSplit(!state.split)
-      else if (tool === 'wrap') setWrap(!state.wrap)
+    }
+    /** Alt+Z 切换自动换行（VS Code 惯例）：焦点在卡内或 body 时生效，AltGr/组合键不劫持。 */
+    function onKeyDown(e) {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.code !== 'KeyZ' && e.key !== 'z' && e.key !== 'Z' && e.key !== 'Ω') return
+      var t = e.target
+      var tag = t && t.tagName ? t.tagName : ''
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
+      e.preventDefault()
+      setWrap(!state.wrap)
     }
     function onMessage(e) {
       var d = e.data
@@ -494,11 +496,8 @@
     }
 
     btnSplit.addEventListener('click', onTool)
-    btnWrap.addEventListener('click', onTool)
-    Array.prototype.forEach.call(viewBtns, function (b) {
-      b.addEventListener('click', function () { setView(b.getAttribute('data-view')) })
-    })
     win.addEventListener('message', onMessage)
+    doc.addEventListener('keydown', onKeyDown)
 
     render()
     load()
@@ -517,6 +516,7 @@
         if (destroyed) return
         destroyed = true
         win.removeEventListener('message', onMessage)
+        doc.removeEventListener('keydown', onKeyDown)
         root.innerHTML = ''
         root.classList.remove('ec-root')
       }
