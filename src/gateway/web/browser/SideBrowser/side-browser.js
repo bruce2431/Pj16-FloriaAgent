@@ -540,6 +540,10 @@
         if (v === undefined || v === null || (typeof v !== 'string' && typeof v !== 'number')) continue
         query.push(encodeURIComponent(k) + '=' + encodeURIComponent(v))
       }
+      // 宿主主题随 URL 传给内部页（内部页跨 frame 读父文档可能失败/时序不稳，这里给确定值）
+      var theme = 'light'
+      try { if (doc.documentElement.getAttribute('data-theme') === 'dark') theme = 'dark' } catch (_e) { /* 忽略 */ }
+      query.push('theme=' + theme)
       if (!query.length) return url
       return url + (url.indexOf('?') >= 0 ? '&' : '?') + query.join('&')
     }

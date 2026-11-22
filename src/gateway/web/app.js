@@ -3222,7 +3222,8 @@ function setLastNavHash(v) { lastNavHash = v }
       if (cm) path = cm[1]
     }
     if (!path) return null
-    return { path: path.trim(), added: Number(m[1]), removed: Number(m[2]) }
+    // 文本句读可能落在路径尾部（「...questions.md. (+19 -0)」），剥掉尾部句点再当路径用。
+    return { path: path.trim().replace(/[.。]+$/, ''), added: Number(m[1]), removed: Number(m[2]) }
   }
   // 归一化为聚合用的 {path, added, removed} 形态（结构化 fileChange 用 filePath 命名）
   function normalizeFileChange(fc) {
@@ -13608,7 +13609,9 @@ function wkMerge3(base, local, remote) {
   // 变更卡文件行入口（chat/messages/change-card.js 调用）：与 md 文件链接同一条落点规则——
   // chat 模式经侧边浏览器「编辑标签页」看本轮改动 diff；work 模式走 work 卡定位文件。
   async function openChangedFile(rawPath) {
-    const r = resolveMentionPath(rawPath)
+    // 改动记录里是文件系统原始路径（Windows 反斜杠）；先归一分隔符——resolveMentionPath 的
+    // unescape 会把「\X」当转义符吃掉整条路径。
+    const r = resolveMentionPath(String(rawPath == null ? '' : rawPath).replace(/\\/g, '/'))
     if (state.sbMode !== 'work') {
       return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
         id: 'edit',

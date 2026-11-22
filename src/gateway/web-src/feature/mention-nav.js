@@ -172,7 +172,9 @@ import { setSbMode } from '../sidebar/work.js'
   // 变更卡文件行入口（chat/messages/change-card.js 调用）：与 md 文件链接同一条落点规则——
   // chat 模式经侧边浏览器「编辑标签页」看本轮改动 diff；work 模式走 work 卡定位文件。
   async function openChangedFile(rawPath) {
-    const r = resolveMentionPath(rawPath)
+    // 改动记录里是文件系统原始路径（Windows 反斜杠）；先归一分隔符——resolveMentionPath 的
+    // unescape 会把「\X」当转义符吃掉整条路径。
+    const r = resolveMentionPath(String(rawPath == null ? '' : rawPath).replace(/\\/g, '/'))
     if (state.sbMode !== 'work') {
       return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
         id: 'edit',

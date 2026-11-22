@@ -17,11 +17,12 @@
 <script>
 (function () {
   var params = new URLSearchParams(location.search)
-  // 同源 iframe：直接沿用宿主主题（父页面不可访问时按亮色）。
-  try {
-    var t = parent.document.documentElement.getAttribute('data-theme')
-    if (t) document.documentElement.setAttribute('data-theme', t)
-  } catch (_e) { /* 跨源宿主忽略 */ }
+  // 主题：优先 URL 传入的 theme（宿主给确定值），退回读父文档；亮色不设属性（宿主约定）。
+  var theme = params.get('theme')
+  if (!theme) {
+    try { theme = parent.document.documentElement.getAttribute('data-theme') } catch (_e) { /* 跨源宿主忽略 */ }
+  }
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark')
   var label = params.get('label') || ''
   var dataUrl = params.get('dataUrl') || '/gateway/file-history'
   if (dataUrl === '/gateway/file-history' && label) dataUrl += '?label=' + encodeURIComponent(label)
