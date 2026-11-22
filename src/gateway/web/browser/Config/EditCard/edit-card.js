@@ -29,6 +29,13 @@
   /** 每轮最多渲染的 diff 行数（对照 dsh FileDiff.MAX_RENDERED_LINES）。 */
   var MAX_RENDERED_LINES = 5000
 
+  /** 路径末段（文件名），供 document.title = 侧边浏览器 tab 标题：归一分隔符、剥尾部行号后缀。 */
+  function fileTitleOf(p) {
+    var s = String(p || '').replace(/\\/g, '/').replace(/:\d+(?:-\d+)?$/, '').replace(/\/+$/, '')
+    var at = s.lastIndexOf('/')
+    return at >= 0 ? s.slice(at + 1) : s
+  }
+
   var ICONS = {
     split: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.6"/><path d="M8 2.6v10.8"/></svg>',
     wrap: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4 4.4h11.2M2.4 8h8.2a2 2 0 0 1 0 4H9"/><path d="m10.4 10.6-1.6 1.4 1.6 1.4"/><path d="M2.4 11.6h4"/></svg>'
@@ -406,6 +413,8 @@
       if (!path) return { ok: false, error: 'fileopen 需要 path' }
       if (args && typeof args.dataUrl === 'string' && args.dataUrl) dataUrl = args.dataUrl
       state.path = path
+      // tab 标题 = 文件 basename（openFile 即生效；后续读取失败也不改回，宿主可稳定回读）
+      if (doc.title !== undefined) doc.title = fileTitleOf(path) || '编辑标签页'
       state.session = args && typeof args.session === 'string' ? args.session.trim() : ''
       state.view = 'diff'
       state.rounds = []

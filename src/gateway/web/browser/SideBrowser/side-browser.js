@@ -589,6 +589,14 @@
         })
       })
     }
+    /** ack 后回读内部页 document.title：编辑页标题随文件变化，tabs.json 的静态标题只作占位。 */
+    function refreshPageTitle(tab) {
+      var innerDoc = tab.frame && tab.frame.contentDocument
+      var title = innerDoc && String(innerDoc.title || '').trim()
+      if (!title) return
+      tab.title = title
+      sync()
+    }
     function openPage(id, payload) {
       var pid = String(id == null ? '' : id).trim()
       if (!pid) return Promise.resolve({ ok: false, error: 'page 需要 id' })
@@ -618,6 +626,7 @@
         state.open = true
         emit('page', { id: page.id, tab: tab.id })
         return askPage(tab, page, payload).then(function (r) {
+          if (r.ok !== false) refreshPageTitle(tab)
           return r.ok === false ? r : snapshot()
         })
       })
