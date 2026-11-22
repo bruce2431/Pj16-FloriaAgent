@@ -3241,7 +3241,7 @@ function setLastNavHash(v) { lastNavHash = v }
     // 归一为展示用相对路径数组。key 可选（messagesHtml 段尾传入 s.key）→ 带 data-m/data-t 供
     // 增量重建定位删除；实时行不带 key（无 data-m，属消息流外手动追加，不受增量删除影响）。
     const files = []
-    for (const [path, c] of changes) files.push({ path: relFromCwd(path), added: c.added, removed: c.removed })
+    for (const [path, c] of changes) files.push({ path: relFromCwd(path), abs: path, added: c.added, removed: c.removed })
     return `<div class="msg change-card"${key != null ? ` data-m="${key}" data-t="c"` : ''}>${changesCardHtml(files)}</div>`
   }
 
@@ -3257,6 +3257,26 @@ function setLastNavHash(v) { lastNavHash = v }
     const open = card.classList.toggle('open')
     const total = card.querySelectorAll('.chg-row').length
     btn.textContent = open ? '收起' : `全部 ${total} 个文件`
+  })
+
+  // 变更卡文件行（或单文件标题行）点击 → chat 模式经侧边浏览器打开「编辑标签页」；work 模式走 work 卡。
+  // data-chg-abs 是改动记录的原始路径（绝对或相对启动根），优先用它；缺失时回退展示路径（按当前项目解析）。
+  function runChangedFile(el) {
+    const raw = el.dataset.chgAbs || el.dataset.chgPath
+    if (!raw) return
+    openChangedFile(raw).catch((e) => toast((e && e.message) || String(e)))
+  }
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
+    if (!el || !messagesEl.contains(el) || e.target.closest('[data-chg-toggle]')) return
+    runChangedFile(el)
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
+    if (!el || !messagesEl.contains(el)) return
+    e.preventDefault()
+    runChangedFile(el)
   })
 
   // 消息复制（2026-10-09 定案：复制「原始 markdown 源码」，非渲染文本）：data-md 的生产与消费同处
@@ -7294,6 +7314,7 @@ function setFirstSendHash(v) { firstSendHash = v }
     $('chat-panel').hidden = on
     $('work-panel').hidden = !on
     chatArea.classList.toggle('work', on)
+    syncSideBrowserMode(on) // 侧边浏览器只在 chat 模式在场（work 有下沉区/右栏自己的卡）
     // 注册域随模式切换重算（2026-10-15）：外部卡（EXT）的语境口径含 work（看工作项目），模式一切换
     // 就必须重取 #mgr-tabs（应用 tab 的语境判据只看 chat 侧 state.preview/state.mgr，不受模式影响）。
     renderMgrTabs()
@@ -13570,10 +13591,32 @@ function wkMerge3(base, local, remote) {
     }
     if (t.kind === 'path') {
       const r = resolveMentionPath(t.path)
+      // chat 模式的文件链接 = 侧边浏览器内部页「编辑标签页」：比对当前会话 .claude/file-history 的
+      // 最新一轮改动。work 模式与目录链接保持原 work 文件树链路（浏览器只在 chat 模式在场）。
+      if (state.sbMode !== 'work' && t.ptype !== 'dir') {
+        return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
+          id: 'edit',
+          payload: { label: r.project, path: r.rel, session: state.currentHash },
+        })
+      }
       await ensureMentionWork(r.project)
       if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
       return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 }) // 文件链接带行号（`[名](路径:行)`）
     }
+  }
+
+  // 变更卡文件行入口（chat/messages/change-card.js 调用）：与 md 文件链接同一条落点规则——
+  // chat 模式经侧边浏览器「编辑标签页」看本轮改动 diff；work 模式走 work 卡定位文件。
+  async function openChangedFile(rawPath) {
+    const r = resolveMentionPath(rawPath)
+    if (state.sbMode !== 'work') {
+      return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
+        id: 'edit',
+        payload: { label: r.project, path: r.rel, session: state.currentHash },
+      })
+    }
+    await ensureMentionWork(r.project)
+    return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: 0 })
   }
 
   // 消息内文件引用 chip 的「在资源管理器中打开」（dsh 文件卡同形）：复用 work 文件树同一条
@@ -13597,6 +13640,50 @@ function wkMerge3(base, local, remote) {
     } catch (e) {
       toast((e && e.message) || String(e))
     }
+  }
+
+  const SIDE_BROWSER_INSTANCE = 'floria-side-browser'
+  let sideBrowserCtl = null
+
+  function sideBrowserBox() {
+    return document.getElementById('side-browser')
+  }
+
+  // 仅 chat 模式在场：work 模式的右栏/下沉区有自己的卡，不叠加侧边浏览器。
+  function syncSideBrowserMode(workOn) {
+    const box = sideBrowserBox()
+    if (box) box.hidden = !!workOn || !sideBrowserCtl
+  }
+
+  function initSideBrowser() {
+    const box = sideBrowserBox()
+    if (!box || !window.UIDesignSideBrowser || sideBrowserCtl) return
+    sideBrowserCtl = window.UIDesignSideBrowser.mount(box, {
+      ns: SIDE_BROWSER_INSTANCE,
+      appOrigin: location.origin,
+      configUrl: '/browser/Config/tabs.json',
+    })
+    const invoke = (cmd) => (args) => sideBrowserCtl.dispatch(cmd, args).then((r) => {
+      if (r.ok === false) throw new Error(r.error || '命令失败')
+      return r.result
+    })
+    cardBus.registerInlineCard({
+      instanceId: SIDE_BROWSER_INSTANCE,
+      ns: SIDE_BROWSER_INSTANCE,
+      cmds: ['open', 'load', 'page', 'back', 'forward', 'reload', 'close', 'state', 'locate'],
+      handlers: {
+        open: invoke('open'),
+        load: invoke('load'),
+        page: invoke('page'),
+        back: invoke('back'),
+        forward: invoke('forward'),
+        reload: invoke('reload'),
+        close: invoke('close'),
+        state: () => sideBrowserCtl.state(),
+        locate: () => sideBrowserCtl.state(),
+      },
+    })
+    syncSideBrowserMode(state.sbMode === 'work')
   }
   // ---------- 事件绑定 ----------
   // 侧栏开合（2026-09-25 定案：折叠态宽度归 0，64px rail 折叠带撤除；2026-10-14 待办#19 定案：
@@ -18273,6 +18360,7 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
     // （registry 不再在自身顶层渲染，避免模块求值期副作用；须在 initWork/route 之前就位）。
     bootRegistry()
     initWork()
+    initSideBrowser() // 侧边浏览器（chat 模式右缘抽屉）：挂载 + inline 卡注册
     route()
     if (GATEWAY) initGateway()
     else if (window.__FLORIA_DEMO__) composerPlaceholder('输入消息，Enter 发送') // ?demo=1：无后端但界面按可编辑态展示

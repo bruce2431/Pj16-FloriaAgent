@@ -2,6 +2,8 @@
 import { sessionCwd } from '../../engine/sessions.js'
 import { messagesEl } from '../../engine/state.js'
 import { changesCardHtml } from '../../core/delivery-ui.js'
+import { openChangedFile } from '../../feature/mention-nav.js'
+import { toast } from '../../core/util.js'
 /* @module chat/messages/change-card.js */
   // ---- 文件变更汇总卡片（Codex 风格：+N 绿 / -N 红）----
   // 数据源（2026-08-23 起）：源码 conversationDisplay.ts 在 tool_result 块上输出结构化
@@ -55,7 +57,7 @@ import { changesCardHtml } from '../../core/delivery-ui.js'
     // 归一为展示用相对路径数组。key 可选（messagesHtml 段尾传入 s.key）→ 带 data-m/data-t 供
     // 增量重建定位删除；实时行不带 key（无 data-m，属消息流外手动追加，不受增量删除影响）。
     const files = []
-    for (const [path, c] of changes) files.push({ path: relFromCwd(path), added: c.added, removed: c.removed })
+    for (const [path, c] of changes) files.push({ path: relFromCwd(path), abs: path, added: c.added, removed: c.removed })
     return `<div class="msg change-card"${key != null ? ` data-m="${key}" data-t="c"` : ''}>${changesCardHtml(files)}</div>`
   }
 
@@ -71,5 +73,25 @@ import { changesCardHtml } from '../../core/delivery-ui.js'
     const open = card.classList.toggle('open')
     const total = card.querySelectorAll('.chg-row').length
     btn.textContent = open ? '收起' : `全部 ${total} 个文件`
+  })
+
+  // 变更卡文件行（或单文件标题行）点击 → chat 模式经侧边浏览器打开「编辑标签页」；work 模式走 work 卡。
+  // data-chg-abs 是改动记录的原始路径（绝对或相对启动根），优先用它；缺失时回退展示路径（按当前项目解析）。
+  function runChangedFile(el) {
+    const raw = el.dataset.chgAbs || el.dataset.chgPath
+    if (!raw) return
+    openChangedFile(raw).catch((e) => toast((e && e.message) || String(e)))
+  }
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
+    if (!el || !messagesEl.contains(el) || e.target.closest('[data-chg-toggle]')) return
+    runChangedFile(el)
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
+    if (!el || !messagesEl.contains(el)) return
+    e.preventDefault()
+    runChangedFile(el)
   })
 

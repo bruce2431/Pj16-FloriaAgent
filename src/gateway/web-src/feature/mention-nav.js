@@ -155,10 +155,32 @@ import { setSbMode } from '../sidebar/work.js'
     }
     if (t.kind === 'path') {
       const r = resolveMentionPath(t.path)
+      // chat 模式的文件链接 = 侧边浏览器内部页「编辑标签页」：比对当前会话 .claude/file-history 的
+      // 最新一轮改动。work 模式与目录链接保持原 work 文件树链路（浏览器只在 chat 模式在场）。
+      if (state.sbMode !== 'work' && t.ptype !== 'dir') {
+        return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
+          id: 'edit',
+          payload: { label: r.project, path: r.rel, session: state.currentHash },
+        })
+      }
       await ensureMentionWork(r.project)
       if (t.ptype === 'dir') return callMentionCard({ instanceId: 'floria-work' }, 'reveal', { path: r.rel })
       return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: t.line || 0 }) // 文件链接带行号（`[名](路径:行)`）
     }
+  }
+
+  // 变更卡文件行入口（chat/messages/change-card.js 调用）：与 md 文件链接同一条落点规则——
+  // chat 模式经侧边浏览器「编辑标签页」看本轮改动 diff；work 模式走 work 卡定位文件。
+  async function openChangedFile(rawPath) {
+    const r = resolveMentionPath(rawPath)
+    if (state.sbMode !== 'work') {
+      return callMentionCard({ instanceId: 'floria-side-browser' }, 'page', {
+        id: 'edit',
+        payload: { label: r.project, path: r.rel, session: state.currentHash },
+      })
+    }
+    await ensureMentionWork(r.project)
+    return callMentionCard({ instanceId: 'floria-work' }, 'scroll', { path: r.rel, line: 0 })
   }
 
   // 消息内文件引用 chip 的「在资源管理器中打开」（dsh 文件卡同形）：复用 work 文件树同一条

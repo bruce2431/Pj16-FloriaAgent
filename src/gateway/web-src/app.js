@@ -28,6 +28,7 @@ import { setPanel, newWebSession, renderRecent, getFirstSendHash, setFirstSendHa
 import { initWork, setSbMode, ensureWork } from './sidebar/work.js'
 import { loadMgrData, loadModelsData } from './sidebar/mgr-data.js'
 import { closeMentionPop, onInputChange } from './inputbar/mention.js'
+import { initSideBrowser } from './feature/side-browser/side-browser-host.js'
 // 分层治理 4C/4D（2026-10-10）：engine/{live,gateway,auth}.js 的 feature 端口实参——入口（layer 4）统一接线。
 import { absorbPending, fmtDur, getCharNote, getLastSegInfo, getPendingUserMsgs, isEndStop, isRealUser, messagesHtml, queueClaimAdopt, setPendingUserMsgs, stampMsgIn, statusFlags } from './chat/messages.js'
 import { claimStartTs, clearTakeover, getTakeover, getShownApprovalId, renderSettle, renderTaskDock, renderTransient, syncTurnLive, addSystem, getApprovalPending, renderApproval, setApprovalPending, showApprovalError, sendSubscribe } from './inputbar/approval.js'
@@ -180,6 +181,7 @@ import { renderCtxMeter } from './inputbar/ctx-meter.js'
     // （registry 不再在自身顶层渲染，避免模块求值期副作用；须在 initWork/route 之前就位）。
     bootRegistry()
     initWork()
+    initSideBrowser() // 侧边浏览器（chat 模式右缘抽屉）：挂载 + inline 卡注册
     route()
     if (GATEWAY) initGateway()
     else if (window.__FLORIA_DEMO__) composerPlaceholder('输入消息，Enter 发送') // ?demo=1：无后端但界面按可编辑态展示

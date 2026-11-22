@@ -490,3 +490,13 @@ work 文件树 / 顶栏文件 pill 行菜单「下载」的唯一取件口。与
 - **噪声剔除**：`notePreviewChange` 对 `*.log`、`*.pyc`、路径段为 `backend` / `__pycache__` / `.` 开头（隐藏目录与文件）的变化直接丢弃——后端日志随请求追加、后端实现目录与渲染无关，照旧当 `meta` 会让前端反复重挂卡帧（表现为右栏闪烁、PDF 卡跳回首页、日志卡重读）。其余文件照常判归属（预览根静态页的样式/脚本改动仍触发刷新）。
 - **活性判据**：无 SSE 客户端时不建 watch、不发事件（与 `sseWatches` 同一条）。
 - **前端消费**：`card` 命中且 `meta:false` → 只重载该卡 iframe（目录卡 `.preview-frame` 与应用卡 `.ext-frame` 两类，URL 追加 `_r` 时间戳绕 304）；`meta:true` → 重拉 `/gateway/preview-cards`，按新卡表重挂目录卡帧、重载该项目全部应用卡帧，工作区根另重拉应用目录，并广播 `floria-preview-changed`（work 右栏 tab 条）与 `floria-cards-changed`（@ 元素缓存）。实现见 [web-ui.md](web-ui.md) §75。
+
+## 24. 文件历史比对端点（`GET /gateway/file-history`，只读）
+
+编辑标签页取数口：拿某文件在指定会话中的**最高版本备份**与当前磁盘内容做行级 diff，返回文件内容 + 变更轮次，供前端渲染文件视图/diff 视图。
+
+- **请求**：`GET /gateway/file-history?label=<项目 label>&path=<路径>&session=<会话 id>`；`session` 必填且须为 UUID（否则 400），`path` 必填，可带 `:行号`/`file:` 前缀会被剥除。同源凭据与其它 `/gateway/*` 一致。
+- **路径解析**：`label` 命中项目 → 相对该项目根；空 `label` → 相对工作区根，且首段不得以 `.` 开头。绝对路径原样接受。解析结果越出根 → 403；`label` 非空且未知 → 404。
+- **数据源**：备份位于 `<项目根>/.claude/file-history/<sessionId>/<sha256(绝对路径)前16位>@vN`，仅 CLI 写入产生。取最高版本备份作对比基线，当前磁盘为对比目标；无备份时 `previous:null`、`rounds:[]` 并在 `note` 说明。
+- **响应**：`{ok, session, file:{path,display}, content, current:{exists,lines}, previous:{version,backup,mtime}|null, rounds:[{turn,label,added,deleted,hunks}], note}`。`content` 为当前文件文本（不存在时 `''`）；`rounds` 至多一条（最新备份 → 当前），`hunks` 元素为 `{oldStart,oldLines,newStart,newLines,lines}`（`lines` 带 `+`/`-`/空格前缀，上下文 ±3 行）；无文本改动时 `rounds:[]` 且 `note` 说明。
+- **边界**：文件与备份都不存在 → 404；任一超过 2 MB → 413；只读端点，不改盘。

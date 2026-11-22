@@ -308,6 +308,11 @@ html[data-theme="dark"] {
   direction: rtl; text-align: left; /* 省略头部、保留文件名端 */
 }
 .chg-row .chg-add, .chg-row .chg-del { flex: none; font-variant-numeric: tabular-nums; }
+/* 可点击打开文件（业务侧按 data-chg-path 委托） */
+.chg-row[data-chg-path], .chg-head[data-chg-path] { cursor: pointer; }
+.chg-row[data-chg-path]:hover { background: var(--hover); }
+.chg-row[data-chg-path]:focus-visible, .chg-head[data-chg-path]:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.chg-head[data-chg-path]:hover { background: var(--hover); }
 /* 折叠：默认只显示前 COLLAPSED_ROWS 行，点「全部 N 个文件」展开 */
 .chg-extra { display: none; }
 .chg.open .chg-extra { display: flex; }

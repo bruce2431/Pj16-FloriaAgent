@@ -1,0 +1,259 @@
+/* 编辑卡片 · 纯组件样式（零控制台依赖，对照 dsh FileDiff / ReviewTab）
+ * 只读轮次变更查看：轮次标签 + 文件头（路径 / +N -N / 视图工具）+ 并排或统一 diff。 */
+.ec-root {
+  --ec-bg: var(--chat-bg, #ffffff);
+  --ec-plane: var(--plane, #f6f7f9);
+  --ec-field: var(--field-2, #f5f6f8);
+  --ec-text: var(--text, #1f2328);
+  --ec-text-2: var(--text-2, #5b6470);
+  --ec-text-3: var(--text-3, #8b939d);
+  --ec-border: var(--border-soft, #e3e6ea);
+  --ec-hover: var(--hover, rgba(0, 0, 0, .055));
+  --ec-add-bg: #e6ffec;
+  --ec-add-gutter: #ccffd8;
+  --ec-add-marker: #1a7f37;
+  --ec-del-bg: #ffebe9;
+  --ec-del-gutter: #ffd7d5;
+  --ec-del-marker: #cf222e;
+  --ec-empty-fill: rgba(0, 0, 0, .03);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ec-bg);
+  color: var(--ec-text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.ec-root [hidden] { display: none !important; }
+[data-theme="dark"] .ec-root,
+.dark .ec-root,
+.bench-dark .ec-root {
+  --ec-bg: #1f242d;
+  --ec-plane: #171b22;
+  --ec-field: #262d38;
+  --ec-text: #e6ebf2;
+  --ec-text-2: #a6b0bd;
+  --ec-text-3: #78828f;
+  --ec-border: #303845;
+  --ec-hover: rgba(255, 255, 255, .07);
+  --ec-add-bg: rgba(46, 160, 67, .15);
+  --ec-add-gutter: rgba(46, 160, 67, .28);
+  --ec-add-marker: #3fb950;
+  --ec-del-bg: rgba(248, 81, 73, .12);
+  --ec-del-gutter: rgba(248, 81, 73, .24);
+  --ec-del-marker: #f85149;
+  --ec-empty-fill: rgba(255, 255, 255, .035);
+}
+
+/* ---------- 轮次标签 ---------- */
+.ec-rounds {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--ec-border);
+  background: var(--ec-bg);
+}
+.ec-rounds::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.ec-round {
+  flex: none;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--ec-text-2);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ec-round:hover { background: var(--ec-hover); color: var(--ec-text); }
+.ec-round.on {
+  border-color: var(--ec-border);
+  background: var(--ec-plane);
+  color: var(--ec-text);
+  font-weight: 600;
+}
+
+/* ---------- 文件头 ---------- */
+.ec-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 6px 0 8px;
+  border-bottom: 1px solid var(--ec-border);
+  background: var(--ec-bg);
+}
+.ec-file {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ec-text);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ec-counts {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  margin-right: auto;
+  font: 12px/20px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  color: var(--ec-text-3);
+}
+.ec-added { color: var(--ec-add-marker); }
+.ec-deleted { color: var(--ec-del-marker); }
+.ec-tools { display: inline-flex; flex: none; gap: 2px; align-items: center; }
+.ec-tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ec-text-2);
+  cursor: pointer;
+}
+.ec-tool svg { width: 15px; height: 15px; }
+.ec-tool:hover { background: var(--ec-hover); color: var(--ec-text); }
+.ec-tool[aria-pressed="true"] { background: var(--ec-field); color: var(--ec-text); }
+
+/* 视图切换：对比 / 文件 */
+.ec-views { display: inline-flex; flex: none; gap: 2px; align-items: center; }
+.ec-view {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ec-text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ec-view:hover { background: var(--ec-hover); color: var(--ec-text); }
+.ec-view.on { background: var(--ec-field); border-color: var(--ec-border); color: var(--ec-text); }
+.ec-root[data-view="file"] .ec-tools { display: none; }
+
+/* ---------- diff 正文 ---------- */
+.ec-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 16px;
+  font: 12px/22px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  scrollbar-width: none;
+}
+.ec-body::-webkit-scrollbar,
+.ec-column::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.ec-body[data-view="split"]:not([data-wrap]) { overflow: hidden; display: flex; flex-direction: column; }
+.ec-body[data-view="unified"]:not([data-wrap]) { display: grid; grid-template-columns: minmax(max-content, 100%); align-content: start; }
+.ec-columns { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
+.ec-column {
+  display: grid;
+  grid-template-columns: minmax(max-content, 100%);
+  align-content: start;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: none;
+}
+.ec-column + .ec-column { border-left: 1px solid var(--ec-border); }
+.ec-hunk { margin-bottom: 8px; }
+.ec-hunk-head { padding: 4px 16px; color: var(--ec-text-3); white-space: pre; }
+.ec-note { margin: 0; padding: 4px 16px 8px; color: var(--ec-text-3); font-size: 13px; }
+
+.ec-sline {
+  display: grid;
+  grid-template-columns: 3.5em max-content;
+  box-sizing: border-box;
+  min-width: 100%;
+  width: max-content;
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+.ec-srow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+.ec-cell {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr);
+  box-sizing: border-box;
+  min-width: 0;
+}
+.ec-cell + .ec-cell { border-left: 1px solid var(--ec-border); }
+.ec-no {
+  padding-right: 8px;
+  color: var(--ec-text-3);
+  text-align: right;
+  user-select: none;
+}
+.ec-text { padding-right: 16px; }
+
+/* 统一视图 */
+.ec-line {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1.2em minmax(0, 1fr);
+  box-sizing: border-box;
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+.ec-sign { text-align: center; user-select: none; }
+
+/* 增删着色（dsh：行底 + 行号槽 + 首列标记） */
+.ec-add { background: var(--ec-add-bg); }
+.ec-del { background: var(--ec-del-bg); }
+.ec-add .ec-no, .ec-del .ec-no { background: var(--ec-add-gutter); color: var(--ec-add-marker); }
+.ec-del .ec-no { background: var(--ec-del-gutter); color: var(--ec-del-marker); }
+.ec-add .ec-no:first-child, .ec-del .ec-no:first-child { box-shadow: inset 3px 0 0 var(--ec-add-marker); }
+.ec-del .ec-no:first-child { box-shadow: inset 3px 0 0 var(--ec-del-marker); }
+.ec-add .ec-sign { color: var(--ec-add-marker); }
+.ec-del .ec-sign { color: var(--ec-del-marker); }
+.ec-context .ec-text { color: var(--ec-text-2); }
+.ec-empty { background: var(--ec-empty-fill); }
+
+/* 自动换行 */
+.ec-body[data-wrap] .ec-srow,
+.ec-body[data-wrap] .ec-line { white-space: pre-wrap; }
+.ec-body[data-wrap] .ec-text { overflow-wrap: anywhere; }
+
+/* 文件视图（只读浏览） */
+.ec-file-body { display: grid; grid-template-columns: minmax(max-content, 100%); align-content: start; }
+.ec-fline {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr);
+  box-sizing: border-box;
+  min-height: 22px;
+  line-height: 22px;
+  white-space: pre;
+}
+.ec-fline .ec-no { position: sticky; left: 0; background: var(--ec-bg); }
+
+/* ---------- 状态 ---------- */
+.ec-status {
+  flex: none;
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ec-border);
+  color: var(--ec-text-3);
+  font-size: 12px;
+}

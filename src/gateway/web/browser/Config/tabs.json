@@ -1,0 +1,11 @@
+{
+  "pages": [
+    {
+      "id": "edit",
+      "title": "编辑标签页",
+      "url": "EditCard/index.html",
+      "ns": "floria-edit-card",
+      "openCmd": "fileopen"
+    }
+  ]
+}

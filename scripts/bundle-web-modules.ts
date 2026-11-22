@@ -147,6 +147,10 @@ const PIECES: { file: string; part: number }[] = [
   // 顶层只有函数声明（消费方 msg-actions / composer-cm 早于本行也只按运行时调用），
   // 须排在 work 各件之后（其解析路径/切项目依赖 setSbMode / selectProject）。
   { file: 'feature/mention-nav.js', part: 1 },
+  // 侧边浏览器宿主（2026-11-22）：挂载 browser/SideBrowser 纯组件到 #side-browser + 注册 inline 卡
+  // （instanceId=floria-side-browser）；mention-nav 的 chat 文件链接经它开「编辑标签页」内部页。
+  // 顶层只有 let 控制器与函数声明，运行期由启动序列的 initSideBrowser 调用。
+  { file: 'feature/side-browser/side-browser-host.js', part: 1 },
   // 入口（web-src/app.js）：事件绑定段（同区段原含会话壳）与启动序列段。
   { file: '__app__', part: 1 },
   { file: 'inputbar/ctx-meter.js', part: 1 },

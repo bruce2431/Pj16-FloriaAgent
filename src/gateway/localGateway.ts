@@ -24,7 +24,7 @@ import { createServer, request as httpRequest, type Server } from 'node:http'
 import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, openSync, closeSync, truncateSync, unlinkSync, watch, mkdirSync, renameSync, createReadStream, type FSWatcher, type Dirent } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join, resolve, dirname, extname, basename, sep, isAbsolute, delimiter } from 'node:path'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { UUID } from 'crypto'
 import { networkInterfaces } from 'node:os'
 import { createSocket, type RemoteInfo } from 'node:dgram'
@@ -2032,6 +2032,177 @@ function revealInExplorer(abs: string, isDir: boolean): void {
     if (Date.now() < deadline) setTimeout(tick, 50)
   }
   setTimeout(tick, 30)
+}
+
+/* ---------- 文件历史只读对比（2026-11-22，侧边浏览器「编辑标签页」内部页） ----------
+ * 数据源 = <项目根>/.claude/file-history/<sessionId>/<sha256(绝对路径)前16位>@vN，与 CLI
+ * utils/fileHistory.ts 同式：hash 输入 = 原生绝对路径，Windows 反斜杠**不归一**。
+ * 对比 = 该文件最高版本备份（本轮改动前内容）vs 当前磁盘，行级 LCS diff（±3 行上下文）。
+ * 仅展示最新一轮：会话进行中即可对比，不依赖下一轮快照落盘。 */
+const FILE_HISTORY_CONTEXT = 3
+const FILE_HISTORY_MAX_BYTES = 2 * 1024 * 1024
+const FILE_HISTORY_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+type HistoryOp = { type: 'ctx' | 'add' | 'del'; old: number; now: number; text: string }
+interface HistoryHunk { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }
+
+function historyTextLines(text: string): string[] {
+  return text.replace(/\r\n?/g, '\n').split('\n')
+}
+
+/** 行级 LCS；返回按顺序的上下文 / 删除 / 新增操作（行号 1-based）。 */
+function historyDiffOps(a: string[], b: string[]): HistoryOp[] {
+  const n = a.length
+  const m = b.length
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
+    }
+  }
+  const ops: HistoryOp[] = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ type: 'ctx', old: i + 1, now: j + 1, text: a[i] })
+      i++
+      j++
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      ops.push({ type: 'del', old: i + 1, now: 0, text: a[i] })
+      i++
+    } else {
+      ops.push({ type: 'add', old: 0, now: j + 1, text: b[j] })
+      j++
+    }
+  }
+  while (i < n) { ops.push({ type: 'del', old: i + 1, now: 0, text: a[i] }); i++ }
+  while (j < m) { ops.push({ type: 'add', old: 0, now: j + 1, text: b[j] }); j++ }
+  return ops
+}
+
+/** 把操作序列切成带上下文的标准 hunk。 */
+function historyHunks(ops: HistoryOp[]): HistoryHunk[] {
+  const changed: number[] = []
+  ops.forEach((op, at) => { if (op.type !== 'ctx') changed.push(at) })
+  if (changed.length === 0) return []
+  const spans: Array<[number, number]> = []
+  let start = Math.max(0, changed[0] - FILE_HISTORY_CONTEXT)
+  let end = Math.min(ops.length - 1, changed[0] + FILE_HISTORY_CONTEXT)
+  for (let k = 1; k < changed.length; k++) {
+    const at = changed[k]
+    if (at - FILE_HISTORY_CONTEXT <= end + 1) end = Math.min(ops.length - 1, at + FILE_HISTORY_CONTEXT)
+    else {
+      spans.push([start, end])
+      start = Math.max(0, at - FILE_HISTORY_CONTEXT)
+      end = Math.min(ops.length - 1, at + FILE_HISTORY_CONTEXT)
+    }
+  }
+  spans.push([start, end])
+
+  const hunks: HistoryHunk[] = []
+  for (const [s, e] of spans) {
+    const slice = ops.slice(s, e + 1)
+    const firstOld = slice.find((op) => op.type !== 'add')
+    const firstNew = slice.find((op) => op.type !== 'del')
+    const prev = hunks[hunks.length - 1]
+    const oldStart = firstOld ? firstOld.old : prev ? prev.oldStart + prev.oldLines : 1
+    const newStart = firstNew ? firstNew.now : prev ? prev.newStart + prev.newLines : 1
+    const oldLines = slice.filter((op) => op.type !== 'add').length
+    const newLines = slice.filter((op) => op.type !== 'del').length
+    hunks.push({
+      oldStart,
+      oldLines,
+      newStart,
+      newLines,
+      lines: slice.map((op) => (op.type === 'add' ? '+' : op.type === 'del' ? '-' : ' ') + op.text),
+    })
+  }
+  return hunks
+}
+
+/** label → 项目根；路径在根内解析；读最高版本备份与当前磁盘生成最新一轮。 */
+function readFileHistory(
+  root: string,
+  label: string,
+  rawPath: string,
+  session: string,
+): { status: number; body: Record<string, unknown> } {
+  if (!FILE_HISTORY_SESSION_RE.test(session)) return { status: 400, body: { ok: false, error: 'session 参数无效' } }
+  let p = String(rawPath || '').trim().replace(/^file:/i, '')
+  p = p.replace(/\\/g, '/').replace(/:\d+(?:-\d+)?$/, '')
+  if (!p) return { status: 400, body: { ok: false, error: 'path 缺失' } }
+
+  const proj = findProjects(root).find((g) => g.label === label)
+  let base: string
+  if (proj) {
+    base = resolve(proj.dir, '..', '..') // 项目根（dir = <root>/<label>/.claude/projects）
+  } else if (!label) {
+    if ((p.split('/')[0] || '').startsWith('.')) return { status: 403, body: { ok: false, error: 'forbidden' } }
+    base = root
+  } else {
+    return { status: 404, body: { ok: false, error: 'project not found' } }
+  }
+  // 与 /gateway/file 同口径：绝对路径直接 resolve，相对路径按项目根解析；越出根即拒绝。
+  const abs = /^[A-Za-z]:\//.test(p) ? resolve(p) : resolve(base, p)
+  if (abs !== base && !abs.startsWith(base + sep)) return { status: 403, body: { ok: false, error: 'forbidden' } }
+  const display = abs.slice(base.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
+
+  let currentText: string | null = null
+  if (existsSync(abs) && statSync(abs).isFile()) {
+    if (statSync(abs).size > FILE_HISTORY_MAX_BYTES) return { status: 413, body: { ok: false, error: '当前文件超过 2 MB 上限' } }
+    currentText = readFileSync(abs).toString('utf8')
+  }
+
+  const hash = createHash('sha256').update(abs).digest('hex').slice(0, 16)
+  const dir = join(base, '.claude', 'file-history', session)
+  const versions: Array<{ version: number; name: string }> = []
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir)) {
+      const m = /^([0-9a-f]{16})@v(\d+)$/.exec(name)
+      if (m && m[1] === hash) versions.push({ version: Number(m[2]), name })
+    }
+  }
+  versions.sort((a, b) => a.version - b.version)
+
+  const file = { path: display, display }
+  if (!versions.length && currentText === null) {
+    return { status: 404, body: { ok: false, error: '文件不存在，且该会话没有历史备份' } }
+  }
+  const baseBody: Record<string, unknown> = {
+    ok: true,
+    session,
+    file,
+    content: currentText === null ? '' : currentText,
+    current: { exists: currentText !== null, lines: currentText === null ? 0 : historyTextLines(currentText).length },
+  }
+  if (!versions.length) {
+    return {
+      status: 200,
+      body: { ...baseBody, previous: null, rounds: [], note: '该会话没有此文件的改动前备份（可能是本轮新建，或由其它会话/Web 端修改）' },
+    }
+  }
+
+  const latest = versions[versions.length - 1]
+  const backupAbs = join(dir, latest.name)
+  const bytes = readFileSync(backupAbs)
+  if (bytes.byteLength > FILE_HISTORY_MAX_BYTES) return { status: 413, body: { ok: false, error: '备份超过 2 MB 上限' } }
+  const previousText = bytes.toString('utf8')
+  const ops = historyDiffOps(historyTextLines(previousText), historyTextLines(currentText === null ? '' : currentText))
+  const hunks = historyHunks(ops)
+  const added = ops.filter((op) => op.type === 'add').length
+  const deleted = ops.filter((op) => op.type === 'del').length
+  return {
+    status: 200,
+    body: {
+      ...baseBody,
+      previous: { version: latest.version, backup: latest.name, mtime: statSync(backupAbs).mtimeMs },
+      rounds: hunks.length
+        ? [{ turn: latest.version, label: 'v' + latest.version + ' → 当前', added, deleted, hunks }]
+        : [],
+      note: hunks.length ? '' : '与上一版备份相比没有文本改动',
+    },
+  }
 }
 
 function findProjects(root: string): ProjectInfo[] {
@@ -4733,6 +4904,18 @@ async function handleRequest(req: import('node:http').IncomingMessage, res: impo
     const fType = MIME[extname(fAbs)] ?? (sniffBinary(fBuf) ? 'application/octet-stream' : 'text/plain; charset=utf-8')
     res.writeHead(200, { ...fHeaders, 'Content-Type': fType })
     res.end(fBuf)
+    return
+  }
+  // 文件历史只读对比：GET /gateway/file-history?label=&path=&session=
+  // → { ok, file:{path,display}, content, previous, rounds:[最新一轮], note }
+  // 供侧边浏览器的「编辑标签页」内部页读取 <项目根>/.claude/file-history 并渲染本轮 diff。
+  // 只读端点；label 解析、越界与 2 MB 上限口径同 GET /gateway/file。受上方 /gateway/* token 校验保护。
+  if (req.method === 'GET' && url.pathname === '/gateway/file-history') {
+    const hLabel = url.searchParams.get('label') || ''
+    const hPath = url.searchParams.get('path') || ''
+    const hSession = url.searchParams.get('session') || ''
+    const data = readFileHistory(root, hLabel, hPath, hSession)
+    sendJson(res, data.status, data.body)
     return
   }
   // 项目内文件 / 目录重命名：POST /gateway/file/rename {label, path, name} → 同目录改名（2026-09-27）

@@ -107,6 +107,13 @@ html:not([data-theme="dark"]) #chat-area.work { background: var(--chat-bg); }
    槽缘的缝里露出底板色（--plane），分隔靠底色差，不靠线、不加阴影。
    #gate-screen / #menu-btn 留槽级（token 门全屏浮层 / 移动端抽屉把手，与「当前哪张卡」无关）。 */
 #chat-area { flex: 1; position: relative; min-width: 0; display: flex; flex-direction: column; }
+
+/* 侧边浏览器（2026-11-22，仅 chat 模式）：满高覆盖层，收敛态完全隐藏、不占位；
+   展开后只有右侧抽屉可点（组件 .sb-card），其余区域点击穿透到会话。组件目录自带样式。 */
+#side-browser { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+#side-browser[hidden] { display: none !important; }
+#side-browser .sb-card { pointer-events: auto; }
+
 /* 视图卡。position:relative ⇒ 卡是绝对定位后代的包含块（#empty-hint inset:0 / #input-wrap.docked
    的 100% 与 #char），而卡矩形＝卡化前的 #chat-area 矩形 ⇒ 这些覆盖层的几何逐像素不变。
    [hidden] 显式声明：会话卡常驻 DOM（承载模块级单例引用），退场靠 hidden 而非销毁。 */

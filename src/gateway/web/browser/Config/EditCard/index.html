@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编辑标签页</title>
+<link rel="stylesheet" href="edit-card.css">
+<style>
+  html, body { height: 100%; margin: 0; background: var(--chat-bg, #fff); }
+  html[data-theme="dark"], html[data-theme="dark"] body { background: #1f242d; }
+  #app { height: 100%; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="edit-card.js"></script>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search)
+  // 同源 iframe：直接沿用宿主主题（父页面不可访问时按亮色）。
+  try {
+    var t = parent.document.documentElement.getAttribute('data-theme')
+    if (t) document.documentElement.setAttribute('data-theme', t)
+  } catch (_e) { /* 跨源宿主忽略 */ }
+  var label = params.get('label') || ''
+  var dataUrl = params.get('dataUrl') || '/gateway/file-history'
+  if (dataUrl === '/gateway/file-history' && label) dataUrl += '?label=' + encodeURIComponent(label)
+  window.UIDesignEditCard.mount(document.getElementById('app'), {
+    dataUrl: dataUrl,
+    path: params.get('path') || '',
+    session: params.get('session') || ''
+  })
+})()
+</script>
+</body>
+</html>

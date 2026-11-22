@@ -20,6 +20,7 @@ import { inputWrap } from '../../engine/state.js'
     $('chat-panel').hidden = on
     $('work-panel').hidden = !on
     chatArea.classList.toggle('work', on)
+    syncSideBrowserMode(on) // 侧边浏览器只在 chat 模式在场（work 有下沉区/右栏自己的卡）
     // 注册域随模式切换重算（2026-10-15）：外部卡（EXT）的语境口径含 work（看工作项目），模式一切换
     // 就必须重取 #mgr-tabs（应用 tab 的语境判据只看 chat 侧 state.preview/state.mgr，不受模式影响）。
     renderMgrTabs()

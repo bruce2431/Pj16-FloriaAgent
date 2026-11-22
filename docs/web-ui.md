@@ -1157,3 +1157,13 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 - **数据源**：输出唯一来源 = FIFO 队列吸附的 `tool_result.text`（`renderer.js` 标记 done 时写入 `item.result` 并重生成该行 HTML；lazy 历史段由 `closeSeg` 惰性补生成时带上 `result`）。不另拉接口、不从正文反解。
 - **开合态**：交给 `live.js` 的 `foldKey`（段 `data-m|data-t` + 首个类名 + 段内同类序号）在全量/增量重建后恢复；新增折叠保留 HTML 默认（收起）。工具行不存额外 UI 状态。
 - **构造唯一处**：`chat/messages.js` 的 `toolStepHtml`（`toolLine(block, result)` 与 `toolCurHtml(block)` 两个出口同源）；样式在 `styles.css` 的 `.tool-step*` / `.tool-arg*` / `.tool-out-pre` / `.tool-io*` / `.tool-pre`。
+
+## 77. 侧边浏览器与「编辑标签页」（chat 模式文件入口）
+
+侧边浏览器是 `web/browser/SideBrowser/` 下的独立组件（`window.UIDesignSideBrowser`），只在 chat 模式由宿主挂载在 `#side-browser`；内部页清单由 `web/browser/Config/tabs.json` 声明，页面文件放 `web/browser/Config/` 内。整个目录可原样拷贝。
+
+- **宿主接缝**：`feature/side-browser/side-browser-host.js` 调 `mount(box, {ns, appOrigin, configUrl:'/browser/Config/tabs.json'})`，并以 `instanceId=floria-side-browser` 注册 inline 卡；命令 `open/load/page/back/forward/reload/close/state/locate`。`sidebar/work/work-layout.js` 的 `applySbMode()` 是唯一显隐口（work 模式隐藏、chat 模式在场）。
+- **内部页协议**：`tabs.json` 的 `pages[]` = `{id,title,url,ns,openCmd}`；`page{id,payload}` 命令把 payload 的 string/number 键拼进内部页 URL query，等页面 `ready` 后经 `postMessage({type:'<ns>-cmd',cmd:openCmd,args:payload})` 下发，页面回 `ack` 配对（15s 超时）。内部页 iframe 沙箱为同源形态（`allow-scripts allow-same-origin allow-forms`），外部网页仍用纯脚本沙箱。`url` 限 Config 根内。
+- **编辑标签页**：`Config/EditCard/`（`window.UIDesignEditCard.mount`），命令 `fileopen{path,session,dataUrl?}/load/select/view{view}/split/wrap/state`；数据取 `GET /gateway/file-history`（→ [gateway.md](gateway.md) §24），渲染文件视图与「上一备份 → 当前」逐段 diff。
+- **入口（两个）**：①消息内 md 文件链接 chip（`feature/mention-nav.js`）：chat 模式调侧边浏览器 `page{id:'edit',payload:{label,path,session}}`，work 模式与目录链接保持原 work 文件树链路；②变更卡文件行（`chat/messages/change-card.js`）：行与单文件标题带 `data-chg-path`（展示路径）/`data-chg-abs`（原始路径）钩子，点击/Enter 走 `openChangedFile()`，chat 模式同上打开编辑页、work 模式走 work 卡 `scroll`。钩子由 `@floria/web` 的 `changesCardHtml` 输出，业务侧只做事件委托。
+- **静态托管**：`web/browser/**` 由网关 dev 直读磁盘、生产递归内嵌，无需登记资源表；`index.html` 引 `side-browser.css/js`，`sw.js` CORE 预缓存组件与编辑页文件。
