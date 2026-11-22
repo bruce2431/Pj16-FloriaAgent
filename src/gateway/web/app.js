@@ -3267,9 +3267,24 @@ function setLastNavHash(v) { lastNavHash = v }
     if (!raw) return
     openChangedFile(raw).catch((e) => toast((e && e.message) || String(e)))
   }
-  document.addEventListener('click', (e) => {
+  // 鼠标 = pointerdown 即触发（与 @ 提及行同一范式）：消息区随 SSE 整块重渲（engine/live.js 的
+  // messagesEl.innerHTML = …），若重渲落在按下与抬起之间，浏览器把 click 派发给两元素的共同祖先，
+  // 行上的委托收不到 ⇒ 第一下白点、要点两次。按下态直接命中当前行，免疫重渲；同一手势随后的
+  // click 由 pressed 标志吞掉（detail>0 = 真实指针手势），键盘 Enter/Space 与触屏仍走 click。
+  let pressedRow = false
+  document.addEventListener('pointerdown', (e) => {
+    pressedRow = false
+    if (e.pointerType !== 'mouse' || e.button !== 0) return
     const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
     if (!el || !messagesEl.contains(el) || e.target.closest('[data-chg-toggle]')) return
+    pressedRow = true
+    runChangedFile(el)
+  })
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('[data-chg-path]') : null
+    if (!el || !messagesEl.contains(el) || e.target.closest('[data-chg-toggle]')) { pressedRow = false; return }
+    if (pressedRow && e.detail > 0) { pressedRow = false; return }
+    pressedRow = false
     runChangedFile(el)
   })
   document.addEventListener('keydown', (e) => {

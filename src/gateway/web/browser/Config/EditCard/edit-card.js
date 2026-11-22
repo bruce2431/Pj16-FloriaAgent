@@ -55,7 +55,7 @@
       file: null,
       rounds: [],
       turn: 0,
-      split: true,
+      split: false,
       wrap: false,
       view: 'diff',
       content: '',

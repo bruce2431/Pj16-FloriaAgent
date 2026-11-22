@@ -629,28 +629,32 @@
         var page = null
         for (var i = 0; i < pages.length; i++) if (pages[i].id === pid) { page = pages[i]; break }
         if (!page) return { ok: false, error: 'Config 未声明内部页：' + pid }
+        /* 先展开再加载/复用：命令到达即出面板。可见性不得绑在 iframe load 或内部页 ack 上
+           （编辑页 ack 要等 /gateway/file-history 读完，期间面板不可见 ⇒ 首点像没反应）。 */
+        state.open = true
         var key = pageKeyOf(page, payload)
         var tab = null
         for (var j = 0; j < state.tabs.length; j++) if (state.tabs[j].pageKey === key) { tab = state.tabs[j]; break }
         if (!tab) {
-          tab = blankTab()
+          /* 未导航过的初始空白标签直接改作内部页，不另叠一个新标签页（同 open{url}）。 */
+          var cur = activeTab()
+          var pristine = cur && !cur.entries.length && cur.nav.status === 'empty' && !cur.frame && !cur.page
+          tab = pristine ? cur : blankTab()
           tab.page = page.id
           tab.pageKey = key
           tab.title = page.title
           var target = { url: pageUrl(page, payload), title: page.title }
           tab.entries = [target]
           tab.index = 0
-          state.tabs.push(tab)
-          state.active = state.tabs.length - 1
+          if (!pristine) state.tabs.push(tab)
+          state.active = state.tabs.indexOf(tab)
           revealTab = true
           beginLoad(tab, target)
         } else {
-          state.open = true
           state.active = state.tabs.indexOf(tab)
           revealTab = true
           sync()
         }
-        state.open = true
         emit('page', { id: page.id, tab: tab.id })
         return askPage(tab, page, payload).then(function (r) {
           if (r.ok !== false) refreshPageTitle(tab)
