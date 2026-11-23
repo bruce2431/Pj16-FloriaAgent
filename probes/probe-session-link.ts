@@ -4,14 +4,15 @@
  * 两根不变量：
  *   ① **包装是唯一真相源**（utils/sessionMessage.ts）——来源内嵌文本，落盘/回放/压缩后天然携带；
  *      正文含同名字符串不得被误切（整条消息恒为单层包装）。
- *   ② **寻址即门**（utils/sessionAddressing.ts，2026-09-18 撤授权门）——可发会话目录内任何会话，
- *      唯一硬门是寻址本身：sid 精确 > 标题唯一；重名/未找到/自环/空一律拒绝（不猜不兜底）。
+ *   ② **寻址即门**（utils/sessionAddressing.ts，2026-09-18 撤授权门；2026-11-23 收窄 sid-only）——
+ *      可发会话目录内任何会话，但 to 只认 sid 整串精确命中；标题/未找到/自环/空一律拒绝
+ *      （发现归 SessionSearch，跨项目 sid 由用户 @ 令牌暴露，不猜不兜底）。
  *      旧「暴露即授权」已整体移除（授权集合由上下文派生，压缩卷走令牌后只能人工重 @，
  *      2026-09-18 实测卡线后定案撤销）；唯一刹车 = 「非必要不通信」软约束，失控再补硬护栏。
  *
  * 断言：
  *   A 包装往返 —— 正文/标题含引号尖括号/含标签串/多行 均无损；非包装形态不误判
- *   D 寻址     —— sid 精确 > 标题唯一；重名/未找到/自环/空/复合令牌串 → error（不猜不兜底）
+ *   D 寻址     —— 只认 sid 整串；标题/未找到/自环/空/复合令牌串 → error（不猜不兜底）
  *   F 展示层接线 —— web 投影剥包装 + 来源行；CLI 同源；排队区拆包点
  *   G CLI 接线 + 工具说明 —— 含「撤授权门」源码级钉（防回归）
  *   H 来源行对齐 —— 右对齐（2026-09-15 用户实测定案）
@@ -29,7 +30,7 @@ import {
 } from '../src/utils/sessionMessage.ts'
 import {
   resolveSendMode,
-  resolveSessionTarget,
+  resolveSessionTargetBySid,
   type KnownSession,
 } from '../src/utils/sessionAddressing.ts'
 
@@ -88,24 +89,32 @@ const DIR: KnownSession[] = [
   { sid: 'self', title: '我' },
 ]
 const SELF = 'self'
-const resolve = (to: string) => resolveSessionTarget(DIR, to, SELF)
-const errOf = (to: string) => resolveSessionTarget(DIR, to, SELF).error ?? '(no error)'
+const resolve = (to: string) => resolveSessionTargetBySid(DIR, to, SELF)
+const errOf = (to: string) => resolveSessionTargetBySid(DIR, to, SELF).error ?? '(no error)'
 
 eq('D1 sid 精确命中', resolve('s1'), { target: { sid: 's1', title: '甲' }, error: null })
-eq('D2 标题唯一命中', resolve('甲'), { target: { sid: 's1', title: '甲' }, error: null })
-check('D3 重名拒绝且报数量', !resolve('乙').target && errOf('乙').includes('重名') && errOf('乙').includes('2'), errOf('乙'))
+check(
+  'D2 标题不再可寻址（标题串按 sid 未找到）',
+  !resolve('甲').target && errOf('甲').includes('未找到'),
+  errOf('甲'),
+)
+check(
+  'D3 同名标题不产生重名分支（按 sid 未找到）',
+  !resolve('乙').target && errOf('乙').includes('未找到') && !errOf('乙').includes('重名'),
+  errOf('乙'),
+)
 check('D4 未找到拒绝', !resolve('不存在').target && errOf('不存在').includes('未找到'), errOf('不存在'))
 check('D5 自环拒绝（sid 命中自己）', !resolve('self').target && errOf('self').includes('本会话自己'), errOf('self'))
-check('D5 自环拒绝（标题命中自己）', !resolve('我').target && errOf('我').includes('本会话自己'), errOf('我'))
-check('D6 空串拒绝', resolve('').target === null && errOf('') === '目标为空', errOf(''))
-check('D6 纯空白拒绝（trim）', resolve('   ').target === null && errOf('   ') === '目标为空', errOf('   '))
+check('D5 标题指向自己也不放行（标题已非寻址键）', !resolve('我').target, errOf('我'))
+check('D6 空串拒绝', resolve('').target === null && errOf('') === '目标 sid 为空', errOf(''))
+check('D6 纯空白拒绝（trim）', resolve('   ').target === null && errOf('   ') === '目标 sid 为空', errOf('   '))
 {
   // sid 键优先：to 恰好既是某会话的 sid、又是另一会话的标题时，按 sid 命中（精确键优先于标题键）
   const DIR2: KnownSession[] = [
     { sid: 'X', title: 'Y' },
     { sid: 'Z', title: 'X' },
   ]
-  eq('D7 sid 键优先于同名标题', resolveSessionTarget(DIR2, 'X', 'other'), {
+  eq('D7 sid 键优先于同名标题', resolveSessionTargetBySid(DIR2, 'X', 'other'), {
     target: { sid: 'X', title: 'Y' },
     error: null,
   })
@@ -168,10 +177,18 @@ check('G6 旧歧义措辞已移除', !sendPrompt.includes('并会看到「来自
 // 撤授权门（2026-09-18 用户定案）——源码级钉，防止暴露机制回潮或残留引用
 const sendTool = readFileSync(fileURLToPath(new URL('../src/tools/SessionSendTool/SessionSendTool.ts', import.meta.url)), 'utf8')
 check('G7 工具不再引用暴露/授权机制（标识符级；头注释的撤门说明不算残留）', !sendTool.includes('sessionExposure') && !sendTool.includes('collectExposedSessions') && !sendTool.includes('resolveExposure') && !sendTool.includes('findTarget') && !sendTool.includes('describeExposure'))
-check('G7 寻址走 sessionAddressing', sendTool.includes('resolveSessionTarget') && sendTool.includes("from '../../utils/sessionAddressing.js'"))
 check(
-  'G7 工具说明不再要求 @ 提及授权（保留撤门定案与软约束）',
-  sendPrompt.includes('不要求用户事先 @ 提及') && !sendPrompt.includes('唯一的授权来源') && sendPrompt.includes('非必要不通信'),
+  'G7 寻址走 sessionAddressing（sid-only）',
+  sendTool.includes('resolveSessionTargetBySid') &&
+    sendTool.includes("from '../../utils/sessionAddressing.js'") &&
+    !sendTool.includes('resolveSessionTarget(dir'),
+)
+check(
+  'G7 工具说明收窄为 sid 寻址（标题不再是寻址键，保留软约束）',
+  sendPrompt.includes('to 只填 sid') &&
+    !sendPrompt.includes('填会话标题或 sid') &&
+    sendPrompt.includes('SessionSearch') &&
+    sendPrompt.includes('非必要不通信'),
 )
 const sessionMessageSrc = readFileSync(fileURLToPath(new URL('../src/utils/sessionMessage.ts', import.meta.url)), 'utf8')
 check('G7 extractSessionSource 随授权门移除（死代码不残留）', !sessionMessageSrc.includes('extractSessionSource'))
@@ -258,6 +275,23 @@ check(
     (gatewaySrc.match(/applySessionTitle\(/g) ?? []).length >= 2,
 )
 check('I10 创建失败如实回执（不乐观承诺）', gatewaySrc.includes("'创建会话失败：' + (e?.message ?? String(e))"))
+
+// ── J 发现入口（2026-11-23 SessionSearch 与 sid-only 同批）──────────────────────
+const searchTool = (() => {
+  const p = new URL('../src/tools/SessionSearchTool/SessionSearchTool.ts', import.meta.url)
+  return existsSync(fileURLToPath(p)) ? readFileSync(fileURLToPath(p), 'utf8') : ''
+})()
+check('J1 SessionSearch 工具存在且只读', searchTool.includes('isReadOnly()') && searchTool.includes('SESSION_SEARCH_TOOL_NAME'))
+check('J2 候选集固定最近 10 个、只匹配标题', searchTool.includes('CANDIDATE_LIMIT = 10') && /title\.toLowerCase\(\)\.includes/.test(searchTool))
+check('J3 与 SessionSend 同组 feature 开关', searchTool.includes("feature('SESSION_LINK')"))
+check(
+  'J4 tools.ts 注册了 SessionSearch',
+  readFileSync(fileURLToPath(new URL('../src/tools.ts', import.meta.url)), 'utf8').includes('getSessionSearchTool()'),
+)
+check(
+  'J5 目录归一已带 projectLabel（Search 圈定候选的数据基础）',
+  gwc.includes('projectLabel') && gwc.includes('updatedAt'),
+)
 
 console.log(`\n${pass} 过 / ${fail} 败`)
 if (failures.length) {

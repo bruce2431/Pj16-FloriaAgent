@@ -80,6 +80,11 @@ const getSendMessageTool = () =>
 const getSessionSendTool = () =>
   require('./tools/SessionSendTool/SessionSendTool.js')
     .SessionSendTool as typeof import('./tools/SessionSendTool/SessionSendTool.js').SessionSendTool
+// 2026-11-23 会话发现（SessionSearch）：SessionSend 收窄为 sid-only 后的唯一发现入口；
+// 与 SessionSend 同组懒加载、同 feature('SESSION_LINK') 开关。
+const getSessionSearchTool = () =>
+  require('./tools/SessionSearchTool/SessionSearchTool.js')
+    .SessionSearchTool as typeof import('./tools/SessionSearchTool/SessionSearchTool.js').SessionSearchTool
 // 2026-10-11 卡片公开 API（CardCall）：同法懒加载；生效判据在工具自身 isEnabled（feature('CARD_API')）。
 const getCardCallTool = () =>
   require('./tools/CardCallTool/CardCallTool.js')
@@ -247,6 +252,7 @@ export function getAllBaseTools(): Tools {
     ...(isEnvTruthy(process.env.ENABLE_LSP_TOOL) ? [LSPTool] : []),
     ...(isWorktreeModeEnabled() ? [EnterWorktreeTool, ExitWorktreeTool] : []),
     getSendMessageTool(),
+    getSessionSearchTool(),
     getSessionSendTool(),
     getCardCallTool(),
     ...(ListPeersTool ? [ListPeersTool] : []),

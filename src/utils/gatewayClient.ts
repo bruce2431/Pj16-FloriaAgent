@@ -833,12 +833,29 @@ export async function fetchDirectorySnapshot(): Promise<{
   if (!Array.isArray(payload.sessions)) throw new Error('网关会话目录响应格式异常')
   const sessions: KnownSession[] = []
   for (const s of payload.sessions) {
-    const file = (s as { file?: unknown } | null)?.file
+    const row = s as {
+      file?: unknown
+      title?: unknown
+      projectLabel?: unknown
+      projectScope?: unknown
+      updatedAt?: unknown
+      state?: unknown
+    } | null
+    const file = row?.file
     if (typeof file !== 'string' || !file.endsWith('.jsonl')) continue
-    const title = (s as { title?: unknown }).title
+    const title = row?.title
+    // 2026-11-23（SessionSearch）：补项目归属与活动元数据（网关 listSessions 已下发这些字段）
+    const projectLabel = row?.projectLabel
+    const projectScope = row?.projectScope
+    const updatedAt = row?.updatedAt
+    const state = row?.state
     sessions.push({
       sid: file.slice(0, -'.jsonl'.length),
       title: typeof title === 'string' && title ? title : '未命名会话',
+      ...(typeof projectLabel === 'string' && projectLabel ? { projectLabel } : {}),
+      ...(typeof projectScope === 'string' ? { projectScope } : {}),
+      ...(typeof updatedAt === 'number' ? { updatedAt } : {}),
+      ...(typeof state === 'string' || state === null ? { state: typeof state === 'string' ? state : null } : {}),
     })
   }
   // groups = 网关 findProjects 结果；只有 scope==='project' 的 label 能作为新会话的项目

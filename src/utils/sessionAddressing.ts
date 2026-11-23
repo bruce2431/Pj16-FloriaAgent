@@ -11,15 +11,25 @@
  *
  * **本模块保持纯函数、零 import**——目录（GET /gateway/sessions 归一形态）与本会话 sid
  * 由调用方注入（SessionSendTool 的 checkPermissions 与 call 各解析一次，见该文件头注）。
- * 解析不猜不兜底：sid 精确命中优先；标题必须唯一；重名/未找到/自环/空 → error 原文回给模型。
+ * 解析不猜不兜底：sid 整串精确命中；未找到/自环/空 → error 原文回给模型。
+ * 2026-11-23：标题寻址分支移除（发现归 SessionSearch），跨项目目标走用户 @ 令牌的 sid。
  *
  * 2026-09-20：发送模式判定（resolveSendMode：existing / new / invalid）同样收在本模块——
  * 「发给已有会话」与「拉起新会话」的分岔必须是单一出口，否则工具 schema、权限门与执行点
  * 三处各判一次必然漂移。
  */
 
-/** 会话目录项（网关 /gateway/sessions 归一后的形态，sid = 转录文件名主干） */
-export type KnownSession = { sid: string; title: string }
+/** 会话目录项（网关 /gateway/sessions 归一后的形态，sid = 转录文件名主干）。
+ *  2026-11-23（SessionSearch）：补项目归属与活动元数据——Search 按 projectLabel 圈定候选、
+ *  按 updatedAt 排序；SessionSend 的 sid 寻址只用 sid/title，新增字段均为可选、零影响。 */
+export type KnownSession = {
+  sid: string
+  title: string
+  projectLabel?: string
+  projectScope?: string
+  updatedAt?: number
+  state?: string | null
+}
 
 export type ResolvedSessionTarget = { sid: string; title: string }
 
@@ -27,36 +37,26 @@ export type ResolvedSessionTarget = { sid: string; title: string }
 export type TargetResolution = { target: ResolvedSessionTarget | null; error: string | null }
 
 /**
- * to（标题或 sid）→ 目标会话。判据：
- *   ① sid 与目录精确命中（trim 后整串比对，不做前缀/大小写猜测）；
- *   ② 否则按标题唯一匹配；
- *   ③ 重名 / 未找到 / 指向本会话自己 / 空 → error。
- * sid 未命中**不回落标题**：`[会话:标题|sid]` 令牌里的 sid 是精确凭据，失配即报未找到
- * （会话可能已删除）——静默换键会掩盖失效。
+ * to → 目标会话（2026-11-23 收窄为**只认 sid**）。
+ * 判据：trim 后与目录 sid 整串精确命中；未命中 / 指向本会话自己 / 空 → error。
+ * 标题寻址已移除：发现入口唯一归 SessionSearch（当前项目最近 10 个标题），跨项目目标由
+ * 用户 `[@会话:标题|sid]` 令牌或 new_session 回执提供 sid；不猜、不做标题全等/前缀匹配。
+ * 仍查目录一次：sid 合法性（存在、非自身）必须在执行点校验，不能只依赖投递回执。
  */
-export function resolveSessionTarget(
+export function resolveSessionTargetBySid(
   dir: readonly KnownSession[],
   to: string,
   selfSid: string,
 ): TargetResolution {
   const q = to.trim()
-  if (!q) return { target: null, error: '目标为空' }
-  const bySid = dir.find(s => s.sid === q)
-  if (bySid) {
-    if (bySid.sid === selfSid) return { target: null, error: '目标指向本会话自己，已拒绝' }
-    return { target: { sid: bySid.sid, title: bySid.title }, error: null }
-  }
-  const byTitle = dir.filter(s => s.title === q)
-  if (byTitle.length === 0) {
-    return { target: null, error: `会话「${q}」未找到（可能已删除或不在本工作区；也可改用会话 sid 寻址）` }
-  }
-  if (byTitle.length > 1) {
+  if (!q) return { target: null, error: '目标 sid 为空' }
+  const hit = dir.find(s => s.sid === q)
+  if (!hit) {
     return {
       target: null,
-      error: `会话「${q}」重名（${byTitle.length} 个），请让用户指定具体会话（用 sid 寻址）`,
+      error: `会话 sid「${q}」未找到（可能已删除；当前项目的会话可用 SessionSearch 查，其它项目请让用户 @ 会话提供 sid）`,
     }
   }
-  const hit = byTitle[0]!
   if (hit.sid === selfSid) return { target: null, error: '目标指向本会话自己，已拒绝' }
   return { target: { sid: hit.sid, title: hit.title }, error: null }
 }

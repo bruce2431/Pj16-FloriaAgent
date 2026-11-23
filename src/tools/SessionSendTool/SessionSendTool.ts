@@ -2,11 +2,13 @@
  * SessionSend —— 会话间协作的发送口（2026-09-15；2026-09-18 撤授权门）。
  *
  * 三段式：
- *   ① 寻址判定（checkPermissions 与 call 都要做，见下）——to（标题或 sid）→ 目标 sid
- *      （sessionAddressing.ts 纯函数）。**2026-09-18 用户定案撤除「暴露即授权」门**：
+ *   ① 寻址判定（checkPermissions 与 call 都要做，见下）——to（**只认 sid**）→ 目标
+ *      （sessionAddressing.ts 纯函数）。2026-11-23：标题寻址移除，发现入口唯一归 SessionSearch；
+ *      跨项目目标由用户 `[@会话:标题|sid]` 令牌或 new_session 回执给 sid。
+ *      **2026-09-18 用户定案撤除「暴露即授权」门**：
  *      原授权集合由上下文扫描派生，压缩会卷走令牌、恢复只能靠用户手工重新 @（实测卡线），
  *      机制性摩擦 > 收益——现可发目录内任何会话，回环风险由「非必要不通信」软约束兜底
- *      （失控再补硬护栏）。仍拒绝：未找到 / 重名 / 指向自己 / 空——那是寻址失败，非授权失败。
+ *      （失控再补硬护栏）。仍拒绝：未找到 / 指向自己 / 空——那是寻址失败，非授权失败。
  *   ② 解析在本进程做（复用网关既有 GET /gateway/sessions），网关只收已解析的 sid 做路由
  *      ——网关不引入第二份会话标题索引。
  *   ③ 投递：gatewayClient.sendSessionMessage → 网关按 sid 三形态路由（在线直投/暂存补投/冷启拉起）。
@@ -38,7 +40,7 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { findModelProvider } from '../../utils/credentials/pool.js'
 import {
   resolveSendMode,
-  resolveSessionTarget,
+  resolveSessionTargetBySid,
   type ResolvedSessionTarget,
 } from '../../utils/sessionAddressing.js'
 import { SESSION_SEND_TOOL_NAME } from './constants.js'
@@ -55,7 +57,7 @@ async function resolveAddressing(
 ): Promise<{ target: ResolvedSessionTarget; self: ResolvedSessionTarget }> {
   const dir = await fetchSessionDirectory()
   const selfSid = getSessionId()
-  const r = resolveSessionTarget(dir, to, selfSid)
+  const r = resolveSessionTargetBySid(dir, to, selfSid)
   if (!r.target) throw new Error(r.error ?? '目标无法确定')
   return {
     target: r.target,
@@ -90,7 +92,9 @@ const inputSchema = lazySchema(() =>
     to: z
       .string()
       .optional()
-      .describe('Target session: its title or sid (gateway session directory). 与 new_session 互斥。'),
+      .describe(
+        'Target session sid (from SessionSearch, a user @-mention token, or a new_session receipt). 与 new_session 互斥；标题不再接受。',
+      ),
     new_session: z
       .boolean()
       .optional()

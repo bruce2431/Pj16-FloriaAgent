@@ -176,24 +176,25 @@ API 拒绝时的内存自救，实现 `services/compact/reactiveCompact.ts`，�
 - **共同约束**：只改内存消息数组，不动 `imageStore` 磁盘缓存与 jsonl 转录；无媒体可剥 → 原样上报不重试（拒绝与媒体无关）；`hasAttemptedReactiveCompact` 防重试螺旋。
 - **入口约束**：`tryReactiveCompact` 的 `errorMsg` 为必传参数，唯一调用方 `query.ts` 传 `lastMessage`；withhold 错误只出现在 assistantMessages，`messagesForQuery` 尾部恒为 user/tool_result。
 
-## 会话间协作（`session_send` 工具 + `sessionMessage` / `sessionAddressing`，`SESSION_LINK`）
+## 会话间协作（`session_send` / `session_search` 工具 + `sessionMessage` / `sessionAddressing`，`SESSION_LINK`）
 
 会话 A 的 agent 向会话 B 发消息，B 侧以**与用户消息完全同等形态**接收（空闲开新回合 / 忙则排队 / 离线自动拉起，可点气泡催办），气泡外带一行灰字标明来源。as-built 以本节 + gateway.md §13 为准；网关侧 → [gateway.md](gateway.md) §13；渲染 → [web-ui.md](web-ui.md) §24。
 
-**寻址模型 = 目录寻址，无授权门**：可发会话目录（`GET /gateway/sessions`，读盘、含离线会话）内任何会话，唯一硬门是寻址本身——sid 精确 > 标题唯一，重名/未找到/自环/空一律拒绝。@ 提及为纯输入手势（插 chip），不产生任何授权状态。
+**发现与发送分口，无授权门**：`SessionSearch`（只读）在**本会话所在项目**（全局根会话即全局根散装对话）最近 10 个会话里按标题子串匹配、返回 sid；`session_send` 的 `to` **只认 sid 整串精确命中**（标题不再是寻址键），未找到/自环/空一律拒绝。跨项目目标由用户 `[@会话:标题|sid]` 令牌暴露 sid。@ 提及为纯输入手势（插 chip），不产生任何授权状态。
 
 | 件 | 职责 |
 |---|---|
 | `utils/sessionMessage.ts`（纯字符串） | 包装/解析：`wrapSessionMessage({sid,title}, body)` / `parseSessionMessage(text)`（不锚定，展示用） |
-| `utils/sessionAddressing.ts`（**纯函数、零 import**） | `resolveSessionTarget(dir, to, selfSid)`：目录 → `{target, error}`；寻址即唯一硬门。`resolveSendMode({to,new_session,project})` → `existing`/`new`/`invalid`：两形态分岔的单一出口 |
-| `tools/SessionSendTool/` | `session_send({to?, new_session?, project?, text})` 两形态（发给已有会话 / 拉起新会话）；`checkPermissions` 与 `call` 各重算一次现场（`resolveSessionTarget` 或 project 目录校验——两次调用间目录可能变化） |
+| `utils/sessionAddressing.ts`（**纯函数、零 import**） | `resolveSessionTargetBySid(dir, to, selfSid)`：目录 → `{target, error}`（sid 整串精确，标题不参与寻址）。`resolveSendMode({to,new_session,project})` → `existing`/`new`/`invalid`：两形态分岔的单一出口 |
+| `tools/SessionSendTool/` | `session_send({to?, new_session?, project?, text})` 两形态（发给已有会话 / 拉起新会话）；`checkPermissions` 与 `call` 各重算一次现场（`resolveSessionTargetBySid` 或 project 目录校验——两次调用间目录可能变化） |
+| `tools/SessionSearchTool/` | `session_search({query})` 只读发现：本会话所在项目（`projectLabel`）按 `updatedAt` 倒序取 10 个，标题大小写不敏感子串匹配，回执 `{project, searched, matches, candidates}`；与 `session_send` 同组 `SESSION_LINK` 开关 |
 | `utils/gatewayClient.ts` | `fetchSessionDirectory()`/`fetchDirectorySnapshot()`（`GET /gateway/sessions`，后者含可用项目 label）+ `sendSessionMessage()`/`createSessionAndSend()`（requestId 配对）+ 下行包装入队 + `queueItemsFromSnapshot` 拆包 |
 
 **核心设计选择（都有根因，勿回退）**：
 
 1. **来源走文本内嵌包装，不走新字段**。`<session-message from="会话：X" sid="…">正文</session-message>` 随消息本体落盘/回放/压缩天然携带，零传参链。**绝不能借用 `origin`/`isMeta`**——`isLoggableMessage`（`sessionStorage.ts`）对带这两个字段的 attachment 返回 false，消息刷新后直接消失。
 2. **`sessionAddressing.ts` 必须保持纯函数、零 import**。**不得 import `gatewayClient.ts`**——后者顶层 `import { feature } from 'bun:bundle'` 是编译期宏，`bun` 直跑下不可解析，一旦引入 `probe-session-link.ts` 这类源码直跑探针就永久失效。输入（会话目录、本会话 sid）由调用方注入。
-3. **寻址在 CLI 侧解析，网关只做纯 sid 路由**。`resolveSessionTarget` 规则唯一：sid 精确命中（`to` 恰为某会话 sid 又是另一会话标题时 **sid 键优先**）；无则标题唯一匹配；**重名/未找到/自环/空/复合令牌串「标题|sid」不代拆**（调用方须自行拆分）一律拒绝，不猜不兜底。与「寻址判定必须在转录所在侧」同源。
+3. **寻址在 CLI 侧解析，网关只做纯 sid 路由**。`resolveSessionTargetBySid` 规则唯一：`to` 与目录 sid 整串精确命中；未找到/自环/空/**复合令牌串「标题|sid」不代拆**（调用方须自行拆分）一律拒绝，不猜不兜底。标题寻址已移除——发现唯一归 `SessionSearch`，跨项目目标由用户 @ 令牌给 sid。与「寻址判定必须在转录所在侧」同源。
 4. **撤门后唯一刹车 = 软约束**：「非必要不通信」（`@WrokSpace/.claude/CLAUDE.md` 通信约束节）+ 工具 `prompt.ts` 同款措辞；代码级硬边界只剩寻址层自环拒绝 + 网关拒自发自收。
 5. **调用点 `UserPromptMessage.tsx` 就地解析包装**，不新增 props——一处覆盖 CLI 的开回合/排队/历史转录三条路径（都经 `createUserMessage` → `Message`）；同时把提及令牌 `[会话:标题|sid]` 显示为 `[标题]`（sid 不进终端），且**不对 `text` 做 replace**（发往 LLM 的仍是包装原文，模型可见来源）。来源灰字行**随其气泡一侧对齐**（右对齐）：外层 column Box 保持默认 stretch（否则内层气泡会被收成内容宽），只给来源行套 `<Box flexDirection="row" justifyContent="flex-end">` 行盒——web 侧同义改动在 `.msg.user .who`。
 6. **来源标注由接收侧渲染，发送方只写正文**。工具说明显式禁止发送方自加来源前缀/抬头/签名（发送方读工具说明易自写来源，与对侧自动渲染的灰字行重复；链路本身正文原样投递、不强制剥离）。
@@ -202,7 +203,7 @@ API 拒绝时的内存自救，实现 `services/compact/reactiveCompact.ts`，�
 
 **新建会话形态**（`new_session: true` + `project`，2026-09-20）：除发给已有会话，`session_send` 还能**拉起一个全新会话**并把 `text` 当它首条消息（用于「要干净上下文的子任务」）。判定与 `to` 路径同源（`resolveSendMode` 是唯一出口）：`new_session` 与 `to` 互斥、`project` 必填且须在目录 `groups` 的 `scope==='project'` 项中真实存在（工具侧查目录前置校验——**不借**网关对未知 label 回退全局根的既有语义去猜项目），缺参/冲突一律拒并原样回报。投递走 `createSessionAndSend` → 网关 `session-create` 帧：先 `spawnWebSession(undefined, project, sid)`（复用 web 新建会话链，见 gateway.md §13）并**等 `/clients` 注册完成**再投递，成功回执携带新会话 sid（后续可用 sid 寻址）；创建/注册失败如实回执原因——**不做「先乐观回 sid、超时再静默丢消息」**（那是 `POST /gateway/wsession` 对 web 的语义，对工具调用即撒谎）。新会话标题自动取「<发起会话标题>拉起的会话」，走与 `/gateway/session/rename` 同一条 `applySessionTitle`（落盘 + 在线 CLI 内存同步**成对**，只落盘会被 CLI 退出时的 re-append 覆盖回去）。CLI 侧回执超时 25s（> 网关注册超时 20s，保证失败原因先到）。
 
-**验证**：`probes/probe-session-link.ts` **62 过 / 0 败**（A 包装往返 / D 寻址含 D7 sid 键优先与 D10 复合令牌不代拆 / F web 接线 / G CLI 接线+工具说明+G7 撤门钉（标识符级防 sessionExposure 残留回潮）/ H 来源行对齐 / I 新建会话形态（`resolveSendMode` 真值测 + 工具/网关/说明接线钉））。
+**验证**：`probes/probe-session-link.ts`（A 包装往返 / D 寻址 sid-only 含 D10 复合令牌不代拆 / F web 接线 / G CLI 接线+工具说明+撤门钉 / H 来源行对齐 / I 新建会话形态 / J 发现入口接线与 `CANDIDATE_LIMIT=10` 钉）。
 
 ## 跨会话文件修改归因与 AI 并发写协作
 

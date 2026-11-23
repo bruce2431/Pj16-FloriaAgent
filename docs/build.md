@@ -45,7 +45,7 @@ Important: "bundle cleanly" does not always mean "runtime-safe". Some flags stil
 - `REACTIVE_COMPACT`
   进 `defaultFeatures` 默认编入。usage-policy 拒绝（stop_reason='refusal'）自动剥图恢复 + PTL/媒体超限恢复；门控接入 `query.ts`（`tryReactiveCompact` / `isWithheldPromptTooLong` / `isWithheldMediaSizeError` / `isWithheldUsagePolicyRefusal`）与 `commands/compact/compact.ts`（`compactViaReactive` / `isReactiveOnlyMode`）；运行期可用 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 整体停用。条目详情见 §2.6。
 - `SESSION_LINK`
-  【会话间协作，默认开，纯本地/TUI 无关】进 `defaultFeatures`——门控点 = `tools.ts` 里 `feature('SESSION_LINK') ? getSessionSendTool() : null`（工具注册）+ `SessionSendTool.isEnabled()`。启用 `session_send` 工具与跨会话投递（不门控接收侧——接收走既有 `enqueue`，无新代码）。链路 → [core.md](core.md) 末节 + [gateway.md](gateway.md) §13 + [web-ui.md](web-ui.md) §24。
+  【会话间协作，默认开，纯本地/TUI 无关】进 `defaultFeatures`——门控点 = 工具自身 `isEnabled()`（`SessionSendTool` / `SessionSearchTool` 均判 `feature('SESSION_LINK')`；`tools.ts` 无条件懒加载登记）。启用 `session_send`（发送，只认 sid）+ `session_search`（发现，本项目最近 10 个标题）与跨会话投递（不门控接收侧——接收走既有 `enqueue`，无新代码）。链路 → [core.md](core.md) 末节 + [gateway.md](gateway.md) §13 + [web-ui.md](web-ui.md) §24。
 - `BUILTIN_EXPLORE_PLAN_AGENTS`
   进 `defaultFeatures`：内置 explore/plan agent 预设。
 - `NEURON_RAG`
