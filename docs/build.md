@@ -14,7 +14,7 @@
   - `bun run compile` — 正式编译 → `./dist/cli-<YYYYMMDDHHMMSS>.exe`（发布流程用）
   - `bun run dev` — 源码直跑（入口 `src/entrypoints/cli.tsx`）
 - `scripts/build.ts` 内调用的子脚本（bundle-web-modules / gen-web-assets / postprocess-icon）一律用 `process.execPath` 启动（常量 `BUN_BIN`），**不裸名 `bun`**——本机 bun 是便携副本不在 PATH，裸名会 ENOENT 打断构建；**不变量：构建只依赖「正在运行的那个 bun」，不依赖 PATH 状态。**
-- 产物命名（`scripts/build.ts`）= `<前缀>-<YYYYMMDDHHMMSS>[-<显式 --feature 代号>]`，显式 feature 代号用 `+` 连接（如 `cli-dev-<YYYYMMDDHHMMSS>-PRIVATE_GATEWAY.exe`）；前缀 dev=`cli-dev`、compile=`dist/cli`。默认六个 feature（VOICE_MODE + BUILTIN_EXPLORE_PLAN_AGENTS + PRIVATE_GATEWAY + REACTIVE_COMPACT[usage-policy 拒绝/媒体超限/PTL 自动恢复] + SESSION_LINK[会话间协作] + CARD_API[卡片公开 API]）与 `--feature-set=dev-full` 不进文件名。**构建一律 `bun run build:dev`（产物名不带 `-PRIVATE_GATEWAY` 代号，含发布；`build:dev:gateway` 已废弃不使用）**；按特性构建仍用 `--feature=X`（产物名带该特性代号；NEURON_RAG 默认关，需显式 `--feature=NEURON_RAG` 才编入）。
+- 产物命名（`scripts/build.ts`）= `<前缀>-<YYYYMMDDHHMMSS>[-<显式 --feature 代号>]`，显式 feature 代号用 `+` 连接（如 `cli-dev-<YYYYMMDDHHMMSS>-PRIVATE_GATEWAY.exe`）；前缀 dev=`cli-dev`、compile=`dist/cli`。默认五个 feature（BUILTIN_EXPLORE_PLAN_AGENTS + PRIVATE_GATEWAY + REACTIVE_COMPACT[usage-policy 拒绝/媒体超限/PTL 自动恢复] + SESSION_LINK[会话间协作] + CARD_API[卡片公开 API]）与 `--feature-set=dev-full` 不进文件名。**构建一律 `bun run build:dev`（产物名不带 `-PRIVATE_GATEWAY` 代号，含发布；`build:dev:gateway` 已废弃不使用）**；按特性构建仍用 `--feature=X`（产物名带该特性代号；VOICE_MODE 与 NEURON_RAG 默认关，需显式 `--feature=X` 才编入）。
 - 产物是**自包含单文件二进制**（`bun build --compile --bytecode --packages bundle`），拷到任意项目目录即可用，运行时不需要 src/node_modules。**exe 产物带时间戳是强制规范，不允许覆盖**（禁止覆盖成固定名如 `cli-dev.exe`）；部署/换新 = 直接用新时间戳 exe 启动，旧产物原样保留。
 - **ripgrep 内嵌（Grep/Glob 依赖）**：exe 不含系统 rg，构建时由 `scripts/build.ts` 的 `ripgrepEmbedPlugin` 把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 作为构建资产内嵌（虚拟说明符 `virtual:ripgrep-bin`，宿主平台二进制缺失即构建硬失败）；运行时 `src/utils/ripgrep.ts` `materializeEmbeddedRipgrep()` 把内嵌字节原子落地到 `tmpdir()/floria-ripgrep/<资产名>` 再 spawn（内嵌虚拟路径只可读、不可直接执行）。**不变量：Grep/Glob 与 Bash 内的 `rg` 会话集成共用同一 `ripgrepCommand()`；dev 直跑走 `src/vendor/ripgrep/...`（builtin）分支，两者都必须解析到可执行的 rg。** 旧链 `argv0='rg'` 分发（Bun 编译产物内部提供）在本机 bun 1.4.2 已不存在——勿回退。
 - codegraph 索引：`src/.codegraph/`（相对路径存储，随 src 迁移有效）；MCP 查询带 `projectPath=Pj16-CodeAgent构建/Floria/src`。
@@ -39,7 +39,7 @@ Important: "bundle cleanly" does not always mean "runtime-safe". Some flags stil
 ### 2.1 Default Build Flags
 
 - `VOICE_MODE`
-  已包含在默认构建管线（不限 dev 构建）。启用 `/voice`、push-to-talk UI、voice notices、dictation plumbing。运行时原依赖 claude.ai OAuth + 原生音频模块或 SoX 兜底录音器——OAuth 登录线路已彻底移除，`/voice` 运行时恒不可用（UI/按键编排仍编入，语音 STT/连接链按 OAuth token 恒缺位拒绝），flag 保留仅编排水位，待定去留。
+  默认关（需显式 `--feature=VOICE_MODE`）。启用 `/voice`、push-to-talk UI、voice notices、dictation plumbing。运行时原依赖 claude.ai OAuth + 原生音频模块或 SoX 兜底录音器——OAuth 登录线路已彻底移除，`/voice` 运行时恒不可用（UI/按键编排仍编入，语音 STT/连接链按 OAuth token 恒缺位拒绝），flag 保留仅编排水位，待定去留。
 - `PRIVATE_GATEWAY`
   【内置私有化网关，默认开，纯本地】进 `defaultFeatures`：所有默认构建（build / build:dev / compile）均注册 `/server` 指令，内置网关随 exe 编入（`--gateway` 独立进程 + 内嵌 web 前端）。token 落盘 `getPortableRoot()/.claude/gateway/token` 跨进程共享；空闲自动回收——cliClients/sockets/sseClients 三集合全空持续 `GATEWAY_IDLE_MINUTES`（默认 10，env 可调）分钟即关。纯本地指令，不涉 OAuth/GrowthBook/Anthropic API。API 清单/安全加固/前缀迁移全链 → [gateway.md](gateway.md)。
 - `REACTIVE_COMPACT`

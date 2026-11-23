@@ -92,7 +92,9 @@ function getVersionChangelog(): string {
 // NEURON_RAG（神经元内置检索/记忆）默认关：需显式 --feature=NEURON_RAG 才注册 recall/remember 等工具与名册段。
 // 2026-10-11 用户定案：CARD_API（卡片公开 API 的 agent 侧工具 CardCall）进默认特性——门控点 =
 // tools.ts 登记 + CardCallTool.isEnabled()（feature('CARD_API')）；无浏览器在场时 list 返回空、call 明确报错。
-const defaultFeatures = ['VOICE_MODE', 'BUILTIN_EXPLORE_PLAN_AGENTS', 'PRIVATE_GATEWAY', 'REACTIVE_COMPACT', 'SESSION_LINK', 'CARD_API']
+// VOICE_MODE（/voice 等语音 UI）默认关：voice_stream 后端随 OAuth 移除已不可用，flag 仅剩 UI/按键编排，
+// 需显式 --feature=VOICE_MODE 才编入。
+const defaultFeatures = ['BUILTIN_EXPLORE_PLAN_AGENTS', 'PRIVATE_GATEWAY', 'REACTIVE_COMPACT', 'SESSION_LINK', 'CARD_API']
 const featureSet = new Set(defaultFeatures)
 // 显式 --feature=X 的代号集合：用于输出 exe 以 feature 代号命名（feature 构建不复用默认 cli-dev 名，避免互相覆盖）
 const explicitFeatures = new Set<string>()
