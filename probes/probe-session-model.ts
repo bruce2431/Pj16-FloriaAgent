@@ -86,7 +86,7 @@ console.log('[4] session_send 带模型（工具 → 帧 → 网关）')
   ok('SendMode new 分支带 model', a.includes('{ kind: \'new\'; project: string; model?: string }'))
   ok('resolveSendMode：to 寻址带 model → invalid', a.includes("error: 'model 仅在 new_session: true 时有效（发给已有会话的模型由目标会话自己决定）'"))
   const p = src('src/tools/SessionSendTool/prompt.ts')
-  ok('prompt.ts 说明 model 参数', p.includes('可选 \\`model\\`') && p.includes('发给已有会话时不可指定'))
+  ok('prompt.ts 说明 model 参数', p.includes('Optional \\`model\\`') && p.includes('applies only to new sessions'))
 }
 
 // ── ⑤ 静态：前端链（send.js / recent.js）+ cache-bust ───────────────────────
