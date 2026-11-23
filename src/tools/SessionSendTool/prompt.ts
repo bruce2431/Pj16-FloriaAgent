@@ -1,47 +1,16 @@
 /**
- * 会话间通信工具（2026-09-15；2026-09-18 撤授权门）的模型可见说明。
- *
- * 两条内容必须进 prompt（都是「模型看不见就必然用错」的东西）：
- *   ① 寻址怎么填 —— to = 会话 **sid**（2026-11-23 起不收标题）：当前项目由 SessionSearch 查，
- *      其它项目由用户 @ 令牌给 sid，离线目标发送时被网关自动拉起后投递。
- *      寻址失败（未找到/指向自己）会被拒并给原因。
- *      2026-09-18 定案撤除「暴露即授权」门：不再要求用户 @ 提及授权（原授权集合由上下文
- *      派生，压缩卷走令牌后只能人工重 @，实测卡线），@ 提及仅存 UI 引用语义。
- *   ② 非必要不通信 —— 本功能不做代码级回环刹车（用户定案 1），撤授权门后它成为**唯一刹车**，
- *      故必须写在工具说明里（仅靠全局 CLAUDE.md 不够：那是不分工具的通用段）。
- *   ③ 只写正文、不加来源前缀 —— 来源由接收侧自动渲染成气泡外的灰字行；发送方自加会在
- *      对方面前显示两遍。旧措辞「并会看到…的来源标注」被发送方读成「要我加前缀」（2026-09-15
- *      真运行实测发现），故改写成显式禁止。
+ * SessionSend 的模型可见说明（纯文本英文，参照 ToolSearch 风格）。
+ * 三件事必须说清：来源由接收侧渲染、to 只认 sid、非必要不通信。
  */
 
-export const SESSION_SEND_DESCRIPTION = '给另一个会话发消息，或拉起一个新会话（会话间协作）'
+export const SESSION_SEND_DESCRIPTION = 'Send a message to another Claude session, or start a new one (cross-session collaboration)'
 
 export function getSessionSendPrompt(): string {
-  return `给另一个 Claude 会话发一条消息。对方会话把它当作**与用户消息完全同等的输入**接收：空闲则开启新回合，忙碌则排入队列（用户可点排队气泡催办）。**来源标注由对方侧自动渲染**——对方会在你这条气泡外看到一行灰色小字「来自 会话：<本会话标题>」。**你只写正文，不要在正文里自加任何来源前缀/抬头/签名**（自己再加一遍 = 对方界面上显示两遍；同理也不要写「本条来自…」这类说明，对方已由那行灰字知道出处）。
+  return `Send a message to another Claude session. The receiver treats it as a normal user message: starts a turn if idle, queues it if busy, or auto-starts if offline. The source line ("from session: <title>") is rendered by the receiver automatically — write only the body; never add a source prefix, header, or signature, or it appears twice.
 
-## 目标寻址（发给谁、怎么填）
+Addressing: \`to\` is a session sid only, never a title. Sid sources: SessionSearch (current project), a user \`[@session:title|sid]\` mention token (other projects), or a previous new_session receipt. An unknown sid, your own sid, or an empty value is rejected with the reason.
 
-- **to 只填 sid**，不填标题。sid 的三个来源：
-  1. 当前项目的会话 → 先用 \`SessionSearch\` 按关键词查最近 10 个标题，拿回执里的 sid；
-  2. 其它项目的会话 → 只能由用户的 \`[@会话:标题|sid]\` 令牌暴露（工具拿不到当前项目以外的候选集）；
-  3. 刚用 \`new_session\` 拉起的会话 → 回执里的 sid。
-- sid 是精确凭据：整串匹配、不说大小写/前缀猜测；失配（会话已删除）原样报未找到。
-- **会被拒绝的目标**：sid 未找到、指向本会话自己、空串。拒绝会附原因。
-- 目标会话离线时会被自动拉起后投递，因此成功回执只代表「消息已交给投递链」，不代表对方已经读完。
+New session: set \`new_session: true\` with \`project\` (a project label from the session directory groups) and \`text\` as its first message; do not pass \`to\`. Optional \`model\` (full name from the credential pool) applies only to new sessions. The receipt returns the new sid for follow-up messages. A failure receipt means nothing was delivered — do not assume the other side is working on it.
 
-## 拉起一个新会话（new_session）
-
-- 用途：需要一个**干净上下文**的会话去独立干活（派生/分派子任务），而不是打扰已有会话。
-- 怎么填：\`new_session: true\` + \`project\`（必填，新会话落在哪个项目；label 取会话目录 \`GET /gateway/sessions\` 的 \`groups\` 里 \`scope=project\` 的项）+ \`text\`（即新会话的首条消息）。此时**不要填 to**；\`project\` 也只在 \`new_session: true\` 时可用，填错会被拒（不静默忽略）。
-- 可选 \`model\`（仅 new_session: true 时有效）：指定新会话用的模型，填**凭据池内模型全名**（不在池内会被两侧校验拒绝）；不填 = 跟随全局默认。发给已有会话时不可指定 \`model\`（模型由目标会话自己决定）。
-- 新会话标题自动为「<你的会话标题>拉起的会话」，来源标注照旧由对方侧渲染（你只写正文）。
-- 成功回执会带上新会话的 sid（例如 \`sid=8f3a…\`），后续可直接用该 sid 寻址续聊；失败回执会说明原因（项目不存在、窗口打开失败等）——**失败就是没发出去**，不要假定对方已在处理。
-
-## 非必要不通信（硬性行为约束）
-
-- **只在任务确实依赖另一个会话掌握的上下文/状态时才发**（例：B 手里有 A 需要的那份分析结论）。能用自己现有上下文、文件系统、或一次性读取解决的，**一律自己解决**，不要转头去问另一个会话。
-- **禁止礼节性/确认性通信**（"你好"、"收到"、"我这边完成了"），禁止为同步进度而通信。
-- **禁止自动回发**：收到别的会话发来的消息后，除非任务明确要求回复且确有新信息，**不要回发**——双方自动互回会形成无限对喷并烧光额度。
-- 内容**自包含**（对方看不到你的上下文）且**一次说清**，不要靠多轮往返拼信息。
-- 没有任何用例时**不主动发起通信**：能通信 ≠ 应该通信，先问这条消息对任务是否必要。`
+Only send when the task truly depends on another session's context; solve what you can yourself first. No courtesy or acknowledgement messages, no progress sync. Never reply automatically to a session message you received — mutual auto-replies loop and burn quota. The body must be self-contained; the receiver cannot see your context.`
 }

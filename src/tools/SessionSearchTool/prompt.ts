@@ -1,25 +1,14 @@
 /**
- * SessionSearch 的模型可见说明（2026-11-23）。
- *
- * 与 SessionSend 的分工必须写死：发现（本工具，只读）→ 发送（SessionSend，只认 sid）。
- * 范围限定「本会话所在项目最近 10 个会话」是用户定案：不扫全目录、不扫转录正文，
- * 跨项目目标由用户 @ 令牌暴露 sid——模型不能误以为自己是全工作区搜索引擎。
+ * SessionSearch 的模型可见说明（纯文本英文，参照 ToolSearch 风格）。
+ * 范围与分工必须说死：只搜本项目最近 10 个标题；跨项目靠用户 @ 令牌给 sid。
  */
 
-export const SESSION_SEARCH_DESCRIPTION = '在本项目最近的会话里按标题查找目标会话，返回 sid 供 SessionSend 使用'
+export const SESSION_SEARCH_DESCRIPTION = 'Find a recent session in this project by title; returns its sid for SessionSend'
 
 export function getSessionSearchPrompt(): string {
-  return `在本会话所在项目里按**标题**查找最近的会话，返回会话 sid——用于后续 \`SessionSend(to="<sid>")\` 发送。
+  return `Find a session in this project by title and return its sid for \`SessionSend\`.
 
-## 范围（固定，不可调）
+Scope is fixed: the 10 most recently updated sessions in this session's own project (a global-root session uses the global scratch area). Only titles are matched, case-insensitive substring; transcripts and other projects are not searched. For another project, the user must expose the sid via an \`[@session:title|sid]\` token.
 
-- 候选集 = 本会话所在项目（全局根会话则为全局根散装对话）**最近更新的 10 个会话**。
-- 只匹配**标题**（目录里展示给你的那个标题），大小写不敏感的**子串**匹配；不搜转录正文、不搜其它项目。
-- 其它项目的会话不在此列：需要跨项目协作时，由用户用 \`[@会话:标题|sid]\` 令牌把 sid 暴露给你。
-
-## 怎么用
-
-- \`query\` 填标题里的关键词（例如项目名、主题词），不要填整句自然语言。
-- 命中返回 \`sid / title / 更新时间 / 状态\`；无命中时回执附带当前 10 个候选标题，换个词再查，别反复猜 sid。
-- 拿到 sid 后用 \`SessionSend\` 发送；本工具只读，不产生任何对外动作。`
+\`query\` is a keyword from the title, not a sentence. The receipt lists matching sid, title, update time, and state; with no match it lists the current 10 candidates — retry with another keyword instead of guessing a sid. Read-only; it performs no external action.`
 }

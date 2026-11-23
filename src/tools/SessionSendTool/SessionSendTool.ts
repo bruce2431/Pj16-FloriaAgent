@@ -93,23 +93,23 @@ const inputSchema = lazySchema(() =>
       .string()
       .optional()
       .describe(
-        'Target session sid (from SessionSearch, a user @-mention token, or a new_session receipt). 与 new_session 互斥；标题不再接受。',
+        'Target session sid (from SessionSearch, a user @-mention token, or a new_session receipt). Titles are not accepted. Mutually exclusive with new_session.',
       ),
     new_session: z
       .boolean()
       .optional()
-      .describe('true = 拉起一个全新会话，并把 text 作为它的首条消息（须同时给 project，且不要给 to）'),
+      .describe('true = start a new session with `text` as its first message. Requires project; do not pass to.'),
     project: z
       .string()
       .optional()
       .describe(
-        '新会话落在哪个项目：label 取 /gateway/sessions 的 groups 中 scope=project 的项（仅 new_session: true 时有效，必填）',
+        'Project label where the new session lands (one of the session directory groups with scope=project). Required and only valid when new_session: true.',
       ),
     model: z
       .string()
       .optional()
       .describe(
-        '新会话使用的模型（仅 new_session: true 时有效，可选）：凭据池内模型全名（GET /gateway/models 或 recall 凭据池记录可得），网关以 --model 启动参数落地；不填 = 跟随全局默认。发给已有会话时不可指定（模型由目标会话自己决定）',
+        'Full model name from the credential pool, applied as --model when spawning. Omitted = global default. Only valid when new_session: true.',
       ),
     text: z
       .string()

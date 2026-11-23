@@ -170,7 +170,7 @@ check('G5 queue-state 上报剥包装并带来源', /const parsed = parseSession
 const sendPrompt = readFileSync(fileURLToPath(new URL('../src/tools/SessionSendTool/prompt.ts', import.meta.url)), 'utf8')
 check(
   'G6 工具说明显式禁止发送方自加来源前缀',
-  sendPrompt.includes('不要在正文里自加任何来源前缀') && sendPrompt.includes('来源标注由对方侧自动渲染'),
+  sendPrompt.includes('never add a source prefix') && sendPrompt.includes('rendered by the receiver automatically'),
 )
 check('G6 旧歧义措辞已移除', !sendPrompt.includes('并会看到「来自 会话：'))
 
@@ -185,10 +185,10 @@ check(
 )
 check(
   'G7 工具说明收窄为 sid 寻址（标题不再是寻址键，保留软约束）',
-  sendPrompt.includes('to 只填 sid') &&
+  sendPrompt.includes('`to` is a session sid only') &&
     !sendPrompt.includes('填会话标题或 sid') &&
     sendPrompt.includes('SessionSearch') &&
-    sendPrompt.includes('非必要不通信'),
+    sendPrompt.includes('Only send when'),
 )
 const sessionMessageSrc = readFileSync(fileURLToPath(new URL('../src/utils/sessionMessage.ts', import.meta.url)), 'utf8')
 check('G7 extractSessionSource 随授权门移除（死代码不残留）', !sessionMessageSrc.includes('extractSessionSource'))

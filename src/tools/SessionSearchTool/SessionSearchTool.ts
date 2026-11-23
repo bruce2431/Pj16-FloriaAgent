@@ -33,7 +33,7 @@ type SessionRow = z.infer<typeof sessionRowSchema>
 
 const inputSchema = lazySchema(() =>
   z.strictObject({
-    query: z.string().describe('标题关键词（大小写不敏感子串）；留空会被拒'),
+    query: z.string().describe('Title keyword (case-insensitive substring). Must not be empty.'),
   }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
