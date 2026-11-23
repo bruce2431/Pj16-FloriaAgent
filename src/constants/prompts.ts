@@ -73,7 +73,7 @@ const proactiveModule =
   feature('PROACTIVE') || feature('KAIROS')
     ? require('../proactive/index.js')
     : null
-// NEURON_RAG 名册（gate 同工具注册，默认开 2026-09-17）
+// NEURON_RAG 名册（gate 同工具注册，默认关）
 const neturonRosterModule = feature('NEURON_RAG')
   ? (require('../tools/neturon/roster.js') as typeof import('../tools/neturon/roster.js'))
   : null

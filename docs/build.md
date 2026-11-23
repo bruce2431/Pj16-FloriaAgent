@@ -14,7 +14,7 @@
   - `bun run compile` — 正式编译 → `./dist/cli-<YYYYMMDDHHMMSS>.exe`（发布流程用）
   - `bun run dev` — 源码直跑（入口 `src/entrypoints/cli.tsx`）
 - `scripts/build.ts` 内调用的子脚本（bundle-web-modules / gen-web-assets / postprocess-icon）一律用 `process.execPath` 启动（常量 `BUN_BIN`），**不裸名 `bun`**——本机 bun 是便携副本不在 PATH，裸名会 ENOENT 打断构建；**不变量：构建只依赖「正在运行的那个 bun」，不依赖 PATH 状态。**
-- 产物命名（`scripts/build.ts`）= `<前缀>-<YYYYMMDDHHMMSS>[-<显式 --feature 代号>]`，显式 feature 代号用 `+` 连接（如 `cli-dev-<YYYYMMDDHHMMSS>-PRIVATE_GATEWAY.exe`）；前缀 dev=`cli-dev`、compile=`dist/cli`。默认七个 feature（VOICE_MODE + BUILTIN_EXPLORE_PLAN_AGENTS + PRIVATE_GATEWAY + REACTIVE_COMPACT[usage-policy 拒绝/媒体超限/PTL 自动恢复] + SESSION_LINK[会话间协作] + NEURON_RAG[神经元内置检索/记忆] + CARD_API[卡片公开 API]）与 `--feature-set=dev-full` 不进文件名。**构建一律 `bun run build:dev`（产物名不带 `-PRIVATE_GATEWAY` 代号，含发布；`build:dev:gateway` 已废弃不使用）**；按特性构建仍用 `--feature=X`（产物名带该特性代号；NEURON_RAG 已进默认，显式传 `--feature=NEURON_RAG` 仅剩命名作用）。
+- 产物命名（`scripts/build.ts`）= `<前缀>-<YYYYMMDDHHMMSS>[-<显式 --feature 代号>]`，显式 feature 代号用 `+` 连接（如 `cli-dev-<YYYYMMDDHHMMSS>-PRIVATE_GATEWAY.exe`）；前缀 dev=`cli-dev`、compile=`dist/cli`。默认六个 feature（VOICE_MODE + BUILTIN_EXPLORE_PLAN_AGENTS + PRIVATE_GATEWAY + REACTIVE_COMPACT[usage-policy 拒绝/媒体超限/PTL 自动恢复] + SESSION_LINK[会话间协作] + CARD_API[卡片公开 API]）与 `--feature-set=dev-full` 不进文件名。**构建一律 `bun run build:dev`（产物名不带 `-PRIVATE_GATEWAY` 代号，含发布；`build:dev:gateway` 已废弃不使用）**；按特性构建仍用 `--feature=X`（产物名带该特性代号；NEURON_RAG 默认关，需显式 `--feature=NEURON_RAG` 才编入）。
 - 产物是**自包含单文件二进制**（`bun build --compile --bytecode --packages bundle`），拷到任意项目目录即可用，运行时不需要 src/node_modules。**exe 产物带时间戳是强制规范，不允许覆盖**（禁止覆盖成固定名如 `cli-dev.exe`）；部署/换新 = 直接用新时间戳 exe 启动，旧产物原样保留。
 - **ripgrep 内嵌（Grep/Glob 依赖）**：exe 不含系统 rg，构建时由 `scripts/build.ts` 的 `ripgrepEmbedPlugin` 把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 作为构建资产内嵌（虚拟说明符 `virtual:ripgrep-bin`，宿主平台二进制缺失即构建硬失败）；运行时 `src/utils/ripgrep.ts` `materializeEmbeddedRipgrep()` 把内嵌字节原子落地到 `tmpdir()/floria-ripgrep/<资产名>` 再 spawn（内嵌虚拟路径只可读、不可直接执行）。**不变量：Grep/Glob 与 Bash 内的 `rg` 会话集成共用同一 `ripgrepCommand()`；dev 直跑走 `src/vendor/ripgrep/...`（builtin）分支，两者都必须解析到可执行的 rg。** 旧链 `argv0='rg'` 分发（Bun 编译产物内部提供）在本机 bun 1.4.2 已不存在——勿回退。
 - codegraph 索引：`src/.codegraph/`（相对路径存储，随 src 迁移有效）；MCP 查询带 `projectPath=Pj16-CodeAgent构建/Floria/src`。
@@ -49,7 +49,7 @@ Important: "bundle cleanly" does not always mean "runtime-safe". Some flags stil
 - `BUILTIN_EXPLORE_PLAN_AGENTS`
   进 `defaultFeatures`：内置 explore/plan agent 预设。
 - `NEURON_RAG`
-  【本 fork 自有，默认开】神经元记忆/RAG 引擎纯进程内置化（`src/tools/neturon/` 16 件：BGE 向量检索 @huggingface/transformers + p5/p6 认知链 leiden.ts + coggraph.ts，无 python 子进程）。注册 `recall`/`remember`（**不带 neuron_ 前缀**，常驻直载、不经 ToolSearch，直接调用）+ `neuron_list`/`neuron_source`/`neuron_fill_precog`/`neuron_cog`（延迟加载，ToolSearch 可检索）。专用 flag 构建（`--feature=NEURON_RAG`，产物名带代号）仅存档意义。标准见 [standards.md](standards.md) §7，机制见 [core.md](core.md)。
+  【本 fork 自有，默认关】神经元记忆/RAG 引擎纯进程内置化（`src/tools/neturon/` 16 件：BGE 向量检索 @huggingface/transformers + p5/p6 认知链 leiden.ts + coggraph.ts，无 python 子进程）。注册 `recall`/`remember`（**不带 neuron_ 前缀**，常驻直载、不经 ToolSearch，直接调用）+ `neuron_list`/`neuron_source`/`neuron_fill_precog`/`neuron_cog`（延迟加载，ToolSearch 可检索）。开启方式 = 显式 `--feature=NEURON_RAG` 构建（产物名带代号）。标准见 [standards.md](standards.md) §7，机制见 [core.md](core.md)。
 - `CARD_API`
   【卡片公开 API，默认开，纯本地】进 `defaultFeatures`——门控点 = `tools.ts` 里 `getCardCallTool()`（登记）+ `CardCallTool.isEnabled()`（`feature('CARD_API')`）。启用 `CardCall` 工具（`action:'list'|'call'`，agent 驱动浏览器里的卡片）。无浏览器在场时 list 返回空、call 明确报错，链路惰性。链路 → [web-ui.md](web-ui.md) §61 + [gateway.md](gateway.md) §18。
 

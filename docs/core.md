@@ -85,9 +85,9 @@ allow/deny/ask + defaultMode 兜底；路径匹配 gitignore 语义（`@/`=便�
 3. **排查第一现场**：系统 commit 内存临界时 web 首屏全量渲染的内存尖峰可触发多进程连锁 crash（Windows 不挑进程，谁撞分配失败谁死）——查 `gateway.log`；系统层根治=页面文件改自动管理（用户操作）。
 4. **CLI 级缓存/日志**——`cachePaths.ts` `CACHE_PATHS` 四基路径（`baseLogs`/`errors`/`messages`/`mcpLogs`）一律锚定 `<配置根>/cache/<cwd-slug>/`，不走 `env-paths`（Windows 下会解析到宿主 `%LOCALAPPDATA%\claude-cli-nodejs\Cache`）：便携版插到任何机器都不在宿主盘留痕，基路径随盘符 / 挂载点走。目录名 slug 由本件自带 `sanitizePath`（djb2Hash）生成——**不用** `sessionStoragePortable.ts` 的 Bun.hash 版，升级后目录名保持稳定、旧缓存不孤儿化。复验锚点 `probes/probe-cache-paths.ts`。
 
-## 神经元内置检索/记忆（NEURON_RAG，默认开）
+## 神经元内置检索/记忆（NEURON_RAG，默认关）
 
-`src/tools/neturon/` 18 件纯进程内置（引擎核心+工具层，无 Python 子进程），`feature('NEURON_RAG')` 进 build.ts defaultFeatures。
+`src/tools/neturon/` 18 件纯进程内置（引擎核心+工具层，无 Python 子进程），`feature('NEURON_RAG')` 默认不在 build.ts defaultFeatures，显式 `--feature=NEURON_RAG` 才编入。
 
 **双层根扫描发现**：cwd 根 `<cwd>/.claude/neturon/` + 全局根 `<configHome>/neturon/` + RAG_DATA_DIR 追加；目录即注册（含 config.yaml + l2.mem/mem.db），id=person.id 跨根唯一，注册表 10s TTL 缓存；仍为旧 mem.json 的目录不注册、经 neuron_list 报 `pending_migration`。
 

@@ -141,7 +141,7 @@ const SnipTool = feature('HISTORY_SNIP')
 const ListPeersTool = feature('UDS_INBOX')
   ? require('./tools/ListPeersTool/ListPeersTool.js').ListPeersTool
   : null
-// NEURON_RAG: 神经元内置检索/记忆（recall/remember + ops 三件），默认开（2026-09-17 进 defaultFeatures）
+// NEURON_RAG: 神经元内置检索/记忆（recall/remember + ops 五件），默认关（显式 --feature=NEURON_RAG 开启）
 const neturonModule = feature('NEURON_RAG')
   ? (require('./tools/neturon/index.js') as typeof import('./tools/neturon/index.js'))
   : null
