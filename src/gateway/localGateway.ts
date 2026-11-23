@@ -1268,21 +1268,33 @@ function tsStamp(): string {
   return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
 }
 
-// 关掉项目根下所有 SSE watcher。Windows 上 fs.watch 对**子目录**（<项目>/.claude/projects）持有目录句柄，
-// 该句柄会让父目录（项目根）的 rename 返回 EPERM——表现为「包已生成，但移入 .trash 失败」。
-// 实测：watch a/b 后 rename a → EPERM；w.close() 后同一次 rename 立即成功。项目即将整体移走，watch 本就该销毁。
+// 关掉项目根下所有目录 watcher（会话 SSE + 预览变更两族）。Windows 上 fs.watch 对**子目录**
+// （<项目>/.claude/projects、<项目>/.claude/preview）持有目录句柄，该句柄会让父目录（项目根）的
+// rename 返回 EPERM——表现为「包已生成，但移入 .trash 失败」或「重命名失败：EPERM ... rename」。
+// 实测：watch a/b 后 rename a → EPERM；w.close() 后同一次 rename 立即成功。项目即将整体移走/改根，watch 本就该销毁。
 function closeSseWatchesUnder(projRoot: string): void {
   const base = resolve(projRoot).toLowerCase()
+  const under = (p: string): boolean => {
+    const d = resolve(p).toLowerCase()
+    return d === base || d.startsWith(base + sep)
+  }
   for (const [dir, w] of [...sseWatches]) {
-    const d = resolve(dir).toLowerCase()
-    if (d === base || d.startsWith(base + sep)) {
-      try {
-        w.close()
-      } catch {
-        /* 忽略 */
-      }
-      sseWatches.delete(dir)
+    if (!under(dir)) continue
+    try {
+      w.close()
+    } catch {
+      /* 忽略 */
     }
+    sseWatches.delete(dir)
+  }
+  for (const [dir, w] of [...previewWatches]) {
+    if (!under(dir)) continue
+    try {
+      w.close()
+    } catch {
+      /* 忽略 */
+    }
+    previewWatches.delete(dir)
   }
 }
 
