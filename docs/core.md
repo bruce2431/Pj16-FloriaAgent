@@ -165,6 +165,17 @@ web 点击排队气泡 → 当前这次**生成流**就地收尾，排队消息�
 - **已知取舍**：被熔断批次的 allowed 前缀已正常执行，其真实结果保留；排队消息与本熔断的交互不变（收口后 follow-up drain 照常）。
 - 探针 `probes/probe-tool-loop-breaker.ts`：A 组真实状态机行为（阈值/重置/不可序列化 input）+ B 组 query.ts 结构断言。
 
+## 反应式压缩（`REACTIVE_COMPACT`）
+
+API 拒绝时的内存自救，实现 `services/compact/reactiveCompact.ts`，编译期 flag 默认编入；运行期总开关 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT`（设真即三类恢复整体停用）。
+
+- **三类触发**（`query.ts` 各自检测，恢复门 `mediaRecoveryEnabled` 与 withhold 判定同值——两处不一致会丢 withheld 消息）：
+  - **PTL**（`isWithheldPromptTooLong`）：摘要头部、保留尾部重试。
+  - **媒体超限**（`isWithheldMediaSizeError`）：剥掉超限媒体块后重试。
+  - **Usage-Policy 拒绝**（`stop_reason='refusal'`，`isWithheldUsagePolicyRefusal` → `policyStripRetry`）：历史中含违规图片时 API 每轮整体拒绝，故复用 `compact.ts` 的 `stripImagesFromMessages` 把 user/tool_result 内嵌 `image`/`document` 全剥为文本标记，`buildStripCompactionResult` 后缀保留重建后重试；不剥则会话永久卡死。
+- **共同约束**：只改内存消息数组，不动 `imageStore` 磁盘缓存与 jsonl 转录；无媒体可剥 → 原样上报不重试（拒绝与媒体无关）；`hasAttemptedReactiveCompact` 防重试螺旋。
+- **入口约束**：`tryReactiveCompact` 的 `errorMsg` 为必传参数，唯一调用方 `query.ts` 传 `lastMessage`；withhold 错误只出现在 assistantMessages，`messagesForQuery` 尾部恒为 user/tool_result。
+
 ## 会话间协作（`session_send` 工具 + `sessionMessage` / `sessionAddressing`，`SESSION_LINK`）
 
 会话 A 的 agent 向会话 B 发消息，B 侧以**与用户消息完全同等形态**接收（空闲开新回合 / 忙则排队 / 离线自动拉起，可点气泡催办），气泡外带一行灰字标明来源。as-built 以本节 + gateway.md §13 为准；网关侧 → [gateway.md](gateway.md) §13；渲染 → [web-ui.md](web-ui.md) §24。

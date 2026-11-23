@@ -43,7 +43,7 @@ Important: "bundle cleanly" does not always mean "runtime-safe". Some flags stil
 - `PRIVATE_GATEWAY`
   【内置私有化网关，默认开，纯本地】进 `defaultFeatures`：所有默认构建（build / build:dev / compile）均注册 `/server` 指令，内置网关随 exe 编入（`--gateway` 独立进程 + 内嵌 web 前端）。token 落盘 `getPortableRoot()/.claude/gateway/token` 跨进程共享；空闲自动回收——cliClients/sockets/sseClients 三集合全空持续 `GATEWAY_IDLE_MINUTES`（默认 10，env 可调）分钟即关。纯本地指令，不涉 OAuth/GrowthBook/Anthropic API。API 清单/安全加固/前缀迁移全链 → [gateway.md](gateway.md)。
 - `REACTIVE_COMPACT`
-  进 `defaultFeatures` 默认编入。usage-policy 拒绝（stop_reason='refusal'）自动剥图恢复 + PTL/媒体超限恢复；门控接入 `query.ts`（`tryReactiveCompact` / `isWithheldPromptTooLong` / `isWithheldMediaSizeError` / `isWithheldUsagePolicyRefusal`）与 `commands/compact/compact.ts`（`compactViaReactive` / `isReactiveOnlyMode`）。条目详情见 §2.6。
+  进 `defaultFeatures` 默认编入。usage-policy 拒绝（stop_reason='refusal'）自动剥图恢复 + PTL/媒体超限恢复；门控接入 `query.ts`（`tryReactiveCompact` / `isWithheldPromptTooLong` / `isWithheldMediaSizeError` / `isWithheldUsagePolicyRefusal`）与 `commands/compact/compact.ts`（`compactViaReactive` / `isReactiveOnlyMode`）；运行期可用 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 整体停用。条目详情见 §2.6。
 - `SESSION_LINK`
   【会话间协作，默认开，纯本地/TUI 无关】进 `defaultFeatures`——门控点 = `tools.ts` 里 `feature('SESSION_LINK') ? getSessionSendTool() : null`（工具注册）+ `SessionSendTool.isEnabled()`。启用 `session_send` 工具与跨会话投递（不门控接收侧——接收走既有 `enqueue`，无新代码）。链路 → [core.md](core.md) 末节 + [gateway.md](gateway.md) §13 + [web-ui.md](web-ui.md) §24。
 - `BUILTIN_EXPLORE_PLAN_AGENTS`
