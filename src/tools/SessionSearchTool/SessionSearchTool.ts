@@ -89,7 +89,7 @@ async function searchSessions(query: string): Promise<SessionSearchOutput> {
     throw new Error('本会话目录项缺少项目归属（projectLabel），无法确定搜索范围')
   }
   const candidates = snap.sessions
-    .filter(s => s.projectLabel === self.projectLabel)
+    .filter(s => s.projectLabel === self.projectLabel && s.sid !== selfSid)
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
     .slice(0, CANDIDATE_LIMIT)
   const q = query.trim().toLowerCase()

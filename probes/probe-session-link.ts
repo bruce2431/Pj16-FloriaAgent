@@ -282,7 +282,7 @@ const searchTool = (() => {
   return existsSync(fileURLToPath(p)) ? readFileSync(fileURLToPath(p), 'utf8') : ''
 })()
 check('J1 SessionSearch 工具存在且只读', searchTool.includes('isReadOnly()') && searchTool.includes('SESSION_SEARCH_TOOL_NAME'))
-check('J2 候选集固定最近 10 个、只匹配标题', searchTool.includes('CANDIDATE_LIMIT = 10') && /title\.toLowerCase\(\)\.includes/.test(searchTool))
+check('J2 候选集固定最近 10 个、只匹配标题、剔自身', searchTool.includes('CANDIDATE_LIMIT = 10') && /title\.toLowerCase\(\)\.includes/.test(searchTool) && /s\.sid !== selfSid/.test(searchTool))
 check('J3 与 SessionSend 同组 feature 开关', searchTool.includes("feature('SESSION_LINK')"))
 check(
   'J4 tools.ts 注册了 SessionSearch',

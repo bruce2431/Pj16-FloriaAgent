@@ -8,7 +8,7 @@ export const SESSION_SEARCH_DESCRIPTION = 'Find a recent session in this project
 export function getSessionSearchPrompt(): string {
   return `Find a session in this project by title and return its sid for \`SessionSend\`.
 
-Scope is fixed: the 10 most recently updated sessions in this session's own project (a global-root session uses the global scratch area). Only titles are matched, case-insensitive substring; transcripts and other projects are not searched. For another project, the user must expose the sid via an \`[@session:title|sid]\` token.
+Scope is fixed: the 10 most recently updated sessions in this session's own project (a global-root session uses the global scratch area), never including this session itself. Only titles are matched, case-insensitive substring; transcripts and other projects are not searched. For another project, the user must expose the sid via an \`[@session:title|sid]\` token.
 
 \`query\` is a keyword from the title, not a sentence. The receipt lists matching sid, title, update time, and state; with no match it lists the current 10 candidates — retry with another keyword instead of guessing a sid. Read-only; it performs no external action.`
 }

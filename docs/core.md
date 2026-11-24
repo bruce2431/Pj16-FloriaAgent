@@ -180,14 +180,14 @@ API 拒绝时的内存自救，实现 `services/compact/reactiveCompact.ts`，�
 
 会话 A 的 agent 向会话 B 发消息，B 侧以**与用户消息完全同等形态**接收（空闲开新回合 / 忙则排队 / 离线自动拉起，可点气泡催办），气泡外带一行灰字标明来源。as-built 以本节 + gateway.md §13 为准；网关侧 → [gateway.md](gateway.md) §13；渲染 → [web-ui.md](web-ui.md) §24。
 
-**发现与发送分口，无授权门**：`SessionSearch`（只读）在**本会话所在项目**（全局根会话即全局根散装对话）最近 10 个会话里按标题子串匹配、返回 sid；`session_send` 的 `to` **只认 sid 整串精确命中**（标题不再是寻址键），未找到/自环/空一律拒绝。跨项目目标由用户 `[@会话:标题|sid]` 令牌暴露 sid。@ 提及为纯输入手势（插 chip），不产生任何授权状态。
+**发现与发送分口，无授权门**：`SessionSearch`（只读）在**本会话所在项目**（全局根会话即全局根散装对话）最近 10 个会话里按标题子串匹配、返回 sid（候选集先剔除本会话自身）；`session_send` 的 `to` **只认 sid 整串精确命中**（标题不再是寻址键），未找到/自环/空一律拒绝。跨项目目标由用户 `[@会话:标题|sid]` 令牌暴露 sid。@ 提及为纯输入手势（插 chip），不产生任何授权状态。
 
 | 件 | 职责 |
 |---|---|
 | `utils/sessionMessage.ts`（纯字符串） | 包装/解析：`wrapSessionMessage({sid,title}, body)` / `parseSessionMessage(text)`（不锚定，展示用） |
 | `utils/sessionAddressing.ts`（**纯函数、零 import**） | `resolveSessionTargetBySid(dir, to, selfSid)`：目录 → `{target, error}`（sid 整串精确，标题不参与寻址）。`resolveSendMode({to,new_session,project})` → `existing`/`new`/`invalid`：两形态分岔的单一出口 |
 | `tools/SessionSendTool/` | `session_send({to?, new_session?, project?, text})` 两形态（发给已有会话 / 拉起新会话）；`checkPermissions` 与 `call` 各重算一次现场（`resolveSessionTargetBySid` 或 project 目录校验——两次调用间目录可能变化） |
-| `tools/SessionSearchTool/` | `session_search({query})` 只读发现：本会话所在项目（`projectLabel`）按 `updatedAt` 倒序取 10 个，标题大小写不敏感子串匹配，回执 `{project, searched, matches, candidates}`；与 `session_send` 同组 `SESSION_LINK` 开关 |
+| `tools/SessionSearchTool/` | `session_search({query})` 只读发现：本会话所在项目（`projectLabel`）按 `updatedAt` 倒序取 10 个（先剔本会话自身），标题大小写不敏感子串匹配，回执 `{project, searched, matches, candidates}`；与 `session_send` 同组 `SESSION_LINK` 开关 |
 | `utils/gatewayClient.ts` | `fetchSessionDirectory()`/`fetchDirectorySnapshot()`（`GET /gateway/sessions`，后者含可用项目 label）+ `sendSessionMessage()`/`createSessionAndSend()`（requestId 配对）+ 下行包装入队 + `queueItemsFromSnapshot` 拆包 |
 
 **核心设计选择（都有根因，勿回退）**：

@@ -1,7 +1,7 @@
 # 内置网关服务层（gateway）
 
 > 本文件属 `docs/` 文档库。
-> 网关 = `src/gateway/localGateway.ts`（node:http + ws），随 `feature('PRIVATE_GATEWAY')`（默认开）编译进 exe；`/server on` detached spawn 自身 exe 以 `--gateway` 独立进程长驻，CLI 退出不影响网关。flag 审计 → [build.md](build.md)；web 界面链路定案 → [web-ui.md](web-ui.md)；术语 → [glossary.md](glossary.md)。改动本文件覆盖的任一链路时必须同步更新本文。
+> 网关入口 = `src/gateway/localGateway.ts`（node:http + ws，薄生命周期外观 + 对外兼容导出），按三层无环 DAG 拆分：`core/`（types / utils / state / transport / lock / mdns）→ `domain/`（projects / sessions / webSessions / sse / wsBridge / preview / backends / cards / files / projectOps / uploads / models / plugins / github）→ `routes/`（types / system / catalog / sessions / preview / files / index），并列只读支撑 `httpAuth.ts` / `webAssets.ts` / `neuronViz.ts`。随 `feature('PRIVATE_GATEWAY')`（默认开）编译进 exe；`/server on` detached spawn 自身 exe 以 `--gateway` 独立进程长驻，CLI 退出不影响网关。flag 审计 → [build.md](build.md)；web 界面链路定案 → [web-ui.md](web-ui.md)；术语 → [glossary.md](glossary.md)。改动本文件覆盖的任一链路时必须同步更新本文。
 
 ## 1. API 前缀与端点总览
 
