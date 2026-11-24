@@ -201,6 +201,8 @@ API 拒绝时的内存自救，实现 `services/compact/reactiveCompact.ts`，�
 
 **回环**：**不做代码级刹车**——靠「非必要不通信」软约束 + 工具 `prompt.ts` 同款措辞。硬边界 = 寻址自环拒绝 + 网关拒「自发自收」；实测出现 agent 对喷再补硬护栏（限频/审批）。
 
+**工具回归上游（未实施，无现成方案）**：方向是 `SessionSearchTool` → 上游 `ListPeersTool`、`SessionSendTool` → 上游 `SendMessageTool`（多 agent / 会话通信），减少自维护分支。当前阻塞事实：①本构建 `UDS_INBOX` 未编入，源码缺 `utils/udsMessaging.ts`、`utils/udsClient.ts`、`tools/ListPeersTool/`、`commands/peers/`（`bridge/peerSessions.ts` 属 bridge，不在此方向）；②上游 UDS 服务端仅 Mac/Linux，Windows 无 AF_UNIX（Node/Bun 不提供绑定），命名管道无路径枚举、无对端凭据、权限走 DACL，需自建 pid 文件 + sid 校验 + ACL；③`SendMessageTool.isEnabled()` 只判 `isAgentSwarmsEnabled()`，且跨会话形态无 `new_session`、无离线暂存/冷启补投。在补齐上述传输层与会话拉起能力前，现行实现（本节 `SESSION_LINK` 链）为准；推进计划见项目根 `ToDoList.md`。
+
 **新建会话形态**（`new_session: true` + `project`，2026-09-20）：除发给已有会话，`session_send` 还能**拉起一个全新会话**并把 `text` 当它首条消息（用于「要干净上下文的子任务」）。判定与 `to` 路径同源（`resolveSendMode` 是唯一出口）：`new_session` 与 `to` 互斥、`project` 必填且须在目录 `groups` 的 `scope==='project'` 项中真实存在（工具侧查目录前置校验——**不借**网关对未知 label 回退全局根的既有语义去猜项目），缺参/冲突一律拒并原样回报。投递走 `createSessionAndSend` → 网关 `session-create` 帧：先 `spawnWebSession(undefined, project, sid)`（复用 web 新建会话链，见 gateway.md §13）并**等 `/clients` 注册完成**再投递，成功回执携带新会话 sid（后续可用 sid 寻址）；创建/注册失败如实回执原因——**不做「先乐观回 sid、超时再静默丢消息」**（那是 `POST /gateway/wsession` 对 web 的语义，对工具调用即撒谎）。新会话标题自动取「<发起会话标题>拉起的会话」，走与 `/gateway/session/rename` 同一条 `applySessionTitle`（落盘 + 在线 CLI 内存同步**成对**，只落盘会被 CLI 退出时的 re-append 覆盖回去）。CLI 侧回执超时 25s（> 网关注册超时 20s，保证失败原因先到）。
 
 **验证**：`probes/probe-session-link.ts`（A 包装往返 / D 寻址 sid-only 含 D10 复合令牌不代拆 / F web 接线 / G CLI 接线+工具说明+撤门钉 / H 来源行对齐 / I 新建会话形态 / J 发现入口接线与 `CANDIDATE_LIMIT=10` 钉）。
