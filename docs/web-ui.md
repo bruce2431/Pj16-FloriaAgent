@@ -1170,3 +1170,13 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 - **入口（两个）**：①消息内 md 文件链接 chip（`feature/mention-nav.js`）：chat 模式调侧边浏览器 `page{id:'edit',payload:{label,path,session}}`，work 模式与目录链接保持原 work 文件树链路；②变更卡文件行（`chat/messages/change-card.js`）：行与单文件标题带 `data-chg-path`（展示路径）/`data-chg-abs`（原始路径）钩子，**鼠标 `pointerdown` 即触发**、同手势随后的 click 由 `pressedRow` 吞掉（消息区随 SSE 整块重渲，重渲落在按下与抬起之间会把 click 派发给共同祖先 ⇒ 首点白点、要点两次，与 @ 提及行同族根修），键盘 Enter/Space 与触屏仍走 click，落点 `openChangedFile()`——chat 模式同上打开编辑页、work 模式走 work 卡 `scroll`。钩子由 `@floria/web` 的 `changesCardHtml` 输出，业务侧只做事件委托。
 - **展开先于加载**：`page` 命令解析到内部页后**先置 `open=true` 再建/复用标签并加载**；面板可见性不绑在 iframe load 或内部页 ack 上（编辑页 ack 要等 `/gateway/file-history` 读完），否则首点会静默等待、看起来没反应。
 - **静态托管**：`web/browser/**` 由网关 dev 直读磁盘、生产递归内嵌，无需登记资源表；`index.html` 引 `side-browser.css/js`，`sw.js` CORE 预缓存组件与编辑页文件。
+
+## 78. 外链前置站点图标（dsh `LinkIconMedium.url` 座位）
+
+消息区 markdown 的每个外链（行内链接与裸 URL）文字前带一个站点字形；链接文字用链接色、无静态下划线。口径照 dsh `markdown/render.tsx` + `SiteGlyph.tsx` + `LinkIcon.tsx`。
+
+- **形态**：已知站点用站点标记（simple-icons 实心路径，`fill: currentColor`，随链接色），未知站点回退地球描线（`GLOBE_ICON`）。尺寸/对齐/左右间距三处共用 chip 图标变量（`--chip-icon-size` / `--chip-icon-valign`，左边距 `.25em`、右 `.125em`）；`viewBox="-2 -2 28 28"` 与 dsh 一致。
+- **站点表**：`@floria/cm6` 的 `src/icons/site-icons.js`，`SITE_HOSTS` = dsh `SiteGlyph.tsx` 全表 40 个主机后缀、34 个图标（`simple-icons` 16.31.0 路径数据，由包内 `scripts/gen-site-icons.ts` 生成）；匹配按「最长后缀命中」+ 主机边界，只认 `http(s)` 绝对 URL。
+- **接线**：宿主 `core/markdown.js` 的 `linkGlyph(u)` 调 `window.FloriaCM6.linkIcon(raw)`，只对绝对 `http(s)` 链接前置字形（相对路径与附件/文件 chip 不加）；行内链接与自动链接两处出口同一函数。
+- **样式**：`styles.css` 的 `.msg .body a`（`--blue` + `font-weight:500`、`text-decoration:none`；hover/`focus-visible` 点状下划线、`text-underline-offset:3px`）；字形几何唯一真源在包内 `styles.js` 的 `.md-scope a > svg`。
+- **不变量**：字形只由 href 决定、不从页内元数据或站点响应推导；无法识别主机时不显示站点标记（回退地球），绝不隐去链接文字。

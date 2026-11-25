@@ -127,6 +127,16 @@ import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_RE, QUOTE_PDF_RE, Q
     return cbWrapOn
   }
 
+  // 外链前置图形（2026-11-25，照 dsh LinkIconMedium.url 座位）：绝对 http(s) 链接前挂图标——
+  // 已知站点用 simple-icons 站点标记，其余回退地球描线。图形族与匹配规则归 @floria/cm6
+  // （window.FloriaCM6.linkIcon，唯一真源），这里只拼锚点；相对链接与文件 chip 不出图形。
+  // u 是 mdHtml 入口 esc 之后的文本，交给 linkIcon 前要还原一次（图标判据看原始 URL）。
+  const linkGlyph = (u) => {
+    const raw = unesc(u)
+    if (!/^https?:\/\//i.test(raw)) return ''
+    const CM = window.FloriaCM6
+    return CM && CM.linkIcon ? CM.linkIcon(raw) : ''
+  }
   function mdInline(s) {
     // s 必须是已转义文本（来自 mdHtml 入口）
     const codes = []
@@ -170,9 +180,9 @@ import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_RE, QUOTE_PDF_RE, Q
         const disp = fl.line ? `${label}:${fl.line}${fl.lineEnd !== fl.line ? '-' + fl.lineEnd : ''}` : label
         return `<span class="mention-chip m-path" title="${fl.path}${fl.line ? ':' + fl.line : ''}" data-mjump="path" data-mname="${fl.path}" data-mline="${fl.line || 0}" data-mptype="file"><span class="mc-ic">${fileIcon(fl.path)}</span><span class="mc-t">${disp}</span></span>`
       }
-      return MD_LINK_OK(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t
+      return MD_LINK_OK(u) ? `<a href="${u}" target="_blank" rel="noopener">${linkGlyph(u)}${t}</a>` : t
     })
-    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, p, u) => p + `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)
+    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, p, u) => p + `<a href="${u}" target="_blank" rel="noopener">${linkGlyph(u)}${u}</a>`)
     // @ 提及令牌 → chip（[插件:名称] / [会话:名称]，名称已转义）。
     // ⚠️ 必须在行内代码还原（下一行）之前替换：行内代码 `[插件:X]` 已抽成占位符 \u0000N\u0000，
     // 令牌替换命中不到代码内文本，避免 chip 嵌套进 <code>（白胶囊+灰代码气泡叠一起）。

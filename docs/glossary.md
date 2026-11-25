@@ -105,6 +105,7 @@
 | 撤回动画 | restored 链 | 打断无实质响应 → 气泡塌缩淡出 + 文本回填输入栏 | |
 | 压缩实时态 | compact-state → 状态行 | 「正在压缩会话中……」 | |
 | 图片消息 | `.msg-imgs`/`.msg-img` + 灯箱 | 内联缩略图（上限 160px）+ 点击放大层 | |
+| 外链站点图标 | `.md-scope a > svg.site-ic`（`core/markdown.js` `linkGlyph`） | markdown 外链文字前的字形：已知站点用 `@floria/cm6` `linkIcon` 的站点标记（simple-icons 实心路径，随链接色），未知主机回退地球描线；只对绝对 `http(s)` 链接生效，相对路径与附件 chip 不加。链接为链接色 + 500 字重、无静态下划线，hover/`focus-visible` 点状下划线；见 web-ui.md §78 | 外链图标/globe |
 | 文件卡片 | `.msg-files`（`.file-card`） | 消息内文件附件卡片（dshFile 图标 + 文件名，点击复制路径）；发送占位 `[文件:<会话 cwd 相对路径>]` 在渲染层剥出 | |
 | 任务列表复选框 | `.md-task-checkbox`（`core/markdown.js`） | `- [ ]`/`- [x]`/`- [X]`（有序表同支持）行渲染出**真** `<input type="checkbox">`（`data-task-line` 记行号、`disabled` 只读展示），**非 CSS 伪元素模拟**；`data-md` 仍挂整行原文（`- [ ] 待办甲`）⇒ 复制得原文。可编辑面（用户改勾选态）走 CM6 `toggleTaskLineCM`（§67.2） | 任务项/checkbox |
 | 代码块/表格 | `.code-block`/`.md-table` | markdown 渲染件；代码块为 codex 式（头栏 `.code-head`＝语言名 `.code-lang` + 动作钮 `.code-acts`〔软换行 `.cb-wrap` / 复制 `.cb-copy`〕，体 `pre > code` 走 lowlight `hljs-*` 着色 + 软换行偏好 `.wrap`），见 web-ui.md §59 | |
