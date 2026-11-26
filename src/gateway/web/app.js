@@ -14302,14 +14302,30 @@ function wkMerge3(base, local, remote) {
       .appr-deny:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
       .appr-allow{border:none!important;background:#4176e6!important;color:#fff!important}
       .appr-allow:hover:not(:disabled){background:#679efe!important}
-      /* 计划审批（ExitPlanMode）三选项卡：同意（自动接受编辑）/ 人工同意 / 下方反馈行「告诉应该怎么改」。
+      /* 计划审批（ExitPlanMode）三行编号选项：①同意，自动接受编辑（主）/ ②同意，逐次人工确认 / ③反馈行。
+         与提问卡 .qa-opt 同族：中性描边行，主选项靠蓝编号块 + 淡蓝底区分；反馈行不自动聚焦（无刺眼蓝框）。
          只作用于计划卡的 .plan-* 类，通用审批卡样式不变。 */
-      .plan-fb-row{display:flex;align-items:center;gap:8px;padding:0 16px 14px}
-      .plan-fb{flex:1;min-width:0;height:32px;padding:0 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
+      .plan-card .appr-body{padding-bottom:0}
+      .plan-plan{padding:10px 12px;border-radius:12px;background:var(--field-2)}
+      .plan-choose{display:flex;flex-direction:column;gap:8px;padding:12px 16px 14px}
+      .plan-choose-l{color:var(--text-3);font-size:12px;line-height:16px;font-weight:500;padding:0 2px}
+      .plan-opts{display:flex;flex-direction:column;gap:6px}
+      .plan-opt{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);text-align:left;cursor:pointer;font-family:inherit}
+      .plan-opt:hover:not(:disabled){border-color:#4176e6;background:var(--accent-hover)}
+      .plan-opt:disabled{opacity:.55;cursor:default}
+      .plan-opt .po-num{flex:none;min-width:20px;height:20px;padding:0 5px;border-radius:6px;background:var(--hover);color:var(--text-2);font-size:12px;font-weight:500;line-height:20px;text-align:center;box-sizing:border-box}
+      .plan-opt.primary{border-color:color-mix(in srgb,#4176e6 45%,var(--border));background:var(--accent-hover)}
+      .plan-opt.primary .po-num{background:#4176e6;color:#fff}
+      .plan-opt .po-copy{flex:1;display:flex;flex-direction:column;gap:1px}
+      .plan-opt .po-title{font-size:13.5px;line-height:20px;font-weight:500;color:var(--text)}
+      .plan-opt .po-sub{font-size:12px;line-height:18px;color:var(--text-2)}
+      .plan-fb-row{display:flex;align-items:center;gap:10px}
+      .plan-fb{flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
       .plan-fb::placeholder{color:var(--text-3)}
-      .plan-fb:focus{border-color:#4176e6}
+      .plan-fb:focus{border-color:color-mix(in srgb,#4176e6 55%,var(--border))}
       .plan-fb:disabled{opacity:.5}
-      .plan-fb-send{flex:none;height:32px;padding:0 16px;border-radius:999px;font-size:13px;font-weight:500;line-height:18px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2)}
+      .plan-fb-row .fb-num{background:transparent;color:var(--text-3);border:1px dashed var(--border)}
+      .plan-fb-send{flex:none;height:36px;padding:0 16px;border-radius:12px;font-size:13px;font-weight:500;line-height:18px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2)}
       .plan-fb-send:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
       .plan-fb-send:disabled{opacity:.5;cursor:default}
       /* 2026-08-30 提问卡 DSH QuestionComposer 对齐：eyebrow+右上折叠/×；编号方块选项（label+描述
@@ -16703,27 +16719,31 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
   const PLAN_ACCEPT_EDITS_PERMS = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
   function renderPlanApproval(a, zh, headline, desc, path, input, planText) {
     showTakeover(`
-      <div class="appr-card">
+      <div class="appr-card plan-card">
         <div class="appr-strip"><span class="appr-dot"></span>需要批准${zh ? ' · ' + esc(zh) : ''}${a.toolName ? '（' + esc(a.toolName) + '）' : ''}${planText ? '<button type="button" class="appr-plan-copy" title="复制计划" aria-label="复制计划">' + ICON_COPY + '</button>' : ''}</div>
         <div class="appr-body">
           <div class="appr-headline">${esc(headline)}</div>
           ${desc ? `<div class="appr-desc">${esc(desc)}</div>` : ''}
           ${path ? `<div class="appr-path"><span class="ap-l">路径</span><span>${esc(path)}</span></div>` : ''}
-          <div class="appr-input">${input}</div>
+          <div class="appr-input plan-plan">${input}</div>
         </div>
-        <div class="appr-btns plan-btns">
-          <button type="button" class="appr-allow plan-manual">人工同意</button>
-          <button type="button" class="appr-allow plan-auto">同意 · 自动接受编辑</button>
-        </div>
-        <div class="plan-fb-row">
-          <input type="text" class="plan-fb" placeholder="告诉应该怎么改…">
-          <button type="button" class="appr-deny plan-fb-send" disabled>提交意见</button>
+        <div class="plan-choose">
+          <div class="plan-choose-l">如何处理这份计划</div>
+          <div class="plan-opts">
+            <button type="button" class="plan-opt primary"><span class="po-num">1</span><span class="po-copy"><span class="po-title">同意，自动接受编辑</span><span class="po-sub">退出计划模式，后续文件编辑不再逐次询问</span></span></button>
+            <button type="button" class="plan-opt"><span class="po-num">2</span><span class="po-copy"><span class="po-title">同意，逐次人工确认</span><span class="po-sub">退出计划模式，每次文件编辑仍会弹出审批</span></span></button>
+          </div>
+          <div class="plan-fb-row">
+            <span class="po-num fb-num">3</span>
+            <input type="text" class="plan-fb" placeholder="告诉应该怎么改，回车提交…">
+            <button type="button" class="appr-deny plan-fb-send" disabled>提交意见</button>
+          </div>
         </div>
         <div class="appr-state"></div>
       </div>`, 'approval')
     const t = takeoverEl()
-    t.querySelector('.plan-auto').addEventListener('click', () => sendApprove(a.requestId, true, null, PLAN_ACCEPT_EDITS_PERMS))
-    t.querySelector('.plan-manual').addEventListener('click', () => sendApprove(a.requestId, true))
+    t.querySelector('.plan-opt.primary').addEventListener('click', () => sendApprove(a.requestId, true, null, PLAN_ACCEPT_EDITS_PERMS))
+    t.querySelector('.plan-opts .plan-opt:not(.primary)').addEventListener('click', () => sendApprove(a.requestId, true))
     const fb = t.querySelector('.plan-fb')
     const send = t.querySelector('.plan-fb-send')
     // 空白（trim）不可提交；提交期间输入与按钮一并禁用（sendApprove/showApprovalError 负责）
@@ -16737,7 +16757,6 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
       if (!text) return
       sendApprove(a.requestId, false, null, null, text)
     })
-    fb.focus()
     bindPlanCopy(t, planText)
   }
 
@@ -16921,7 +16940,7 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
     const t = takeoverEl()
     if (t) {
       // 2026-08-30 提问卡改版：.qa-skip（跳过本题）同属提交动作按钮，busy 一并禁用
-      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = true; b.classList.add('busy') })
+      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip, .plan-opt').forEach((b) => { b.disabled = true; b.classList.add('busy') })
       const fbInput = t.querySelector('.plan-fb')
       if (fbInput) fbInput.disabled = true
       let st = t.querySelector('.appr-state')
@@ -16939,7 +16958,7 @@ function setPendingUserMsgs(v) { pendingUserMsgs = v }
     if (approvalPending && approvalPending.requestId === requestId) approvalPending = null
     const t = takeoverEl()
     if (t && takeover === 'approval') {
-      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = false; b.classList.remove('busy') })
+      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip, .plan-opt').forEach((b) => { b.disabled = false; b.classList.remove('busy') })
       const fbInput = t.querySelector('.plan-fb')
       if (fbInput) fbInput.disabled = false
       const fbSend = t.querySelector('.plan-fb-send')

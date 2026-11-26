@@ -488,27 +488,31 @@ import { firstSendHash } from '../sidebar/recent.js'
   const PLAN_ACCEPT_EDITS_PERMS = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
   function renderPlanApproval(a, zh, headline, desc, path, input, planText) {
     showTakeover(`
-      <div class="appr-card">
+      <div class="appr-card plan-card">
         <div class="appr-strip"><span class="appr-dot"></span>需要批准${zh ? ' · ' + esc(zh) : ''}${a.toolName ? '（' + esc(a.toolName) + '）' : ''}${planText ? '<button type="button" class="appr-plan-copy" title="复制计划" aria-label="复制计划">' + ICON_COPY + '</button>' : ''}</div>
         <div class="appr-body">
           <div class="appr-headline">${esc(headline)}</div>
           ${desc ? `<div class="appr-desc">${esc(desc)}</div>` : ''}
           ${path ? `<div class="appr-path"><span class="ap-l">路径</span><span>${esc(path)}</span></div>` : ''}
-          <div class="appr-input">${input}</div>
+          <div class="appr-input plan-plan">${input}</div>
         </div>
-        <div class="appr-btns plan-btns">
-          <button type="button" class="appr-allow plan-manual">人工同意</button>
-          <button type="button" class="appr-allow plan-auto">同意 · 自动接受编辑</button>
-        </div>
-        <div class="plan-fb-row">
-          <input type="text" class="plan-fb" placeholder="告诉应该怎么改…">
-          <button type="button" class="appr-deny plan-fb-send" disabled>提交意见</button>
+        <div class="plan-choose">
+          <div class="plan-choose-l">如何处理这份计划</div>
+          <div class="plan-opts">
+            <button type="button" class="plan-opt primary"><span class="po-num">1</span><span class="po-copy"><span class="po-title">同意，自动接受编辑</span><span class="po-sub">退出计划模式，后续文件编辑不再逐次询问</span></span></button>
+            <button type="button" class="plan-opt"><span class="po-num">2</span><span class="po-copy"><span class="po-title">同意，逐次人工确认</span><span class="po-sub">退出计划模式，每次文件编辑仍会弹出审批</span></span></button>
+          </div>
+          <div class="plan-fb-row">
+            <span class="po-num fb-num">3</span>
+            <input type="text" class="plan-fb" placeholder="告诉应该怎么改，回车提交…">
+            <button type="button" class="appr-deny plan-fb-send" disabled>提交意见</button>
+          </div>
         </div>
         <div class="appr-state"></div>
       </div>`, 'approval')
     const t = takeoverEl()
-    t.querySelector('.plan-auto').addEventListener('click', () => sendApprove(a.requestId, true, null, PLAN_ACCEPT_EDITS_PERMS))
-    t.querySelector('.plan-manual').addEventListener('click', () => sendApprove(a.requestId, true))
+    t.querySelector('.plan-opt.primary').addEventListener('click', () => sendApprove(a.requestId, true, null, PLAN_ACCEPT_EDITS_PERMS))
+    t.querySelector('.plan-opts .plan-opt:not(.primary)').addEventListener('click', () => sendApprove(a.requestId, true))
     const fb = t.querySelector('.plan-fb')
     const send = t.querySelector('.plan-fb-send')
     // 空白（trim）不可提交；提交期间输入与按钮一并禁用（sendApprove/showApprovalError 负责）
@@ -522,7 +526,6 @@ import { firstSendHash } from '../sidebar/recent.js'
       if (!text) return
       sendApprove(a.requestId, false, null, null, text)
     })
-    fb.focus()
     bindPlanCopy(t, planText)
   }
 
@@ -706,7 +709,7 @@ import { firstSendHash } from '../sidebar/recent.js'
     const t = takeoverEl()
     if (t) {
       // 2026-08-30 提问卡改版：.qa-skip（跳过本题）同属提交动作按钮，busy 一并禁用
-      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = true; b.classList.add('busy') })
+      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip, .plan-opt').forEach((b) => { b.disabled = true; b.classList.add('busy') })
       const fbInput = t.querySelector('.plan-fb')
       if (fbInput) fbInput.disabled = true
       let st = t.querySelector('.appr-state')
@@ -724,7 +727,7 @@ import { firstSendHash } from '../sidebar/recent.js'
     if (approvalPending && approvalPending.requestId === requestId) approvalPending = null
     const t = takeoverEl()
     if (t && takeover === 'approval') {
-      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = false; b.classList.remove('busy') })
+      t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip, .plan-opt').forEach((b) => { b.disabled = false; b.classList.remove('busy') })
       const fbInput = t.querySelector('.plan-fb')
       if (fbInput) fbInput.disabled = false
       const fbSend = t.querySelector('.plan-fb-send')

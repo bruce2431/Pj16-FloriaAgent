@@ -129,14 +129,30 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       .appr-deny:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
       .appr-allow{border:none!important;background:#4176e6!important;color:#fff!important}
       .appr-allow:hover:not(:disabled){background:#679efe!important}
-      /* 计划审批（ExitPlanMode）三选项卡：同意（自动接受编辑）/ 人工同意 / 下方反馈行「告诉应该怎么改」。
+      /* 计划审批（ExitPlanMode）三行编号选项：①同意，自动接受编辑（主）/ ②同意，逐次人工确认 / ③反馈行。
+         与提问卡 .qa-opt 同族：中性描边行，主选项靠蓝编号块 + 淡蓝底区分；反馈行不自动聚焦（无刺眼蓝框）。
          只作用于计划卡的 .plan-* 类，通用审批卡样式不变。 */
-      .plan-fb-row{display:flex;align-items:center;gap:8px;padding:0 16px 14px}
-      .plan-fb{flex:1;min-width:0;height:32px;padding:0 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
+      .plan-card .appr-body{padding-bottom:0}
+      .plan-plan{padding:10px 12px;border-radius:12px;background:var(--field-2)}
+      .plan-choose{display:flex;flex-direction:column;gap:8px;padding:12px 16px 14px}
+      .plan-choose-l{color:var(--text-3);font-size:12px;line-height:16px;font-weight:500;padding:0 2px}
+      .plan-opts{display:flex;flex-direction:column;gap:6px}
+      .plan-opt{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);text-align:left;cursor:pointer;font-family:inherit}
+      .plan-opt:hover:not(:disabled){border-color:#4176e6;background:var(--accent-hover)}
+      .plan-opt:disabled{opacity:.55;cursor:default}
+      .plan-opt .po-num{flex:none;min-width:20px;height:20px;padding:0 5px;border-radius:6px;background:var(--hover);color:var(--text-2);font-size:12px;font-weight:500;line-height:20px;text-align:center;box-sizing:border-box}
+      .plan-opt.primary{border-color:color-mix(in srgb,#4176e6 45%,var(--border));background:var(--accent-hover)}
+      .plan-opt.primary .po-num{background:#4176e6;color:#fff}
+      .plan-opt .po-copy{flex:1;display:flex;flex-direction:column;gap:1px}
+      .plan-opt .po-title{font-size:13.5px;line-height:20px;font-weight:500;color:var(--text)}
+      .plan-opt .po-sub{font-size:12px;line-height:18px;color:var(--text-2)}
+      .plan-fb-row{display:flex;align-items:center;gap:10px}
+      .plan-fb{flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
       .plan-fb::placeholder{color:var(--text-3)}
-      .plan-fb:focus{border-color:#4176e6}
+      .plan-fb:focus{border-color:color-mix(in srgb,#4176e6 55%,var(--border))}
       .plan-fb:disabled{opacity:.5}
-      .plan-fb-send{flex:none;height:32px;padding:0 16px;border-radius:999px;font-size:13px;font-weight:500;line-height:18px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2)}
+      .plan-fb-row .fb-num{background:transparent;color:var(--text-3);border:1px dashed var(--border)}
+      .plan-fb-send{flex:none;height:36px;padding:0 16px;border-radius:12px;font-size:13px;font-weight:500;line-height:18px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2)}
       .plan-fb-send:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
       .plan-fb-send:disabled{opacity:.5;cursor:default}
       /* 2026-08-30 提问卡 DSH QuestionComposer 对齐：eyebrow+右上折叠/×；编号方块选项（label+描述
