@@ -59,13 +59,30 @@ import { esc } from './util.js'
   }
   // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用令牌。
   // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
-  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」）都走这一处。
-  function fileLinkMarkdown(p) {
+  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」/ 编辑区选区引用）都走这一处。
+  // 行范围（l0/l1，2026-11-26）只进 URL：`路径#L12-L20`（parseFileLink 单真源已认），
+  // 链接文字恒为文件名——chip 显示名 `名:12-20` 由 fileLinkLabel / mdInline 统一拼，文字自带行号会重复。
+  function fileLinkMarkdown(p, l0, l1) {
     const s = String(p == null ? '' : p)
     const base = s.split('/').pop()
-    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
-    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    const range = l0 ? `${l0}${l1 && l1 !== l0 ? '-' + l1 : ''}` : ''
+    if (!base || /[\]`]/.test(s)) return range ? `[@引用:${escapeMentionPath(s)}#L${l0}-${l1 || l0}]` : mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29') + (range ? '#L' + range : '')
     return '[\u0060' + base + '\u0060](' + url + ')'
+  }
+  // PDF 引用的来源链接（2026-11-26）：位置粒度 = 路径 + 页码，URL 用 `#p7` / `#p7-9`（parseFileLink 只取
+  // fragment 前的路径，页码靠文字呈现；与 `[@引用PDF:]` 旧令牌同一粒度，混用不误导）。
+  function pdfLinkMarkdown(p, p0, p1) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop() || s
+    const pages = p0 ? ` · 第 ${p0}${p1 && p1 !== p0 ? '-' + p1 : ''} 页` : ''
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29') + (p0 ? `#p${p0}${p1 && p1 !== p0 ? '-' + p1 : ''}` : '')
+    return '[\u0060' + base + pages + '\u0060](' + url + ')'
+  }
+  // 引用原文的 Markdown 形态（2026-11-26 用户定案「文件相关的引用全部回归 md」）：逐行引用块。
+  function quoteBlockMarkdown(text) {
+    return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+      .split('\n').map((l) => (l ? '> ' + l : '>')).join('\n')
   }
 
   // chip HTML（name 为已转义文本：mdInline/addUser 入口已 esc，这里不再二次转义）
@@ -192,6 +209,8 @@ export {
   foldQuoteBodies,
   mentionChipHtml,
   mentionPathToken,
+  pdfLinkMarkdown,
+  quoteBlockMarkdown,
   quotePdfChipHtml,
   quoteRefChipHtml,
   quoteReplyChipHtml,

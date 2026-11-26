@@ -148,8 +148,8 @@ if (/function serializeInput\(\)\s*\{\s*return composerDocText\(\)/.test(mention
 else bad('serializeInput 未退化到 composerDocText（引用序列化形态不对）')
 if (/rkind !== 'file'/.test(mention) && /\[@引用回复:\$\{/.test(mention)) ok('refToken：回复引用出原文 + 锚点令牌')
 else bad('refToken 的回复引用分支缺失/形态变了')
-if (mention.includes('quoted') === false && /\[@引用:\$\{p\}/.test(mention)) ok('refToken：文件引用只出位置令牌（不含原文）')
-else bad('refToken 的文件引用分支形态变了')
+if (/return fileLinkMarkdown\(refPath\(d\.file, d\.proj\), d\.l0, d\.l1\)/.test(mention)) ok('refToken：文件引用回归 md 行内链接（行范围进 URL，不含原文）')
+else bad('refToken 的文件引用分支未回归 md 行内链接')
 if (/\.replace\(QUOTE_REF_RE/.test(mention)) ok('renderUserText 接 QUOTE_REF_RE（乐观态回显）')
 else bad('renderUserText 未接 QUOTE_REF_RE')
 if (/\.replace\(QUOTE_REPLY_RE/.test(mention)) ok('renderUserText 接 QUOTE_REPLY_RE（乐观态回显）')
@@ -258,19 +258,30 @@ const stripBody = (QRBODY && QPBODY && stripBodySrc ? new Function('QUOTE_REPLY_
     if (!hit(PRE, '[@引用:src/x.ts#L1-2]')) ok('QUOTE_PDF_RE 不吞 [@引用:] 令牌（互斥）')
     else bad('QUOTE_PDF_RE 吞掉了 [@引用:] 令牌')
   }
-  // refToken 的 pdf 分支：路径 + 页码（跨页 s-e），原文进块、首尾无换行
+  // refToken 的 pdf 分支（2026-11-26 用户定案「文件相关的引用全部回归 md」）：
+  // 引用块原文 + 来源行内链接（路径#p页码），首尾无换行
   const rtSrc = fnSlice(mention, 'refToken')
   if (rtSrc) {
+    // refToken 的 pdf/file 分支依赖 mention-syntax 的三个序列化口，真身一并注入
+    const seqSrc = ['escapeMentionPath', 'mentionPathToken', 'fileLinkMarkdown', 'pdfLinkMarkdown', 'quoteBlockMarkdown']
+      .map((n) => fnSlice(mention, n)).join('\n')
     // eslint-disable-next-line no-new-func
-    const rt = new Function('refPath', `${rtSrc}\nreturn refToken`)((f: string) => f) as (d: Record<string, unknown>) => string
+    const rt = new Function('refPath', `${seqSrc}\n${rtSrc}\nreturn refToken`)((f: string) => f) as (d: Record<string, unknown>) => string
     const tok = rt({ rkind: 'pdf', file: 'paper.pdf', quote: '第七页原文', p0: 7, p1: 7 })
-    if (tok === '[@引用PDF:paper.pdf#p7]\n第七页原文\n[/引用PDF]') ok('refToken：PDF 引用出「路径#页码」锚点 + 原文块')
+    if (tok === '> 第七页原文\n\n[`paper.pdf · 第 7 页`](paper.pdf#p7)') ok('refToken：PDF 引用 = 引用块原文 + 来源 md 链接（页码进 URL）')
     else bad(`PDF refToken 形态变了：${JSON.stringify(tok)}`)
     const tok2 = rt({ rkind: 'pdf', file: 'paper.pdf', quote: 'x', p0: 7, p1: 9 })
-    if (tok2.startsWith('[@引用PDF:paper.pdf#p7-9]')) ok('refToken：PDF 跨页页码 s-e')
-    else bad(`PDF 跨页令牌形态变了：${JSON.stringify(tok2)}`)
-    if (!tok.startsWith('\n') && !tok.endsWith('\n')) ok('PDF 引用令牌首尾无换行')
-    else bad('PDF 引用令牌首尾带换行')
+    if (tok2.endsWith('[`paper.pdf · 第 7-9 页`](paper.pdf#p7-9)')) ok('refToken：PDF 跨页页码 s-e')
+    else bad(`PDF 跨页链接形态变了：${JSON.stringify(tok2)}`)
+    if (!tok.startsWith('\n') && !tok.endsWith('\n')) ok('PDF 引用首尾无换行')
+    else bad('PDF 引用首尾带换行')
+    // 文件引用：行范围只进 URL（chip 显示名 名:12-20 由 fileLinkLabel/mdInline 统一拼）
+    const f1 = rt({ rkind: 'file', file: 'src/x.ts', l0: 12, l1: 20 })
+    if (f1 === '[`x.ts`](src/x.ts#L12-20)') ok('refToken：文件引用 = md 行内链接（行范围进 URL）')
+    else bad(`文件引用 refToken 形态变了：${JSON.stringify(f1)}`)
+    const f2 = rt({ rkind: 'file', file: 'src/x.ts' })
+    if (f2 === '[`x.ts`](src/x.ts)') ok('refToken：无行号文件引用 = 纯 md 行内链接')
+    else bad(`无行号文件引用形态变了：${JSON.stringify(f2)}`)
   } else {
     bad('未能剥出 refToken 函数体（PDF 分支）')
   }

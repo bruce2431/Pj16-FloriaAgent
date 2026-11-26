@@ -551,13 +551,30 @@ function setConnUp(v) { connUp = v }
   }
   // 文件引用的统一形态 = 标准 Markdown 行内链接：[`文件名`](路径)。目录仍用令牌。
   // 名字含 md 链接语法无法表达/会拆坏链接的字符（`]`、反引号）时退回令牌形态——两种形态渲成同一 chip。
-  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」）都走这一处。
-  function fileLinkMarkdown(p) {
+  // 所有「把文件引用塞进正文」的入口（@ 选择 / 上传文件 / 右键「使用 AI 编辑」/ 编辑区选区引用）都走这一处。
+  // 行范围（l0/l1，2026-11-26）只进 URL：`路径#L12-L20`（parseFileLink 单真源已认），
+  // 链接文字恒为文件名——chip 显示名 `名:12-20` 由 fileLinkLabel / mdInline 统一拼，文字自带行号会重复。
+  function fileLinkMarkdown(p, l0, l1) {
     const s = String(p == null ? '' : p)
     const base = s.split('/').pop()
-    if (!base || /[\]`]/.test(s)) return mentionPathToken(s, 'file')
-    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29')
+    const range = l0 ? `${l0}${l1 && l1 !== l0 ? '-' + l1 : ''}` : ''
+    if (!base || /[\]`]/.test(s)) return range ? `[@引用:${escapeMentionPath(s)}#L${l0}-${l1 || l0}]` : mentionPathToken(s, 'file')
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29') + (range ? '#L' + range : '')
     return '[\u0060' + base + '\u0060](' + url + ')'
+  }
+  // PDF 引用的来源链接（2026-11-26）：位置粒度 = 路径 + 页码，URL 用 `#p7` / `#p7-9`（parseFileLink 只取
+  // fragment 前的路径，页码靠文字呈现；与 `[@引用PDF:]` 旧令牌同一粒度，混用不误导）。
+  function pdfLinkMarkdown(p, p0, p1) {
+    const s = String(p == null ? '' : p)
+    const base = s.split('/').pop() || s
+    const pages = p0 ? ` · 第 ${p0}${p1 && p1 !== p0 ? '-' + p1 : ''} 页` : ''
+    const url = encodeURI(s).replace(/\(/g, '%28').replace(/\)/g, '%29') + (p0 ? `#p${p0}${p1 && p1 !== p0 ? '-' + p1 : ''}` : '')
+    return '[\u0060' + base + pages + '\u0060](' + url + ')'
+  }
+  // 引用原文的 Markdown 形态（2026-11-26 用户定案「文件相关的引用全部回归 md」）：逐行引用块。
+  function quoteBlockMarkdown(text) {
+    return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+      .split('\n').map((l) => (l ? '> ' + l : '>')).join('\n')
   }
 
   // chip HTML（name 为已转义文本：mdInline/addUser 入口已 esc，这里不再二次转义）
@@ -14690,21 +14707,22 @@ function wkMerge3(base, local, remote) {
   // core/mention-syntax.js（core 叶子，供 core/markdown.js 与本源共用，断开 core→feature 成环）。
 
   // 引用 chip → 消息文本。两条链的落地形态刻意不同（用户定案 2026-09-28）：
-  //  文件引用 = 只给位置，模型自己 Read；
-  //  回复引用 = 原文必须进消息——回复不属于任何文件，没有位置可查。原文包在令牌块里（`QUOTE_REPLY_BODY_RE`），
-  //  渲染层整块剥掉只留锚点令牌 → 胶囊。首尾不留多余换行（留了会撑出多余行距，2026-09-28 用户实报「自带一个换行」）。
+  //  文件引用 = 只给位置，模型自己 Read；2026-11-26 用户定案「文件相关的引用全部回归 md」：
+  //    文件 = 标准行内链接 `[\`名:12-20\`](路径#L12-L20)`（与 @ 选文件同一序列化口 fileLinkMarkdown）；
+  //    PDF = 引用块原文 + 来源链接 `[\`a.pdf · 第 7 页\`](路径#p7)`（原文必须进消息，PDF 无行号）；
+  //  回复引用（非文件）= 原文必须进消息、没有文件位置可查，保持令牌块（`QUOTE_REPLY_BODY_RE`）。
+  //  首尾不留多余换行（留了会撑出多余行距，2026-09-28 用户实报「自带一个换行」）。
   function refToken(d) {
     if (d.rkind === 'pdf') {
-      const p = refPath(d.file, d.proj)
-      const loc = d.p0 ? `#p${d.p0}${d.p1 && d.p1 !== d.p0 ? '-' + d.p1 : ''}` : ''
-      return `[@引用PDF:${p}${loc}]\n${String(d.quote || '')}\n[/引用PDF]`
+      const link = pdfLinkMarkdown(refPath(d.file, d.proj), d.p0, d.p1)
+      const body = quoteBlockMarkdown(d.quote)
+      return body ? body + '\n\n' + link : link
     }
     if (d.rkind !== 'file') {
       const title = String(d.title || '本会话').replace(/[\]|\r\n]/g, ' ').trim() || '本会话'
       return `[@引用回复:${d.idx || 0}|${title}]\n${String(d.quote || '')}\n[/引用回复]`
     }
-    const p = refPath(d.file, d.proj)
-    return d.l0 ? `[@引用:${p}#L${d.l0}-${d.l1}]` : `[@引用:${p}]`
+    return fileLinkMarkdown(refPath(d.file, d.proj), d.l0, d.l1)
   }
 
   // 引用路径基准 = 模型能直接 Read 的形式：会话启动根（模型 cwd）就是该 work 项目本身时用项目内

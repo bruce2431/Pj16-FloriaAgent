@@ -4,7 +4,7 @@
 
 import { GATEWAY, gateAwait } from '../engine/gateway.js'
 import { I, fileIcon } from '../core/icons.js'
-import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, fileLinkMarkdown, foldQuoteBodies, mentionChipHtml, mentionPathToken, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
+import { MENTION_PATH_RE, MENTION_PLUGIN_RE, MENTION_SESSION_ICON, MENTION_SESSION_RE, QUOTE_PDF_RE, QUOTE_REF_RE, QUOTE_REPLY_RE, fileLinkMarkdown, foldQuoteBodies, mentionChipHtml, mentionPathToken, pdfLinkMarkdown, quoteBlockMarkdown, quotePdfChipHtml, quoteRefChipHtml, quoteReplyChipHtml, splitSessionToken, unfoldQuoteBodies, unescapeMentionPath } from '../core/mention-syntax.js'
 import { sessionCwd } from '../engine/sessions.js'
 import { state } from '../engine/state.js'
 import { esc } from '../core/util.js'
@@ -58,21 +58,22 @@ import { pickEnter } from './toolbar/pick.js'
   // core/mention-syntax.js（core 叶子，供 core/markdown.js 与本源共用，断开 core→feature 成环）。
 
   // 引用 chip → 消息文本。两条链的落地形态刻意不同（用户定案 2026-09-28）：
-  //  文件引用 = 只给位置，模型自己 Read；
-  //  回复引用 = 原文必须进消息——回复不属于任何文件，没有位置可查。原文包在令牌块里（`QUOTE_REPLY_BODY_RE`），
-  //  渲染层整块剥掉只留锚点令牌 → 胶囊。首尾不留多余换行（留了会撑出多余行距，2026-09-28 用户实报「自带一个换行」）。
+  //  文件引用 = 只给位置，模型自己 Read；2026-11-26 用户定案「文件相关的引用全部回归 md」：
+  //    文件 = 标准行内链接 `[\`名:12-20\`](路径#L12-L20)`（与 @ 选文件同一序列化口 fileLinkMarkdown）；
+  //    PDF = 引用块原文 + 来源链接 `[\`a.pdf · 第 7 页\`](路径#p7)`（原文必须进消息，PDF 无行号）；
+  //  回复引用（非文件）= 原文必须进消息、没有文件位置可查，保持令牌块（`QUOTE_REPLY_BODY_RE`）。
+  //  首尾不留多余换行（留了会撑出多余行距，2026-09-28 用户实报「自带一个换行」）。
   function refToken(d) {
     if (d.rkind === 'pdf') {
-      const p = refPath(d.file, d.proj)
-      const loc = d.p0 ? `#p${d.p0}${d.p1 && d.p1 !== d.p0 ? '-' + d.p1 : ''}` : ''
-      return `[@引用PDF:${p}${loc}]\n${String(d.quote || '')}\n[/引用PDF]`
+      const link = pdfLinkMarkdown(refPath(d.file, d.proj), d.p0, d.p1)
+      const body = quoteBlockMarkdown(d.quote)
+      return body ? body + '\n\n' + link : link
     }
     if (d.rkind !== 'file') {
       const title = String(d.title || '本会话').replace(/[\]|\r\n]/g, ' ').trim() || '本会话'
       return `[@引用回复:${d.idx || 0}|${title}]\n${String(d.quote || '')}\n[/引用回复]`
     }
-    const p = refPath(d.file, d.proj)
-    return d.l0 ? `[@引用:${p}#L${d.l0}-${d.l1}]` : `[@引用:${p}]`
+    return fileLinkMarkdown(refPath(d.file, d.proj), d.l0, d.l1)
   }
 
   // 引用路径基准 = 模型能直接 Read 的形式：会话启动根（模型 cwd）就是该 work 项目本身时用项目内
