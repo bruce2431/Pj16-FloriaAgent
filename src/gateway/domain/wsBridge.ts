@@ -186,6 +186,8 @@ export function handleWsMessage(ws: WebSocket, raw: string): void {
     input?: unknown
     answers?: Record<string, string>
     permissions?: unknown
+    /** deny 时的拒绝原因/修改意见（计划审批「告诉应该怎么改」） */
+    message?: string
     images?: unknown
     caps?: unknown
     callId?: string
@@ -269,6 +271,12 @@ export function handleWsMessage(ws: WebSocket, raw: string): void {
           qInput = (data.input as { questions: unknown }).questions
         }
         const updatedInput = data.answers ? { questions: qInput, answers: data.answers } : undefined
+        // 计划审批「告诉应该怎么改」：deny 可携带用户修改意见，CLI 侧 cancelAndAbort(message) 原样回给模型；
+        // 无反馈时沿用既有默认拒绝文案。
+        const denyMessage =
+          typeof data.message === 'string' && data.message.trim()
+            ? data.message
+            : '用户拒绝了该工具调用'
         target.send(
           JSON.stringify({
             type: 'approval-response',
@@ -276,7 +284,7 @@ export function handleWsMessage(ws: WebSocket, raw: string): void {
             response:
               data.allowed === true
                 ? { behavior: 'allow', updatedInput, updatedPermissions: data.permissions }
-                : { behavior: 'deny', message: '用户拒绝了该工具调用' },
+                : { behavior: 'deny', message: denyMessage },
           }),
         )
       } else {

@@ -414,6 +414,11 @@ import { firstSendHash } from '../sidebar/recent.js'
     const input = prettyToolInput(a.toolName, a.input, desc)
     // 计划审批（ExitPlanMode）：strip 行尾给一枚复制按钮，复制计划 Markdown 原文
     const planText = a.toolName === 'ExitPlanMode' && a.input && typeof a.input.plan === 'string' ? a.input.plan : ''
+    // 计划审批走三选项卡（同意=自动接受编辑 / 人工同意 / 告诉应该怎么改），与 CLI buildPlanApprovalOptions 对齐
+    if (a.toolName === 'ExitPlanMode') {
+      renderPlanApproval(a, zh, headline, desc, path, input, planText)
+      return
+    }
     let sugsHtml = ''
     if (sugs.length) {
       sugsHtml = `<div class="appr-sugs">${sugs.map((s, si) => {
@@ -452,24 +457,73 @@ import { firstSendHash } from '../sidebar/recent.js'
     }
     t.querySelector('.appr-allow').addEventListener('click', () => sendApprove(a.requestId, true, null, [...sel].map((i) => sugs[i])))
     t.querySelector('.appr-deny').addEventListener('click', () => sendApprove(a.requestId, false))
-    // 计划复制：反馈形态同 .msg-copy（图标换对勾 1s）；卡片被重建时随 innerHTML 一并替换，无需解绑
+    bindPlanCopy(t, planText)
+  }
+
+  // 计划复制：反馈形态同 .msg-copy（图标换对勾 1s）；卡片被重建时随 innerHTML 一并替换，无需解绑
+  function bindPlanCopy(t, planText) {
     const copyBtn = t.querySelector('.appr-plan-copy')
-    if (copyBtn) {
-      copyBtn.addEventListener('click', () => {
-        writeClipboard(planText).then((ok) => {
-          if (!ok) { toast('复制失败'); return }
-          copyBtn.classList.add('copied')
-          copyBtn.innerHTML = I.dshCheck
-          copyBtn.title = '已复制'
-          setTimeout(() => {
-            if (!copyBtn.isConnected) return
-            copyBtn.classList.remove('copied')
-            copyBtn.innerHTML = ICON_COPY
-            copyBtn.title = '复制计划'
-          }, 1000)
-        })
+    if (!copyBtn) return
+    copyBtn.addEventListener('click', () => {
+      writeClipboard(planText).then((ok) => {
+        if (!ok) { toast('复制失败'); return }
+        copyBtn.classList.add('copied')
+        copyBtn.innerHTML = I.dshCheck
+        copyBtn.title = '已复制'
+        setTimeout(() => {
+          if (!copyBtn.isConnected) return
+          copyBtn.classList.remove('copied')
+          copyBtn.innerHTML = ICON_COPY
+          copyBtn.title = '复制计划'
+        }, 1000)
       })
-    }
+    })
+  }
+
+  // ===== 计划审批卡（ExitPlanMode）三选项 =====
+  // 与 CLI buildPlanApprovalOptions 对齐：①同意（自动接受编辑）→ allow + updatedPermissions.setMode=acceptEdits
+  // （CLI persistPermissions 应用，后续编辑不再逐次询问）；②人工同意 → 普通 allow，沿用原权限模式；
+  // ③告诉应该怎么改 → deny + message（CLI cancelAndAbort 把修改意见回给模型，仍留在 plan 模式）。
+  // 反馈文本在提交时捕获进 approvalPending.message，断连/送达失败的重试沿用同一份，不重读输入框。
+  const PLAN_ACCEPT_EDITS_PERMS = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+  function renderPlanApproval(a, zh, headline, desc, path, input, planText) {
+    showTakeover(`
+      <div class="appr-card">
+        <div class="appr-strip"><span class="appr-dot"></span>需要批准${zh ? ' · ' + esc(zh) : ''}${a.toolName ? '（' + esc(a.toolName) + '）' : ''}${planText ? '<button type="button" class="appr-plan-copy" title="复制计划" aria-label="复制计划">' + ICON_COPY + '</button>' : ''}</div>
+        <div class="appr-body">
+          <div class="appr-headline">${esc(headline)}</div>
+          ${desc ? `<div class="appr-desc">${esc(desc)}</div>` : ''}
+          ${path ? `<div class="appr-path"><span class="ap-l">路径</span><span>${esc(path)}</span></div>` : ''}
+          <div class="appr-input">${input}</div>
+        </div>
+        <div class="appr-btns plan-btns">
+          <button type="button" class="appr-allow plan-manual">人工同意</button>
+          <button type="button" class="appr-allow plan-auto">同意 · 自动接受编辑</button>
+        </div>
+        <div class="plan-fb-row">
+          <input type="text" class="plan-fb" placeholder="告诉应该怎么改…">
+          <button type="button" class="appr-deny plan-fb-send" disabled>提交意见</button>
+        </div>
+        <div class="appr-state"></div>
+      </div>`, 'approval')
+    const t = takeoverEl()
+    t.querySelector('.plan-auto').addEventListener('click', () => sendApprove(a.requestId, true, null, PLAN_ACCEPT_EDITS_PERMS))
+    t.querySelector('.plan-manual').addEventListener('click', () => sendApprove(a.requestId, true))
+    const fb = t.querySelector('.plan-fb')
+    const send = t.querySelector('.plan-fb-send')
+    // 空白（trim）不可提交；提交期间输入与按钮一并禁用（sendApprove/showApprovalError 负责）
+    const syncSend = () => { send.disabled = !fb.value.trim() }
+    fb.addEventListener('input', syncSend)
+    fb.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing && fb.value.trim()) send.click()
+    })
+    send.addEventListener('click', () => {
+      const text = fb.value.trim()
+      if (!text) return
+      sendApprove(a.requestId, false, null, null, text)
+    })
+    fb.focus()
+    bindPlanCopy(t, planText)
   }
 
   // 2026-08-24 提问交互表单：DSH「输入栏转化、依次显示」的降级——floria 在一张卡里列出所有问题，
@@ -635,23 +689,26 @@ import { firstSendHash } from '../sidebar/recent.js'
   // 2026-08-26 P0 审批确认送达（Codex）：sendApprove 不再 WS send 后立即 clearTakeover。
   // 进入「提交中」（禁用按钮 + 状态行），等网关 approval-confirmed（CLI 已处理回执）才关卡；
   // approval-rejected（目标不在线）/断连 → 卡片保留 + 可见错误 + 重试按钮；等待无超时（2026-08-26 用户定案，与 CLI 一致，仅凭 confirmed/rejected/dismiss 收尾）。
-  let approvalPending = null // {requestId, allowed, qa, perms}：等待确认中的审批
+  let approvalPending = null // {requestId, allowed, qa, perms, message}：等待确认中的审批
   // 分层治理 4D（2026-10-10）：engine/gateway.js 的只读读取口（写侧仍是尾部 setApprovalPending）——
   // 每次现读可变绑定，调用方严禁缓存返回值。
   function getApprovalPending() { return approvalPending }
-  function sendApprove(requestId, allowed, qa, perms) {
-    if (!gws || gws.readyState !== 1) return showApprovalError('连接已断开，审批未送达', requestId, allowed, qa, perms)
+  function sendApprove(requestId, allowed, qa, perms, message) {
+    if (!gws || gws.readyState !== 1) return showApprovalError('连接已断开，审批未送达', requestId, allowed, qa, perms, message)
     // 2026-08-23 web 独立会话：带 sessionId 供网关路由到对应子进程（CLI 会话无此字段走 broadcast 未接入提示）
     const payload = { type: 'approve', requestId, allowed, sessionId: state.currentHash || undefined }
     if (qa && qa.answers) { payload.input = qa.input; payload.answers = qa.answers } // 2026-08-24 提问答复
     if (perms && perms.length) payload.permissions = perms // 2026-08-26 A2：勾选的「记住此规则」→ CLI persistPermissions
+    if (typeof message === 'string' && message) payload.message = message // 计划审批「告诉应该怎么改」：deny 的拒绝原因/修改意见
     gws.send(JSON.stringify(payload))
     if (approvalPending && approvalPending.requestId === requestId) approvalPending = null
-    approvalPending = { requestId, allowed, qa, perms }
+    approvalPending = { requestId, allowed, qa, perms, message }
     const t = takeoverEl()
     if (t) {
       // 2026-08-30 提问卡改版：.qa-skip（跳过本题）同属提交动作按钮，busy 一并禁用
       t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = true; b.classList.add('busy') })
+      const fbInput = t.querySelector('.plan-fb')
+      if (fbInput) fbInput.disabled = true
       let st = t.querySelector('.appr-state')
       if (!st) {
         const btns = t.querySelector('.appr-btns')
@@ -663,11 +720,15 @@ import { firstSendHash } from '../sidebar/recent.js'
     }
   }
   // P0：审批失败（断连/目标不在线/超时）→ 卡片保留 + 可见错误 + 重试；卡片不在则降级 addError
-  function showApprovalError(text, requestId, allowed, qa, perms) {
+  function showApprovalError(text, requestId, allowed, qa, perms, message) {
     if (approvalPending && approvalPending.requestId === requestId) approvalPending = null
     const t = takeoverEl()
     if (t && takeover === 'approval') {
       t.querySelectorAll('.appr-allow, .appr-deny, .qa-skip').forEach((b) => { b.disabled = false; b.classList.remove('busy') })
+      const fbInput = t.querySelector('.plan-fb')
+      if (fbInput) fbInput.disabled = false
+      const fbSend = t.querySelector('.plan-fb-send')
+      if (fbSend) fbSend.disabled = !fbInput || !fbInput.value.trim()
       let st = t.querySelector('.appr-state')
       if (!st) {
         const btns = t.querySelector('.appr-btns')
@@ -678,7 +739,7 @@ import { firstSendHash } from '../sidebar/recent.js'
       }
       st.innerHTML = `<span class="as-err">${esc(text)}</span><button type="button" class="appr-retry">重试</button>`
       const retry = st.querySelector('.appr-retry')
-      if (retry) retry.addEventListener('click', () => sendApprove(requestId, allowed, qa, perms))
+      if (retry) retry.addEventListener('click', () => sendApprove(requestId, allowed, qa, perms, message))
     } else {
       addError(text)
     }

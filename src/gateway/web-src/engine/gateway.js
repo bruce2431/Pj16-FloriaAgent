@@ -129,6 +129,16 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
       .appr-deny:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
       .appr-allow{border:none!important;background:#4176e6!important;color:#fff!important}
       .appr-allow:hover:not(:disabled){background:#679efe!important}
+      /* 计划审批（ExitPlanMode）三选项卡：同意（自动接受编辑）/ 人工同意 / 下方反馈行「告诉应该怎么改」。
+         只作用于计划卡的 .plan-* 类，通用审批卡样式不变。 */
+      .plan-fb-row{display:flex;align-items:center;gap:8px;padding:0 16px 14px}
+      .plan-fb{flex:1;min-width:0;height:32px;padding:0 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;outline:none}
+      .plan-fb::placeholder{color:var(--text-3)}
+      .plan-fb:focus{border-color:#4176e6}
+      .plan-fb:disabled{opacity:.5}
+      .plan-fb-send{flex:none;height:32px;padding:0 16px;border-radius:999px;font-size:13px;font-weight:500;line-height:18px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2)}
+      .plan-fb-send:hover:not(:disabled){background:var(--danger-soft);color:var(--danger-fg);border-color:transparent}
+      .plan-fb-send:disabled{opacity:.5;cursor:default}
       /* 2026-08-30 提问卡 DSH QuestionComposer 对齐：eyebrow+右上折叠/×；编号方块选项（label+描述
          同行）；自由输入行；底部 <N/M> 翻题导航+跳过本题+下一题/提交；整卡可折叠为一行。
          qa-card 走中性边框（不继承审批卡黄色警示边），配色守 floria 浅色主题。 */
@@ -294,7 +304,7 @@ import { noteWsOpen, noteWsClosed } from './live.js' // SSE 连接监督者联�
         if (msg.session_id && msg.session_id !== state.currentHash) return
         const ap = gwApproval.getApprovalPending()
         if (ap && ap.requestId === msg.requestId) {
-          gwApproval.showApprovalError('审批未送达目标，请重试', msg.requestId, ap.allowed, ap.qa, ap.perms)
+          gwApproval.showApprovalError('审批未送达目标，请重试', msg.requestId, ap.allowed, ap.qa, ap.perms, ap.message)
         }
       } else if (msg.type === 'approval-dismiss') {
         // 2026-08-24 审批双操作（web 与 CLI 均可）：CLI 终端/窗口已先操作 → 撤掉 floria 审批卡
