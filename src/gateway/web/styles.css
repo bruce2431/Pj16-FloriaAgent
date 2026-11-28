@@ -91,10 +91,9 @@ a { text-decoration: none; color: inherit; }
 }
 #app.work { --sunken-bg: var(--plane); background: var(--chat-bg); }
 /* 白天 work 读法与 chat 同构：灰底板 + 白内容面——#app.work 底板取 --plane（透出侧栏 ⇒ 侧栏列读作灰），
-   下沉区（#chat-area.work 本体）取白卡底 --chat-bg。--sunken-bg 随下沉区取白（顶栏渐隐板 /
-   #composer-mask 消费它）。暗色不变。 */
+   下沉区的内容卡取白卡底 --chat-bg。--sunken-bg 随内容卡取白（顶栏渐隐板 / #composer-mask 消费它）。
+   暗色不变。#chat-area.work 槽本身透明（同 chat 的 #chat-area），卡形由内容格自给。 */
 html:not([data-theme="dark"]) #app.work { background: var(--plane); --sunken-bg: var(--chat-bg); }
-html:not([data-theme="dark"]) #chat-area.work { background: var(--chat-bg); }
 /* 键盘节：壳体（body / #app / 侧栏 / 顶栏 / 消息流）**没有任何随键盘变化的几何量**。键盘 reveal 时
    浏览器去滚文档（或平移可视视口）以露出输入框，#app 的 sticky 粘附把它消化在滚动机制内部 ⇒ 画面
    不动；输入栏再按实测屏坐标抬升（engine/viewport.js）。因此这里不需要、也不允许给 #app 加任何
@@ -2021,11 +2020,6 @@ body.token-gate #summary-root { display: none; }
   #sidebar.open { transform: none; box-shadow: none; }
   /* 手机：主区是整屏，白卡拼缝/外缝一律退场（#app 本就地圆角 0、无留边）。侧栏抽屉几何由上方
      `#sidebar, #sidebar.open` 基线统一给（chat/work 一份，不再有 work 专属覆盖——2026-10-08 收回分叉）。 */
-  #chat-area.work { margin: 0; border-radius: 0; }
-  #chat-area.work > .wk-topbar { margin: 2px 2px 0; }
-  #chat-area.work > #work-editor,
-  #chat-area.work > #session-card:not(.wk-assist-float):not(.wk-assist-slim),
-  #chat-area.work > #wk-plugins-pane { margin: 0 2px 2px; }
   #panel, #sidebar.open #panel, .panel-inner { width: 100%; }
 
   /* 抽屉遮罩：侧栏滑入时盖住主区，点空白关闭 */
@@ -2426,12 +2420,12 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
   display: grid;
   grid-template-columns: minmax(0, 1fr) 7px var(--wk-pw, 420px);
   grid-template-rows: auto minmax(0, 1fr);
-  /* 2026-10-08 根治：work 内容区 = 与 chat 的 `.view-card` **同构的圆角卡**（四周 2px 缝 + 四角圆），
-     只是底色与底板对调——chat：底板灰 + 卡白；work：底板白（#app.work）+ 卡灰（--plane）。
-     四周 2px 缝里露出白底板 ⇒ 侧栏那列的白与内容卡四周的白连成一整片，底板（含侧栏）把内容卡包住。 */
-  margin: 2px;
-  background: var(--plane);
-  border-radius: var(--radius);
+  /* 槽与 chat 的 #chat-area 同构：透明、无边距、无圆角——底板色（#app.work = 侧栏同色）全程透出，
+     顶栏 tab 条直接落在底板上；卡形只由 row2 的内容格自给（四周 2px 缝 + 四角圆 + --sunken-bg，
+     与 chat 的 .view-card 逐项对应，只是底色与底板对调）。 */
+  margin: 0;
+  background: transparent;
+  border-radius: 0;
 }
 #chat-area.work:not(.wk-preview) { grid-template-columns: minmax(0, 1fr); }
 #chat-area.work > .wk-topbar { grid-column: 1; grid-row: 1; }
@@ -2439,13 +2433,10 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 #chat-area.work > #session-card,
 #chat-area.work > #wk-plugins-pane { grid-column: 1; grid-row: 2; min-width: 0; }
 
-/* 顶栏条与 chat 同构（2026-11-28）：底色 = 侧栏/底板色（暗 --chat-bg、白天 --plane），满幅铺到内容卡
-   上沿——左右不留缝、顶角随卡半径，读作侧栏底色贯穿整个顶栏（chat 顶栏正是这个形态，标题条直接落在
-   底板色上）。顶 padding 补回原 margin-top 的 2px，胶囊与折叠态汉堡（top 8）纵向位置不变。 */
+/* 顶栏条与 chat 标题条同构：透明条直接落在底板色上，pill 自绘；位置在内容卡**之外**（卡自 row2 起）。 */
 #chat-area.work > .wk-topbar {
-  margin: 0; padding-top: 8px; border-radius: var(--radius) var(--radius) 0 0; background: var(--chat-bg);
+  margin: 2px 2px 0;
 }
-html:not([data-theme="dark"]) #chat-area.work > .wk-topbar { background: var(--plane); }
 /* 键盘在场：壳体本身就是可视窗（body 收到键盘上沿），work 下沉区的 grid row2 自然落在窗内，
    光标行由 .cm-scroller 内部滚动可达 —— 这里不需要任何让位。 */
 /* 上半区渐隐板（2026-10-09，镜像 #composer-mask）：贴在**内容格顶部**（标签页 tab 条正下方），
@@ -2479,17 +2470,17 @@ html:not([data-theme="dark"]) #chat-area.work > .wk-topbar { background: var(--p
 /* 插件页占满下沉格：助手浮卡/收敛条即便在场也让位（切回聊天/文件 tab 即恢复，不改形态状态） */
 #chat-area.work.wk-show-plugins > #session-card.wk-assist-float,
 #chat-area.work.wk-show-plugins > #session-card.wk-assist-slim { display: none; }
-/* 内容格（编辑区 / 会话卡）与顶栏格同理：裸落底板，不涂底不造卡形，只留左右/下 2px 内边距。
-   浮卡（.wk-assist-float）/ 收敛条（.wk-assist-slim）是脱流的另一种形态，各自带白卡底 / 透明壳，
-   故用 :not() 排除（否则本条特指度会盖掉它们）。
-   background 必须显式清零：#session-card 带 .view-card（白卡底 --chat-bg），单靠「不写」会露白卡；
-   置 transparent 后透出 #chat-area.work 的 --plane ⇒ 与 #work-editor 同底（下沉区本体，唯一底源）。 */
+/* 内容格（编辑区 / 会话卡 / 插件页）= 与 chat 的 .view-card 逐项同构的圆角卡：四周 2px 缝 + 四角圆，
+   底色 --sunken-bg（work = 暗色 --plane / 白天 --chat-bg）。顶栏条与底板在卡外 ⇒ 底板色（侧栏同色）
+   把内容卡包住，读法与 chat 一致。浮卡（.wk-assist-float）/ 收敛条（.wk-assist-slim）是脱流的另一种
+   形态，各自带白卡底 / 透明壳，故用 :not() 排除（否则本条特指度会盖掉它们）。
+   #session-card 带 .view-card（底 --chat-bg），此处显式改回 --sunken-bg。 */
 #chat-area.work > #work-editor,
 #chat-area.work > #session-card:not(.wk-assist-float):not(.wk-assist-slim),
 #chat-area.work > #wk-plugins-pane {
-  margin: 0 2px 2px;
-  background: transparent;
-  border-radius: 0;
+  margin: 2px;
+  background: var(--sunken-bg);
+  border-radius: var(--radius);
 }
 /* 插件页容器：内容由 mgr 组件族铺满（竖向 flex + 自身滚动），与编辑区同底；左右留白与编辑区
    正文同一取值（--wk-ed-pad-x 只在 #work-editor 上有，这里直接给 clamp，窄窗 20px / 宽窗 56px）。 */
@@ -2585,7 +2576,7 @@ body.wk-resizing { cursor: col-resize; user-select: none; }
    （--plane，见上方 grid 规则）上故显形；开关 = 顶栏「工具栏」胶囊 #wk-tb-tool。
    两态由 state.wkPvTab 定（预览态挂 #wk-pv-body / 工具态显 #wk-pv-tabs + 工具 pane）；
    关掉即隐藏不销毁（内容留着，重开零重载）。与编辑器/聊天栏同属 #chat-area 三列。 */
-#work-preview { display: none; position: relative; min-height: 0; flex-direction: column; margin: 2px; border-radius: var(--radius); background: var(--chat-bg); overflow: hidden; }
+#work-preview { display: none; position: relative; min-height: 0; flex-direction: column; margin: 2px; border-radius: var(--radius); background: var(--sunken-bg); overflow: hidden; }
 #chat-area.work.wk-preview > #work-preview { display: flex; }
 /* 页态显隐的唯一静态口：两态互斥（预览帧 ⇄ 工具 pane）。#work-preview [hidden] 带 id 特指度，
    压过 .wk-pv-body / .wk-cmt 自身的 display —— 显隐只由 work.js applyPvTab 写 hidden 属性决定。 */
