@@ -1,7 +1,7 @@
 # 构建标准与 Feature Flag 总表（build）
 
 > 本文件属 `docs/` 文档库。
-> 权威规则与姊妹件：**总标准 → [standards.md](standards.md)**；**前端打包对网关侧的效应 → [gateway.md](gateway.md)**。
+> 权威规则与姊妹件：**总标准 → [standards.md](standards.md)**；**前端打包对网关侧的效应 → [gateway.md](gateway.md)**；**工具 → [tools.md](tools.md)**；**斜杠命令 → [commands.md](commands.md)**；**技能与插件 → [skills-plugins.md](skills-plugins.md)**。
 
 ## 1. 构建
 
@@ -47,6 +47,8 @@
 
 源码共引用 92 个 `feature('FLAG')` 编译期旗标（单双引号两种写法均已计入）。按门控对象分表，每表列：名称、功能、源码文件（门控/实现主件）、状态。
 
+**按口拆分**：工具类 → [tools.md](tools.md) §2；技能类 → [skills-plugins.md](skills-plugins.md) §4；插件类 → [skills-plugins.md](skills-plugins.md) §5；斜杠命令类 → [commands.md](commands.md) §4。本文件保留其余类别（默认构建 / Agent·记忆·规划 / UI / 平台·远程·权限 / 构建·遥测·内部），各小节标题与编号不变、内容为指向。
+
 状态口径：
 
 | 状态 | 含义 |
@@ -71,62 +73,21 @@
 | `SESSION_LINK` | 会话间协作：`session_send`（只认 sid）+ `session_search`（本项目最近 10 个标题） | `src/tools/SessionSendTool/SessionSendTool.ts`、`src/tools/SessionSearchTool/SessionSearchTool.ts` | 默认开 |
 | `CARD_API` | `CardCall` 工具：agent 驱动浏览器在场卡片（list/call） | `src/tools/CardCallTool/CardCallTool.ts`、`src/tools.ts` | 默认开 |
 
-### 2.2 工具（19）
+### 2.2 工具
 
-| 名称 | 功能 | 源码文件 | 状态 |
-|---|---|---|---|
-| `AGENT_TRIGGERS` | 本地 cron/trigger 工具（CronCreate/Delete/List） | `src/tools/ScheduleCronTool/`、`src/constants/tools.ts` | 实验 |
-| `AGENT_TRIGGERS_REMOTE` | 远程触发工具 `RemoteTrigger` | `src/tools/RemoteTriggerTool/RemoteTriggerTool.ts`、`src/tools.ts` | 实验 |
-| `MONITOR_TOOL` | `Monitor` 工具：spawn 后台监控进程并流式通知 | `src/tools/MonitorTool/MonitorTool.tsx` | 已恢复（默认不编入） |
-| `REVIEW_ARTIFACT` | `ReviewArtifact` 工具：批准弹窗选 finding，产物落 `.claude/reviews/` | `src/tools/ReviewArtifactTool/ReviewArtifactTool.tsx` | 已恢复（默认不编入） |
-| `WORKFLOW_SCRIPTS` | `Workflow` 工具：扫描 `.claude/workflows/*.md` 并 spawn 后台任务；脚本另注册为 `/name` | `src/tools/WorkflowTool/WorkflowTool.tsx`、`src/commands/workflows/` | 已恢复（默认不编入，需 `--feature=WORKFLOW_SCRIPTS`） |
-| `HISTORY_SNIP` | `SnipTool` + 历史裁剪投影 | `src/tools/SnipTool/` | stub（禁用） |
-| `KAIROS_PUSH_NOTIFICATION` | `PushNotificationTool` | `src/tools/PushNotificationTool/` | stub（禁用） |
-| `OVERFLOW_TEST_TOOL` | `OverflowTestTool` | `src/tools/OverflowTestTool/` | stub（禁用） |
-| `CONTEXT_COLLAPSE` | `CtxInspectTool` 上下文折叠 | `src/tools/CtxInspectTool/CtxInspectTool.js`（缺失） | 缺文件 |
-| `WEB_BROWSER_TOOL` | `WebBrowserTool` | `src/tools/WebBrowserTool/WebBrowserTool.js`（缺失） | 缺文件 |
-| `UDS_INBOX` | UDS 会话互发（`udsMessaging` + `ListPeersTool`）；无网关独立会话的一等能力 | `src/utils/udsMessaging.js`、`src/tools/ListPeersTool/`（缺失） | 缺文件 |
-| `TERMINAL_PANEL` | `TerminalCaptureTool` 终端面板 | `src/tools/TerminalCaptureTool/`（缺失） | 缺文件 |
-| `BASH_CLASSIFIER` | 分类器辅助的 bash 权限判定 | `src/cli/structuredIO.ts`、`src/utils/permissions/` | 实验 |
-| `POWERSHELL_AUTO_MODE` | PowerShell 自动权限模式 | `src/utils/permissions/permissions.ts`、`yoloClassifier.ts` | 实验 |
-| `TREE_SITTER_BASH` | tree-sitter bash 解析后端 | `src/utils/bash/parser.ts` | 实验 |
-| `TREE_SITTER_BASH_SHADOW` | tree-sitter bash 影子 rollout | `src/tools/BashTool/bashPermissions.ts`、`src/utils/bash/parser.ts` | 实验 |
-| `NEURON_RAG` | 本 fork 神经元记忆/RAG：`recall`/`remember` 常驻 + `neuron_list`/`neuron_source`/`neuron_fill_precog`/`neuron_cog` 延迟加载 | `src/tools/neturon/`、`src/constants/prompts.ts` | 本 fork 专有（默认关，显式 `--feature=NEURON_RAG`） |
-| `CHICAGO_MCP` | computer-use MCP 集成与 wrapper 加载 | `src/entrypoints/cli.tsx`、`src/main.tsx` | 可打包；运行期依赖外部化 `@ant/computer-use-*`，非 runtime-safe |
-| `NATIVE_CLIPBOARD_IMAGE` | macOS 原生剪贴板读图快路径（需 `image-processor-napi`） | `src/utils/imagePaste.ts` | 实验 |
+工具类 flag 表已迁至 [tools.md](tools.md) §2。
 
-### 2.3 技能（6）
+### 2.3 技能
 
-| 名称 | 功能 | 源码文件 | 状态 |
-|---|---|---|---|
-| `BUILDING_CLAUDE_APPS` | `claude-api` 技能（Claude API 应用构建） | `src/skills/bundled/claudeApi.ts` | stub（仅多语言 `.md` 资产） |
-| `RUN_SKILL_GENERATOR` | 技能生成器技能 | `src/skills/bundled/runSkillGenerator.js` | stub（注册即禁用） |
-| `KAIROS_DREAM` | 云端 dream 技能与任务行为 | `src/skills/bundled/dream.js`（缺失） | 已放弃 |
-| `MCP_SKILLS` | MCP 技能发现 | `src/services/mcp/client.ts`、`src/commands.ts` | stub（返回 `[]`） |
-| `EXPERIMENTAL_SKILL_SEARCH` | 技能检索服务（localSearch/prefetch） | `src/services/skillSearch/`（缺失） | 缺文件 |
-| `SKILL_IMPROVEMENT` | 技能改进 hook | `src/utils/hooks/skillImprovement.ts` | 支持（默认关） |
+技能类 flag 表已迁至 [skills-plugins.md](skills-plugins.md) §4。
 
-### 2.4 插件（1）
+### 2.4 插件
 
-| 名称 | 功能 | 源码文件 | 状态 |
-|---|---|---|---|
-| `MCP_RICH_OUTPUT` | MCP 工具富输出渲染 UI | `src/tools/MCPTool/UI.tsx` | 实验 |
+插件类 flag 表已迁至 [skills-plugins.md](skills-plugins.md) §5。
 
-### 2.5 斜杠命令（11）
+### 2.5 斜杠命令
 
-| 名称 | 功能 | 源码文件 | 状态 |
-|---|---|---|---|
-| `VOICE_MODE` | `/voice`、push-to-talk、语音通知与听写编排 | `src/commands/voice/`、`src/components/PromptInput/Notifications.tsx` | 实验；OAuth 语音后端已移除，运行期恒不可用 |
-| `ULTRAPLAN` | `/ultraplan`、提示触发与退出计划 UI | `src/commands/ultraplan.tsx` | 实验 |
-| `NEW_INIT` | `/init` 新决策路径 | `src/commands/init.ts` | 实验 |
-| `BREAK_CACHE_COMMAND` | `/break-cache` 命令 | `src/context.ts`、`src/commands/break-cache/` | 支持 |
-| `KAIROS_GITHUB_WEBHOOKS` | `/subscribe-pr` + `SubscribePRTool` + GitHub webhook 消息 | `src/commands/subscribe-pr.js`、`src/hooks/useReplBridge.tsx` | stub（禁用） |
-| `FORK_SUBAGENT` | `/fork` 子 agent 与 boilerplate | `src/commands/branch/index.ts` | stub（禁用） |
-| `BUDDY` | `/buddy` 伴侣角色 | `src/buddy/` | stub（禁用） |
-| `TORCH` | `/torch` 命令 | `src/commands/torch.js` | stub（禁用） |
-| `BG_SESSIONS` | 后台会话命令与退出处理 | `src/commands/exit/exit.tsx` | stub（禁用） |
-| `DAEMON` | `/remoteControlServer` 常驻远程控制 | `src/commands/remoteControlServer/`（缺失） | 已放弃（内置网关承担） |
-| `CCR_REMOTE_SETUP` | 远程 setup 命令路径 | `src/commands.ts` | 已放弃 |
+命令类 flag 表已迁至 [commands.md](commands.md) §4。
 
 ### 2.6 Agent / 记忆 / 规划（9）
 
@@ -197,8 +158,6 @@
 | `COMMIT_ATTRIBUTION` | 提交归因 hook（no-op） | `src/cli/print.ts`、`src/commands/clear/caches.ts` | stub |
 | `CONNECTOR_TEXT` | connector 文本块在 API/日志/UI 的处理 | `src/constants/betas.ts`、`src/services/api/claude.ts` | 实验 |
 | `KAIROS` | 云端 assistant 完整栈（需 Anthropic 后端+账号） | `src/bridge/bridgeMain.ts`、`src/cli/print.ts` | 已放弃（`KAIROS_BRIEF`/`KAIROS_CHANNELS` 独立保留） |
-
-
 
 ### 2.11 有用入口
 
