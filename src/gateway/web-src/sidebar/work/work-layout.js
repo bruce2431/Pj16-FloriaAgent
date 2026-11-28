@@ -1,6 +1,7 @@
 // 布局落地：模式切换 applySbMode / 侧栏开关锚定 / 聊天 tab 开集与关合 / 主区三列不变量 applyPanes。（拆自 sidebar/work.js，纯搬迁零行为变更；符号经单 IIFE 共享作用域可见）
 import { isTempProjLabel } from '../../core/util.js'
 import { inputWrap } from '../../engine/state.js'
+import { renderChatTopbar } from '../../chat/route.js'
 /* @module sidebar/work/work-layout.js */
 
   // 面板与主区布局按 state 落地。启动恢复与运行期切换共用这一条路径（无第二份初始化旁路）。
@@ -20,6 +21,9 @@ import { inputWrap } from '../../engine/state.js'
     $('chat-panel').hidden = on
     $('work-panel').hidden = !on
     chatArea.classList.toggle('work', on)
+    // 会话标题条只在 chat：进 work 清空内容（CSS 同步隐藏壳），回 chat 立即按当前会话补渲，
+    // 切模式不依赖后续路由/列表刷新。
+    renderChatTopbar()
     syncSideBrowserMode(on) // 侧边浏览器只在 chat 模式在场（work 有下沉区/右栏自己的卡）
     // 注册域随模式切换重算（2026-10-15）：外部卡（EXT）的语境口径含 work（看工作项目），模式一切换
     // 就必须重取 #mgr-tabs（应用 tab 的语境判据只看 chat 侧 state.preview/state.mgr，不受模式影响）。
