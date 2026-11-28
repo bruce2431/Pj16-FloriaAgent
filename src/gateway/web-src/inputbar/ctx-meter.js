@@ -5,7 +5,8 @@ import { stage, progScrollUntil, stageRelease, stageFollow, stageSync } from '..
 import { gateSubmit } from '../engine/auth.js'
 import { gateAwait, gws } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
-import { sendBtn, ctxMeterEl, ctxBtnEl, ctxPanelEl, bubblePop, overlay, state } from '../engine/state.js'
+import { sendBtn, ctxMeterEl, ctxBtnEl, ctxPanelEl, usageMeterEl, usageBtnEl, usagePanelEl, bubblePop, overlay, state } from '../engine/state.js'
+import { ICON_USAGE, fmtUsage, fmtTok } from '../chat/messages/usage.js'
 import { toast, isMobile, esc } from '../core/util.js'
 import { renderSettle, btnMode } from './approval.js'
 import { cmd, msel, cmdPop, modelPop, modelSeatEl, psel, projPop, projSeatEl, closeProjPop, toggleCmdPop, closeCmdPop, closeRiskModal, cmdMove, cmdSelect, renderCmdPop } from './commands.js'
@@ -16,8 +17,8 @@ import { gwSend } from './send.js'
 import { setPanel } from '../sidebar/recent.js'
 /* @module inputbar/ctx-meter.js */
   // ---------- 上下文占用指示（2026-08-23 dsh ContextMeter 移植）----------
-  // 数据来自 /gateway/session 的 context 字段（网关 readSession 提取最后一条 assistant usage，
-  // 除以 getContextWindowForModel 窗口）。无数据（无 usage / 无模型窗口）→ hidden。
+  // 数据来自 /gateway/session 的 context 字段 = CLI usage-state 快照（2026-11-28 下沉：CLI 取
+  // 最后一条 assistant usage ÷ getContextWindowForModel 窗口，网关只转发）。无数据 → hidden。
   // 环形 = 14px/2px 圆环，点击展开 breakdown 面板（headline + ~used/window + 占比条）。
   const ctx = { data: null, open: false }
   const CTX_RADIUS = 5.5
@@ -152,6 +153,60 @@ import { setPanel } from '../sidebar/recent.js'
   }
   function closeCtxMeter() { if (ctx.open) setCtxOpen(false) }
 
+  // ---------- 会话 token 用量胶囊（2026-11-28 dsh UsagePill/StatsPills 形态）----------
+  // 数据 = CLI usage-state 快照的 usage 字段：会话累计 billedInput（未缓存输入+缓存读取+缓存写入）
+  // + 输出；缓存命中率 = 缓存读取 / billedInput（dsh StatsPills 契约，单源在 CLI）。
+  // 无 token 活动（total<=0）→ hidden（与 dsh 隐藏口径一致）。
+  const um = { data: null, open: false }
+
+  function usageHitText(hit) {
+    if (hit == null || !Number.isFinite(Number(hit))) return ''
+    const n = Math.round(Number(hit) * 10) / 10
+    return ' · 缓存命中 ' + (Number.isInteger(n) ? String(n) : n.toFixed(1)) + '%'
+  }
+
+  function usagePanelHtml(u) {
+    const rows = [
+      ['Token 用量', fmtTok(u.total) + ' tok'],
+      ['缓存命中', u.cacheHit == null ? '—' : (Math.round(Number(u.cacheHit) * 10) / 10) + '%'],
+      ['未缓存输入', fmtTok(u.input) + ' tok'],
+      ['缓存读取', fmtTok(u.cacheRead) + ' tok'],
+      ['缓存写入', fmtTok(u.cacheWrite) + ' tok'],
+      ['输出', fmtTok(u.output) + ' tok'],
+    ]
+      .map(([k, v]) => '<div class="um-row"><span class="um-k">' + k + '</span><span class="um-v">' + esc(v) + '</span></div>')
+      .join('')
+    return '<div class="um-head"><span class="um-title">' + ICON_USAGE + '会话用量</span>' +
+      '<span class="um-total">' + fmtTok(u.total) + ' tok</span></div>' +
+      '<div class="um-rows">' + rows + '</div>'
+  }
+
+  function renderUsageMeter(u) {
+    um.data = u && typeof u === 'object' ? u : null
+    const total = um.data ? Number(um.data.total) || 0 : 0
+    if (!um.data || total <= 0) {
+      usageMeterEl.hidden = true
+      um.open = false
+      usagePanelEl.hidden = true
+      usageBtnEl.setAttribute('aria-expanded', 'false')
+      return
+    }
+    const text = fmtUsage(total) + ' tok' + usageHitText(um.data.cacheHit)
+    usageBtnEl.innerHTML = '<span class="um-ico">' + ICON_USAGE + '</span><span class="um-txt">' + text + '</span>'
+    usageBtnEl.title = '会话 token 用量：' + text
+    usageBtnEl.setAttribute('aria-label', usageBtnEl.title)
+    usagePanelEl.innerHTML = usagePanelHtml(um.data)
+    usageMeterEl.hidden = false
+    if (um.open) usagePanelEl.hidden = false
+  }
+
+  function setUsageOpen(open) {
+    um.open = open
+    usagePanelEl.hidden = !open
+    usageBtnEl.setAttribute('aria-expanded', open ? 'true' : 'false')
+  }
+  function closeUsageMeter() { if (um.open) setUsageOpen(false) }
+
   // 「点是否落在底栏（#input-wrap = 输入栏 + 命令浮窗）」——底栏是过滤文本的唯一输入面，
   // 在底栏内点击/聚焦/拖选不得收起 @ 浮窗（2026-11-08 用户实报「@ 时点底栏工具栏就消失」）。
   // 用 composedPath：行内点击会先重渲 innerHTML，冒泡到这里时 e.target 可能已脱离 DOM。
@@ -165,6 +220,8 @@ import { setPanel } from '../sidebar/recent.js'
   document.addEventListener('mousedown', (e) => {
     // 上下文面板：点 #ctx-meter 外（环形按钮除外，其 click toggle 接管开合）= 关闭（dsh ContextMeter pointerdown）
     if (ctx.open && !ctxMeterEl.contains(e.target)) closeCtxMeter()
+    // 会话用量面板：点 #usage-meter 外关闭（同 ContextMeter 语义）
+    if (um.open && !usageMeterEl.contains(e.target)) closeUsageMeter()
     // 风险确认门：点对话框外（遮罩）= 取消（dsh Modal 的 mask onClick=onClose）；点对话框内部不触发「点外关闭」
     const rm = $('risk-modal')
     if (!rm.hidden) {
@@ -198,6 +255,7 @@ import { setPanel } from '../sidebar/recent.js'
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (ctx.open) closeCtxMeter()
+      if (um.open) closeUsageMeter()
       if (!$('risk-modal').hidden) closeRiskModal()
     }
   })
@@ -290,6 +348,7 @@ import { setPanel } from '../sidebar/recent.js'
   $('cmd-btn').addEventListener('click', () => { if (gateAwait || state.mgr) return; toggleCmdPop() })
   $('model-seat').addEventListener('click', () => { if (gateAwait || state.mgr) return; toggleModelPop() })
   ctxBtnEl.addEventListener('click', () => { if (gateAwait || state.mgr || ctxMeterEl.hidden) return; setCtxOpen(!ctx.open) })
+  usageBtnEl.addEventListener('click', () => { if (gateAwait || state.mgr || usageMeterEl.hidden) return; setUsageOpen(!um.open) })
   sendBtn.addEventListener('click', () => {
     if (gateAwait) { gateSubmit(); return } // token 门态：点击发送 = 提交 token
     // 2026-09-05 定案：停止键只在回合进行中且输入栏为空时显示，点击发 interrupt（网关按
@@ -375,6 +434,7 @@ export {
   CTX_CIRC,
   CTX_RADIUS,
   closeCtxMeter,
+  closeUsageMeter,
   ctx,
   ctxPanelHtml,
   dragDepth,
@@ -382,7 +442,9 @@ export {
   formatTokensCompact,
   logoBtn,
   renderCtxMeter,
+  renderUsageMeter,
   setCtxOpen,
+  setUsageOpen,
   touchY,
   touchY0,
   touchYield,

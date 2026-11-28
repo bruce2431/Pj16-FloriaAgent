@@ -205,6 +205,14 @@ import { toast } from '../core/util.js'
         // 仅当前会话采纳（其它会话的模型变化与本会话底栏无关），冲突判定见 applySessionModel。
         if (live.curUuid && ev.session === live.curUuid) onSessionModel(ev.model, ev.modelTs)
       }
+      else if (ev.type === 'usage-state') {
+        // 2026-11-28 用量/上下文实时链（CLI 算、网关只转发）：会话 token 胶囊 + 上下文环即时重渲，
+        // 不等 refreshSession 防抖；仅当前会话采纳。
+        if (live.curUuid && ev.session === live.curUuid) {
+          liveUiPort.renderCtxMeter(ev.context)
+          liveUiPort.renderUsageMeter(ev.usage)
+        }
+      }
       else if (ev.type === 'session-delta') {
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：引擎变化 delta 直达——CLI 过滤投影
         //（filterConversationForDisplay 权威单源）的「锚点 + 其后整体替换」增量（anchorSid =
@@ -422,7 +430,7 @@ import { toast } from '../core/util.js'
       const s = findSession(hash)
       if (!s) return
       try {
-        const { messages, context, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
+        const { messages, context, usage, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
         // 2026-08-30 串会话根治：会话校验只在 await 前做过一次 → fetch 回程期间用户切到其它
         // 会话时，本响应（A 的整份消息/cwd/模型/上下文/队列快照）会写穿全部全局槽并把 A 的
         // 历史 innerHTML 整页渲染进新会话 DOM（CLI 单进程单会话无此异步边界，web 必须在每个
@@ -442,6 +450,7 @@ import { toast } from '../core/util.js'
         onSessionModel(model, modelTs) // 2026-08-24：实时刷新同样按 CLI 上报模型校准 seat（注入的钩子）
         onSessionEffort(effort) // 2026-11-06 思考等级同链：缺键 = 该会话没改过档，null = 明确 Off
         liveUiPort.renderCtxMeter(context)
+        liveUiPort.renderUsageMeter(usage)
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：全量回程 = 权威快照，重置本地 delta
         // 基线（localMessages 副本 + 网关 seq 记账）。此后 session-delta SSE 按「尾部替换」增量
         // 演进副本；fetch 回程是基线唯一重置点（单源），gap/失步由本函数全量对账恢复。

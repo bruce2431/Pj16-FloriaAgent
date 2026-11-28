@@ -2,9 +2,6 @@ import type { UUID } from 'crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
-import { AUTOCOMPACT_BUFFER_TOKENS, getEffectiveContextWindowSize } from '../../services/compact/autoCompact.js'
-import { roughTokenCountEstimation } from '../../services/tokenEstimation.js'
-import { getContextWindowForModel } from '../../utils/context.js'
 import { filterConversationForDisplay } from '../../utils/conversationDisplay.js'
 import { parseSessionInfoFromLite } from '../../utils/listSessionsImpl.js'
 import { saveAgentName, saveCustomTitle } from '../../utils/sessionStorage.js'
@@ -180,204 +177,12 @@ export function resolveUploadSession(id: string, root: string): { root: string; 
   return null
 }
 
-const CTX_BLOCK_OVERHEAD = 4
-const CTX_ROLE_OVERHEAD = 4
-
-function ctxPriceValue(v: unknown): number {
-  if (v == null) return 0
-  if (typeof v === 'string') return roughTokenCountEstimation(v)
-  if (typeof v === 'number' || typeof v === 'boolean') return roughTokenCountEstimation(String(v))
-  if (Array.isArray(v)) {
-    return v.reduce<number>((sum, item) => sum + ctxPriceValue(item), 0) + CTX_BLOCK_OVERHEAD
-  }
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>
-    if (o.type === 'image') {
-      const src = (o.source ?? {}) as Record<string, unknown>
-      return (
-        CTX_BLOCK_OVERHEAD +
-        roughTokenCountEstimation(
-          JSON.stringify({ type: 'image', source: { type: src.type, media_type: src.media_type } }),
-        )
-      )
-    }
-    let sum = 0
-    for (const [k, x] of Object.entries(o)) sum += ctxPriceValue(k) + ctxPriceValue(x)
-    return sum + CTX_BLOCK_OVERHEAD
-  }
-  return 0
-}
-
-type CtxBreakdown = {
-  fixed: number
-  user: number
-  assistant: number
-  thinking: number
-  toolCall: number
-  toolResult: number
-  attachment: number
-}
-
-function estimateContextBreakdown(records: Record<string, unknown>[]): {
-  breakdown: CtxBreakdown
-  topTools: Array<{ name: string; tokens: number }>
-  topAttachments: Array<{ name: string; tokens: number }>
-} {
-  const breakdown: CtxBreakdown = {
-    fixed: 0,
-    user: 0,
-    assistant: 0,
-    thinking: 0,
-    toolCall: 0,
-    toolResult: 0,
-    attachment: 0,
-  }
-  const tools = new Map<string, number>()
-  const attachments = new Map<string, number>()
-
-  let start = 0
-  for (let i = records.length - 1; i >= 0; i--) {
-    const r = records[i]
-    if (r && r.type === 'system' && r.subtype === 'compact_boundary') {
-      start = i + 1
-      break
-    }
-  }
-  const scope = records.slice(start)
-
-  const toolNames = new Map<string, string>()
-  for (const r of scope) {
-    if (!r || r.type !== 'assistant') continue
-    const content = (r.message as Record<string, unknown> | undefined)?.content
-    if (!Array.isArray(content)) continue
-    for (const block of content) {
-      const b = block as Record<string, unknown>
-      if (b?.type === 'tool_use' && typeof b.id === 'string') {
-        toolNames.set(b.id, typeof b.name === 'string' ? b.name : 'unknown')
-      }
-    }
-  }
-
-  const addTool = (name: string, tokens: number): void => {
-    tools.set(name, (tools.get(name) ?? 0) + tokens)
-  }
-
-  for (const r of scope) {
-    if (!r) continue
-    if (r.type === 'assistant') {
-      const content = (r.message as Record<string, unknown> | undefined)?.content
-      if (typeof content === 'string') {
-        breakdown.assistant += ctxPriceValue(content) + CTX_ROLE_OVERHEAD
-        continue
-      }
-      if (!Array.isArray(content)) continue
-      for (const block of content) {
-        const b = block as Record<string, unknown>
-        const tokens = ctxPriceValue(b) + CTX_ROLE_OVERHEAD
-        if (b?.type === 'tool_use') {
-          breakdown.toolCall += tokens
-          addTool(typeof b.name === 'string' ? b.name : 'unknown', tokens)
-        } else if (b?.type === 'thinking') {
-          breakdown.thinking += tokens
-        } else {
-          breakdown.assistant += tokens
-        }
-      }
-    } else if (r.type === 'user') {
-      const content = (r.message as Record<string, unknown> | undefined)?.content
-      if (typeof content === 'string') {
-        breakdown.user += ctxPriceValue(content) + CTX_ROLE_OVERHEAD
-        continue
-      }
-      if (!Array.isArray(content)) continue
-      for (const block of content) {
-        const b = block as Record<string, unknown>
-        const tokens = ctxPriceValue(b)
-        if (b?.type === 'tool_result') {
-          breakdown.toolResult += tokens
-          const name = typeof b.tool_use_id === 'string' ? toolNames.get(b.tool_use_id) : undefined
-          addTool(name ?? 'unknown', tokens)
-        } else {
-          breakdown.user += tokens
-        }
-      }
-    } else if (r.type === 'attachment') {
-      const att = r.attachment as Record<string, unknown> | undefined
-      const tokens = ctxPriceValue(att)
-      breakdown.attachment += tokens
-      const name = typeof att?.type === 'string' ? att.type : 'unknown'
-      attachments.set(name, (attachments.get(name) ?? 0) + tokens)
-    }
-  }
-
-  const top = (m: Map<string, number>): Array<{ name: string; tokens: number }> =>
-    [...m.entries()]
-      .filter(([, tokens]) => tokens > 0)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([name, tokens]) => ({ name, tokens }))
-
-  return { breakdown, topTools: top(tools), topAttachments: top(attachments) }
-}
-
-function extractContextUsage(records: Record<string, unknown>[]): Record<string, unknown> | null {
-  for (let i = records.length - 1; i >= 0; i--) {
-    const r = records[i]
-    if (!r || r.type !== 'assistant') continue
-    const msg = r.message as Record<string, unknown> | undefined
-    const usage = msg?.usage as Record<string, unknown> | undefined
-    if (!usage) continue
-    const input = Number(usage.input_tokens) || 0
-    const cacheCreate = Number(usage.cache_creation_input_tokens) || 0
-    const cacheRead = Number(usage.cache_read_input_tokens) || 0
-    if (!(input || cacheCreate || cacheRead)) continue
-    const model = typeof msg?.model === 'string' && msg.model ? msg.model : ''
-    const contextWindow = model ? getContextWindowForModel(model) : 0
-    if (!contextWindow) continue
-    const usedTokens = input + cacheCreate + cacheRead
-    const percent = Math.min(100, Math.round((usedTokens / contextWindow) * 100))
-
-    const { breakdown, topTools, topAttachments } = estimateContextBreakdown(records)
-    const estimatedMessages =
-      breakdown.user +
-      breakdown.assistant +
-      breakdown.thinking +
-      breakdown.toolCall +
-      breakdown.toolResult +
-      breakdown.attachment
-    breakdown.fixed = Math.max(0, usedTokens - estimatedMessages)
-
-    const autoCompactThreshold = Math.min(
-      contextWindow,
-      Math.max(0, getEffectiveContextWindowSize(model) - AUTOCOMPACT_BUFFER_TOKENS),
-    )
-
-    return {
-      usedTokens,
-      contextWindow,
-      percent,
-      model,
-      autoCompactThreshold,
-      usage: {
-        input,
-        cacheCreate,
-        cacheRead,
-        output: Number(usage.output_tokens) || 0,
-      },
-      breakdown,
-      topTools,
-      topAttachments,
-    }
-  }
-  return null
-}
-
 export function readSession(id: string, root: string) {
   const { path: p } = decodeSessionPath(id, root)
   if (!existsSync(p) || !statSync(p).isFile()) {
     const marker = sep + '.claude' + sep + 'projects'
     const k = p.toLowerCase().lastIndexOf(marker.toLowerCase())
-    return { file: basename(p), path: p, messages: [], context: null, cwd: k > 0 ? p.slice(0, k) : undefined }
+    return { file: basename(p), path: p, messages: [], cwd: k > 0 ? p.slice(0, k) : undefined }
   }
   const raw = readFileSync(p, 'utf8')
   const records: Record<string, unknown>[] = []
@@ -403,8 +208,9 @@ export function readSession(id: string, root: string) {
     }
   }
   const messages = filterConversationForDisplay(records as never, 'prompt-tail-think')
-  const context = extractContextUsage(records)
-  return { file: basename(p), path: p, messages, context, cwd }
+  // 上下文占用不在此计算（2026-11-28 下沉 CLI）：网关只做传输，context 由 CLI usage-state
+  // 快照经 routes/sessions.ts 附带。
+  return { file: basename(p), path: p, messages, cwd }
 }
 
 function tsMs(ts: unknown): number | undefined {

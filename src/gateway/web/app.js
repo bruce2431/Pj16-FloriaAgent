@@ -249,6 +249,10 @@
   const ctxMeterEl = $('ctx-meter')
   const ctxBtnEl = $('ctx-btn')
   const ctxPanelEl = $('ctx-panel')
+  // 会话 token 用量胶囊（2026-11-28 dsh UsagePill 形态，发送钮左侧、上下文环前）
+  const usageMeterEl = $('usage-meter')
+  const usageBtnEl = $('usage-btn')
+  const usagePanelEl = $('usage-panel')
   const bodyEl = $('recent-body')
   const sidebar = $('sidebar')
   const bubblePop = $('bubble-pop')
@@ -1638,14 +1642,15 @@ const cardBus = (function () {
 
   let sessionCwd = null // 当前会话启动根（网关 /gateway/session 附带，取自 jsonl 记录 cwd）；变更卡相对路径显示用
   async function fetchMessages(sessionId) {
-    if (needToken()) return { messages: [], context: null, model: null, modelTs: null, effort: undefined } // token 门锁定态
+    if (needToken()) return { messages: [], context: null, usage: null, model: null, modelTs: null, effort: undefined } // token 门锁定态
     const res = await fetch(apiUrl('/gateway/session?id=' + encodeURIComponent(sessionId)))
     const data = await res.json()
     if (!Array.isArray(data.messages)) throw new Error(data.error || 'bad response')
     // CLI 已按「复用已有实现」原则导出过滤后的会话展示（display，见 conversationDisplay.ts /
     // 网关 /gateway/session 注入）→ 存在时优先消费（thinking 过滤 / 真实用户消息识别由 CLI 权威完成），
     // 尚未导出（如网关重启后 CLI 未重发）时回退后端原始消息映射。
-    // context = 网关 readSession 提取的上下文占用（dsh ContextMeter 数据源），无则 null。
+    // context/usage = CLI usage-state 快照（2026-11-28 下沉；dsh ContextMeter / UsagePill 数据源），
+    // 网关只转发，无则 null。
     // model/modelTs = 网关附带的每会话实际模型（CLI reportCurrentModel 上报），无则 null。
     // cwd = 会话启动根（2026-08-29 变更卡相对路径显示），无则 null。
     // queued = 当前排队项快照（2026-08-30 队列快照链，CLI queue-state 上报，置底排队区首载数据源）；
@@ -1653,7 +1658,7 @@ const cardBus = (function () {
     // file = jsonl 文件名（uuid），供 SSE queue-state / task-state 事件按会话精确匹配。
     // effort（2026-11-06 每会话思考等级）：网关有该会话档位镜像才给键——缺键 = 该会话没改过档
     // （web 回落全局默认），null = 明确 Off。
-    return { messages: data.display || data.messages, context: data.context || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
+    return { messages: data.display || data.messages, context: data.context || null, usage: data.usage || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
   }
   // 模型 seat 校准（applySessionModel）已于 2026-10-10 分层治理 4B 迁入 inputbar/model-select.js——
   // 它操作的是输入栏状态（MODEL_CUR/modelUserPicked），归 feature 层；engine 不得 import feature。
@@ -1855,6 +1860,14 @@ function setSessionCwd(v) { sessionCwd = v }
         // 下一次 /gateway/session 拉取才校准，会话空闲时长时间不来 → 底栏停在旧模型。
         // 仅当前会话采纳（其它会话的模型变化与本会话底栏无关），冲突判定见 applySessionModel。
         if (live.curUuid && ev.session === live.curUuid) onSessionModel(ev.model, ev.modelTs)
+      }
+      else if (ev.type === 'usage-state') {
+        // 2026-11-28 用量/上下文实时链（CLI 算、网关只转发）：会话 token 胶囊 + 上下文环即时重渲，
+        // 不等 refreshSession 防抖；仅当前会话采纳。
+        if (live.curUuid && ev.session === live.curUuid) {
+          liveUiPort.renderCtxMeter(ev.context)
+          liveUiPort.renderUsageMeter(ev.usage)
+        }
       }
       else if (ev.type === 'session-delta') {
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：引擎变化 delta 直达——CLI 过滤投影
@@ -2073,7 +2086,7 @@ function setSessionCwd(v) { sessionCwd = v }
       const s = findSession(hash)
       if (!s) return
       try {
-        const { messages, context, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
+        const { messages, context, usage, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
         // 2026-08-30 串会话根治：会话校验只在 await 前做过一次 → fetch 回程期间用户切到其它
         // 会话时，本响应（A 的整份消息/cwd/模型/上下文/队列快照）会写穿全部全局槽并把 A 的
         // 历史 innerHTML 整页渲染进新会话 DOM（CLI 单进程单会话无此异步边界，web 必须在每个
@@ -2093,6 +2106,7 @@ function setSessionCwd(v) { sessionCwd = v }
         onSessionModel(model, modelTs) // 2026-08-24：实时刷新同样按 CLI 上报模型校准 seat（注入的钩子）
         onSessionEffort(effort) // 2026-11-06 思考等级同链：缺键 = 该会话没改过档，null = 明确 Off
         liveUiPort.renderCtxMeter(context)
+        liveUiPort.renderUsageMeter(usage)
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：全量回程 = 权威快照，重置本地 delta
         // 基线（localMessages 副本 + 网关 seq 记账）。此后 session-delta SSE 按「尾部替换」增量
         // 演进副本；fetch 回程是基线唯一重置点（单源），gap/失步由本函数全量对账恢复。
@@ -2736,6 +2750,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     live.streamText = '' // 流式字符通道暂态
     clearTakeover() // 清残留的提问/审批 takeover（输入栏恢复）
     renderCtxMeter(null) // 无会话上下文：隐藏上下文环
+    renderUsageMeter(null) // 无会话用量：隐藏 token 胶囊
   }
 
   // 会话卡离场钩子（session-card.js 的 deactivate 契约；registry.openCard 切异卡时调用，preview-card
@@ -2809,12 +2824,14 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
       if (needToken()) {
         messagesEl.innerHTML = '<div class="msg msg-system">加载中…</div>'
         renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
+        renderUsageMeter(null)
         inputWrap.classList.add('docked')
         chatArea.classList.add('in-session')
         return
       }
       messagesEl.innerHTML = '<div class="msg msg-system">会话不存在或已删除</div>'
       renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
+      renderUsageMeter(null)
       inputWrap.classList.add('docked')
       chatArea.classList.add('in-session')
       return
@@ -2834,7 +2851,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     inputWrap.classList.add('docked')
     chatArea.classList.add('in-session')
     fetchMessages(s.id)
-      .then(({ messages, context, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
+      .then(({ messages, context, usage, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
         if (state.currentHash !== hash) return
         setSessionCwd(cwd)
         // 2026-09-08 事件流统一 P1：首载回程同样重置 delta 本地基线（与 refreshSession 对称，
@@ -2863,6 +2880,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
         applySessionModel(model, modelTs) // 2026-08-24：打开会话即用 CLI 上报的实际模型校准 seat
         applySessionEffort(effort) // 2026-11-06：思考等级同链——本会话上报档位校准座显（缺键=未改过 → 全局默认）
         renderCtxMeter(context)
+        renderUsageMeter(usage)
         // 首条消息事务期（2026-09-06）：fetch 空（CLI 尚未落盘首条 user）→ 跳过整页重建保留
         // 乐观 DOM（开启气泡+主张折叠是权威，不被「加载中…」/空态行洗掉），真实数据经 SSE
         // refreshSession 接管（refreshSession 同款「空 fetch 不洗盘」守卫已挡后续）。非空照常重建。
@@ -13877,8 +13895,8 @@ function wkMerge3(base, local, remote) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('show') })
 
   // ---------- 上下文占用指示（2026-08-23 dsh ContextMeter 移植）----------
-  // 数据来自 /gateway/session 的 context 字段（网关 readSession 提取最后一条 assistant usage，
-  // 除以 getContextWindowForModel 窗口）。无数据（无 usage / 无模型窗口）→ hidden。
+  // 数据来自 /gateway/session 的 context 字段 = CLI usage-state 快照（2026-11-28 下沉：CLI 取
+  // 最后一条 assistant usage ÷ getContextWindowForModel 窗口，网关只转发）。无数据 → hidden。
   // 环形 = 14px/2px 圆环，点击展开 breakdown 面板（headline + ~used/window + 占比条）。
   const ctx = { data: null, open: false }
   const CTX_RADIUS = 5.5
@@ -14013,6 +14031,60 @@ function wkMerge3(base, local, remote) {
   }
   function closeCtxMeter() { if (ctx.open) setCtxOpen(false) }
 
+  // ---------- 会话 token 用量胶囊（2026-11-28 dsh UsagePill/StatsPills 形态）----------
+  // 数据 = CLI usage-state 快照的 usage 字段：会话累计 billedInput（未缓存输入+缓存读取+缓存写入）
+  // + 输出；缓存命中率 = 缓存读取 / billedInput（dsh StatsPills 契约，单源在 CLI）。
+  // 无 token 活动（total<=0）→ hidden（与 dsh 隐藏口径一致）。
+  const um = { data: null, open: false }
+
+  function usageHitText(hit) {
+    if (hit == null || !Number.isFinite(Number(hit))) return ''
+    const n = Math.round(Number(hit) * 10) / 10
+    return ' · 缓存命中 ' + (Number.isInteger(n) ? String(n) : n.toFixed(1)) + '%'
+  }
+
+  function usagePanelHtml(u) {
+    const rows = [
+      ['Token 用量', fmtTok(u.total) + ' tok'],
+      ['缓存命中', u.cacheHit == null ? '—' : (Math.round(Number(u.cacheHit) * 10) / 10) + '%'],
+      ['未缓存输入', fmtTok(u.input) + ' tok'],
+      ['缓存读取', fmtTok(u.cacheRead) + ' tok'],
+      ['缓存写入', fmtTok(u.cacheWrite) + ' tok'],
+      ['输出', fmtTok(u.output) + ' tok'],
+    ]
+      .map(([k, v]) => '<div class="um-row"><span class="um-k">' + k + '</span><span class="um-v">' + esc(v) + '</span></div>')
+      .join('')
+    return '<div class="um-head"><span class="um-title">' + ICON_USAGE + '会话用量</span>' +
+      '<span class="um-total">' + fmtTok(u.total) + ' tok</span></div>' +
+      '<div class="um-rows">' + rows + '</div>'
+  }
+
+  function renderUsageMeter(u) {
+    um.data = u && typeof u === 'object' ? u : null
+    const total = um.data ? Number(um.data.total) || 0 : 0
+    if (!um.data || total <= 0) {
+      usageMeterEl.hidden = true
+      um.open = false
+      usagePanelEl.hidden = true
+      usageBtnEl.setAttribute('aria-expanded', 'false')
+      return
+    }
+    const text = fmtUsage(total) + ' tok' + usageHitText(um.data.cacheHit)
+    usageBtnEl.innerHTML = '<span class="um-ico">' + ICON_USAGE + '</span><span class="um-txt">' + text + '</span>'
+    usageBtnEl.title = '会话 token 用量：' + text
+    usageBtnEl.setAttribute('aria-label', usageBtnEl.title)
+    usagePanelEl.innerHTML = usagePanelHtml(um.data)
+    usageMeterEl.hidden = false
+    if (um.open) usagePanelEl.hidden = false
+  }
+
+  function setUsageOpen(open) {
+    um.open = open
+    usagePanelEl.hidden = !open
+    usageBtnEl.setAttribute('aria-expanded', open ? 'true' : 'false')
+  }
+  function closeUsageMeter() { if (um.open) setUsageOpen(false) }
+
   // 「点是否落在底栏（#input-wrap = 输入栏 + 命令浮窗）」——底栏是过滤文本的唯一输入面，
   // 在底栏内点击/聚焦/拖选不得收起 @ 浮窗（2026-11-08 用户实报「@ 时点底栏工具栏就消失」）。
   // 用 composedPath：行内点击会先重渲 innerHTML，冒泡到这里时 e.target 可能已脱离 DOM。
@@ -14026,6 +14098,8 @@ function wkMerge3(base, local, remote) {
   document.addEventListener('mousedown', (e) => {
     // 上下文面板：点 #ctx-meter 外（环形按钮除外，其 click toggle 接管开合）= 关闭（dsh ContextMeter pointerdown）
     if (ctx.open && !ctxMeterEl.contains(e.target)) closeCtxMeter()
+    // 会话用量面板：点 #usage-meter 外关闭（同 ContextMeter 语义）
+    if (um.open && !usageMeterEl.contains(e.target)) closeUsageMeter()
     // 风险确认门：点对话框外（遮罩）= 取消（dsh Modal 的 mask onClick=onClose）；点对话框内部不触发「点外关闭」
     const rm = $('risk-modal')
     if (!rm.hidden) {
@@ -14059,6 +14133,7 @@ function wkMerge3(base, local, remote) {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (ctx.open) closeCtxMeter()
+      if (um.open) closeUsageMeter()
       if (!$('risk-modal').hidden) closeRiskModal()
     }
   })
@@ -14151,6 +14226,7 @@ function wkMerge3(base, local, remote) {
   $('cmd-btn').addEventListener('click', () => { if (gateAwait || state.mgr) return; toggleCmdPop() })
   $('model-seat').addEventListener('click', () => { if (gateAwait || state.mgr) return; toggleModelPop() })
   ctxBtnEl.addEventListener('click', () => { if (gateAwait || state.mgr || ctxMeterEl.hidden) return; setCtxOpen(!ctx.open) })
+  usageBtnEl.addEventListener('click', () => { if (gateAwait || state.mgr || usageMeterEl.hidden) return; setUsageOpen(!um.open) })
   sendBtn.addEventListener('click', () => {
     if (gateAwait) { gateSubmit(); return } // token 门态：点击发送 = 提交 token
     // 2026-09-05 定案：停止键只在回合进行中且输入栏为空时显示，点击发 interrupt（网关按
@@ -18511,7 +18587,7 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
       // chat/messages.js 读基元 + 可变渲染态读取口（getter 现读，勿缓存）
       msg: { isRealUser, isEndStop, fmtDur, stampMsgIn, messagesHtml, absorbPending, queueClaimAdopt, statusFlags, getLastSegInfo, getCharNote },
       // 渲染/暂态/导航出口（feature 层实现）
-      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, claimStartTs, syncTurnLive, syncGwSend, navigate },
+      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, renderUsageMeter, claimStartTs, syncTurnLive, syncGwSend, navigate },
       // 两层消息流 stage（stage 为稳定 const 对象；stageStart 为函数）
       stage: { stage, stageStart },
       // 可变状态读写口（takeover / firstSendHash / pendingUserMsgs；getter 现读，勿缓存）

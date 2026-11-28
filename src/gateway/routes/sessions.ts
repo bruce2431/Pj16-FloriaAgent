@@ -14,6 +14,7 @@ import {
   sessionModels,
   sessionQueues,
   sessionTasks,
+  sessionUsageState,
   sseClients,
   sweepStaleMaps,
 } from '../core/state.js'
@@ -164,6 +165,10 @@ export async function handleSessionRoutes(ctx: RouteContext): Promise<boolean> {
       data.queued = sessionQueues.get(uuid)?.items ?? []
       data.tasks = sessionTasks.get(uuid)?.tasks ?? []
       data.deltaSeq = sessionDeltaSeq.get(uuid) ?? 0
+      // 2026-11-28 用量/上下文：CLI usage-state 快照原样附带（网关不算不猜；无活动 CLI → null）。
+      const us = sessionUsageState.get(uuid)
+      data.usage = us?.usage ?? null
+      data.context = us?.context ?? null
       sendJson(res, 200, data)
     } catch (e) {
       sendError(res, e)

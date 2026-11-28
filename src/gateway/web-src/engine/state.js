@@ -19,6 +19,10 @@ import { state } from '../core/ui-state.js'
   const ctxMeterEl = $('ctx-meter')
   const ctxBtnEl = $('ctx-btn')
   const ctxPanelEl = $('ctx-panel')
+  // 会话 token 用量胶囊（2026-11-28 dsh UsagePill 形态，发送钮左侧、上下文环前）
+  const usageMeterEl = $('usage-meter')
+  const usageBtnEl = $('usage-btn')
+  const usagePanelEl = $('usage-panel')
   const bodyEl = $('recent-body')
   const sidebar = $('sidebar')
   const bubblePop = $('bubble-pop')
@@ -58,5 +62,8 @@ export {
   sendBtn,
   sessionCard,
   sidebar,
+  usageBtnEl,
+  usageMeterEl,
+  usagePanelEl,
   state,
 }

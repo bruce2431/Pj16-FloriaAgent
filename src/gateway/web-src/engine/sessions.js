@@ -65,14 +65,15 @@ import { toast } from '../core/util.js'
 
   let sessionCwd = null // 当前会话启动根（网关 /gateway/session 附带，取自 jsonl 记录 cwd）；变更卡相对路径显示用
   async function fetchMessages(sessionId) {
-    if (needToken()) return { messages: [], context: null, model: null, modelTs: null, effort: undefined } // token 门锁定态
+    if (needToken()) return { messages: [], context: null, usage: null, model: null, modelTs: null, effort: undefined } // token 门锁定态
     const res = await fetch(apiUrl('/gateway/session?id=' + encodeURIComponent(sessionId)))
     const data = await res.json()
     if (!Array.isArray(data.messages)) throw new Error(data.error || 'bad response')
     // CLI 已按「复用已有实现」原则导出过滤后的会话展示（display，见 conversationDisplay.ts /
     // 网关 /gateway/session 注入）→ 存在时优先消费（thinking 过滤 / 真实用户消息识别由 CLI 权威完成），
     // 尚未导出（如网关重启后 CLI 未重发）时回退后端原始消息映射。
-    // context = 网关 readSession 提取的上下文占用（dsh ContextMeter 数据源），无则 null。
+    // context/usage = CLI usage-state 快照（2026-11-28 下沉；dsh ContextMeter / UsagePill 数据源），
+    // 网关只转发，无则 null。
     // model/modelTs = 网关附带的每会话实际模型（CLI reportCurrentModel 上报），无则 null。
     // cwd = 会话启动根（2026-08-29 变更卡相对路径显示），无则 null。
     // queued = 当前排队项快照（2026-08-30 队列快照链，CLI queue-state 上报，置底排队区首载数据源）；
@@ -80,7 +81,7 @@ import { toast } from '../core/util.js'
     // file = jsonl 文件名（uuid），供 SSE queue-state / task-state 事件按会话精确匹配。
     // effort（2026-11-06 每会话思考等级）：网关有该会话档位镜像才给键——缺键 = 该会话没改过档
     // （web 回落全局默认），null = 明确 Off。
-    return { messages: data.display || data.messages, context: data.context || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
+    return { messages: data.display || data.messages, context: data.context || null, usage: data.usage || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
   }
   // 模型 seat 校准（applySessionModel）已于 2026-10-10 分层治理 4B 迁入 inputbar/model-select.js——
   // 它操作的是输入栏状态（MODEL_CUR/modelUserPicked），归 feature 层；engine 不得 import feature。

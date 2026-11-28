@@ -18,6 +18,7 @@ import {
   sessionModels,
   sessionQueues,
   sessionTasks,
+  sessionUsageState,
   sockets,
   sseClients,
   sweepStaleMaps,
@@ -484,6 +485,8 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
             text?: unknown
             relay?: unknown
             model?: unknown
+            usage?: unknown
+            context?: unknown
           }
           try {
             m = JSON.parse(data.toString())
@@ -538,6 +541,18 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
             sessionTasks.set(sid, { tasks, updatedAt: Date.now() })
             sweepStaleMaps()
             const s = `data: ${JSON.stringify({ type: 'task-state', session: sid, tasks })}\n\n`
+            sendAll(sseClients, (c) => {
+              c.res.write(s)
+            })
+            return
+          }
+          if (m.type === 'usage-state') {
+            // 2026-11-28：用量/上下文快照（CLI gatewayUsageSnapshot 算，网关不解释字段，只存转发）。
+            const usage = m.usage && typeof m.usage === 'object' ? m.usage : null
+            const context = m.context && typeof m.context === 'object' ? m.context : null
+            sessionUsageState.set(sid, { usage, context, updatedAt: Date.now() })
+            sweepStaleMaps()
+            const s = `data: ${JSON.stringify({ type: 'usage-state', session: sid, usage, context })}\n\n`
             sendAll(sseClients, (c) => {
               c.res.write(s)
             })
@@ -742,6 +757,7 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
           sessionQueues.delete(sid)
           sessionModels.delete(sid)
           sessionTasks.delete(sid)
+          sessionUsageState.delete(sid)
           const prevDetach = detachTimers.get(sid)
           if (prevDetach) clearTimeout(prevDetach)
           detachTimers.set(

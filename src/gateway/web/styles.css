@@ -1116,6 +1116,9 @@ body.kb-open #input-wrap { transition: none; }
 @container (max-width: 400px) {
   #model-seat.trigger .triggerEffort { display: none; }
   #proj-seat .chevron { display: none; }
+  /* 会话用量胶囊让位文字（图标仍可点开明细），保住 + / 上下文 / 发送固定件 */
+  #usage-btn .um-txt { display: none; }
+  #usage-btn.usage-trigger { padding: 0 8px; }
 }
 
 /* ===== 上下文占用指示（dsh ContextMeter 完全移植：ContextMeter.module.css）=====
@@ -1177,6 +1180,39 @@ body.kb-open #input-wrap { transition: none; }
 #ctx-panel .ctx-sub { margin-bottom: 3px; color: var(--ink-4); }
 #ctx-panel .ctx-kv { display: flex; justify-content: space-between; gap: 10px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 #ctx-panel .ctx-kv .ctx-ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== 会话 token 用量胶囊（dsh UsagePill，2026-11-28）=====
+   上下文环左侧的 pill：数据库图标 + 「3.6M tok · 缓存命中 98%」，点击展开明细面板。
+   数据 = CLI usage-state 快照（网关只转发）。无 token 活动整窗 hidden。 */
+#usage-meter { position: relative; display: inline-flex; flex: none; }
+#usage-meter[hidden] { display: none; }
+#usage-btn.usage-trigger {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--hairline-2); border-radius: 999px; background: var(--bg);
+  color: var(--ink-3); font-family: inherit; font-size: 12px; line-height: 1;
+  white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+#usage-btn.usage-trigger:hover { background: var(--hover-ink); color: var(--ink-2); }
+#usage-btn.usage-trigger[aria-expanded="true"] { background: var(--hover-ink); color: var(--ink); }
+#usage-btn .um-ico { display: inline-flex; }
+#usage-btn .um-ico svg { width: 14px; height: 14px; display: block; }
+#usage-panel {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20;
+  box-sizing: border-box; width: 280px; padding: 12px;
+  max-height: min(420px, var(--bar-room, 420px)); overflow-y: auto;
+  border: 1px solid var(--hairline-2); border-radius: 12px; background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
+  font-size: 12px; line-height: 20px; color: var(--ink-2); cursor: default;
+}
+#usage-panel[hidden] { display: none; }
+#usage-panel .um-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 9px; margin-bottom: 7px; border-bottom: 1px solid var(--hairline); }
+#usage-panel .um-title { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
+#usage-panel .um-title svg { width: 15px; height: 15px; display: block; color: var(--ink-2); }
+#usage-panel .um-total { font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+#usage-panel .um-rows { display: flex; flex-direction: column; gap: 7px; }
+#usage-panel .um-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#usage-panel .um-k { color: var(--ink-3); }
+#usage-panel .um-v { color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* @ 提及浮窗样式已退役（2026-10-25）：输入 @ 直接唤起 #cmd-pop（工具栏是唯一弹窗），
    搜索结果扁平按时间排列，不再有独立浮窗与分组标题 */
