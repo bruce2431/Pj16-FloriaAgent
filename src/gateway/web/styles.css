@@ -912,21 +912,16 @@ body.kb-open #input-wrap { transition: none; }
    首版 max(780px,70vw)+1100 封顶方向搞反（大窗口变宽）被用户否决已回滚。
    空态（#empty-hint #input-wrap）不受影响：输入栏绑定趴栏画面，维持 stage 比例） */
 #input-wrap.docked {
-  /* 键盘节：底栏钉在 app 底边上方 22px，键盘在场再加 var(--kb-lift)——**布局**位移（见空态同款注，
-     浏览器 reveal 只认布局/渲染位置；走 transform 它看不见，照样会 pan 整页） */
-  top: calc(100% - 22px - var(--kb-lift, 0px));
+  /* 键盘节：底栏钉在 app 底边上方 2px（与卡片四周缝同律，使读数行贴近卡底），键盘在场再加
+     var(--kb-lift)——**布局**位移（见空态同款注，浏览器 reveal 只认布局/渲染位置；走 transform
+     它看不见，照样会 pan 整页）。chat / work 同一口径。 */
+  top: calc(100% - 2px - var(--kb-lift, 0px));
   transform: translate(-50%, -100%);
   /* 下限 240px（2026-09-27 用户定案「增大最小宽度阈值」）：工具行的 min-content ≈200px
      （左组 + 28 / 项目 chip 图标 14+箭头 14+内垫 16 / 右组 模型 chip 30 + 发送 34
      + 各组 GAP 与行内垫；上下文环已移入卡下读数条，不再参与工具行宽度）。设下限后卡片在此止步，
      宁可横向越出可视区也不压烂内部布局。 */
   width: max(240px, min(780px, 70vw, calc(100% - 40px)));
-}
-/* chat 模式底栏下沉（2026-11-28 用户截图定案）：整块 #input-wrap（输入卡 + 下方读数条）较 work
-   口径下移一个字符高（22px → 2px，2px 与卡片四周缝同律），使「N tok · 缓存命中」行贴近卡底。
-   work 模式各底栏（会话卡 / 助手浮卡 / 编辑卡）保持 22px 口径不动；空态（stage 内真相对位）不受影响。 */
-#chat-area:not(.work) #input-wrap.docked {
-  top: calc(100% - 2px - var(--kb-lift, 0px));
 }
 /* dsh .card：白输入表面 + 22px 圆角 + 0.10 输入描边 + shadow-lv2 + 16/24 基础字 */
 #input-bar {
