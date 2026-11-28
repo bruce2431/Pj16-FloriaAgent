@@ -8,7 +8,7 @@ import { needToken } from '../engine/gateway.js'
 import { refreshSession, renderSessionBody, stopLiveFoldTimer, bindLiveFoldTimer } from '../engine/live.js'
 import { hashOf, findSession, loadSessions, fetchMessages } from '../engine/sessions.js'
 import { chatArea, sessionCard, messagesEl, inputWrap, state, live } from '../engine/state.js'
-import { toast } from '../core/util.js'
+import { esc, toast } from '../core/util.js'
 import { loadMgrView } from '../core/storage.js'
 import { renderTransient, claimStartTs, syncTurnLive, takeover, clearTakeover, sendSubscribe, renderTaskDock } from '../inputbar/approval.js'
 import { renderProjSeat, closeProjPop } from '../inputbar/commands.js'
@@ -48,6 +48,20 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
 
   // 会话 hash 归一（全长 / 旧短 hash → 列表内规范 hash；查无原样透传，由 renderSession 显示「不存在」）。
   const resolveSessionHash = (h) => { const s = findSession(h); return s ? hashOf(s) : h }
+
+  // chat 模式顶栏（2026-11-28）：work 顶栏同构条（.wk-topbar + .wk-tb-pill）里只渲当前会话标题
+  // 一枚只读胶囊，不参与任何 tab 开合。标题源 = 会话列表（findSession.title，与侧栏行/work 胶囊同源）；
+  // 列表未就绪或标题缺失回落「未命名会话」。显隐归 CSS（chat 会话态 + 会话卡在槽内），本函数只落内容；
+  // work 模式与无会话（首页）清空。列表刷新（renderRecent）与重命名都会回调本函数保持标题即时。
+  function renderChatTopbar() {
+    const box = $('chat-tb-tabs')
+    if (!box) return
+    if (state.sbMode === 'work' || !state.currentHash) { if (box.innerHTML) box.innerHTML = ''; return }
+    const s = findSession(state.currentHash)
+    const title = (s && s.title) || '未命名会话'
+    const html = `<span class="wk-tb-pill on chat-tb-title" title="${esc(title)}"><span class="wk-tb-name">${esc(title)}</span></span>`
+    if (box.innerHTML !== html) box.innerHTML = html
+  }
 
   // 启动期预解析当前路由 hash（唯一调用点 = app.js，须在 initWork 之前）：让 initWork→applyPanes 的
   // 「聊天栏在场 ⇒ 当前路由 tab 必在开放集」兜底读到**真实** active key，而不是尚未被 route 赋值的
@@ -89,6 +103,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     // 未知 hash 原样透传（renderSession 显示「会话不存在」）。
     if (r.name === 'session') r.hash = resolveSessionHash(r.hash)
     state.currentHash = r.name === 'session' ? r.hash : ''
+    renderChatTopbar() // chat 模式：会话标题落顶栏（work 模式空跑清空）
     syncWorkTabs() // work 模式：把当前路由并入聊天 tab 开放集并重渲顶栏（chat 模式空跑）
     renderRecent()
     if (r.name === 'home') renderHome()
@@ -252,6 +267,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     setTurnLive(false); syncGwSend() // 2026-09-04 打断按钮：离开会话还原发送键
     stageRelease()
     state.currentHash = ''
+    renderChatTopbar() // 首页无会话标题：清空顶栏内容（壳随 .in-session 一并隐藏）
     messagesEl.innerHTML = ''
     clearSessionSlots() // 回首页（空态）同样清「当前会话」全局槽（不变量见上）
     setPendingUserMsgs(pendingUserMsgs.filter((p) => p.hash)) // 首页无事务归属：丢弃 hash='' 残留项（防主张气泡飘上空态）
@@ -299,6 +315,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     flipInput(false) // 输入栏移回会话卡沉底（FLIP 像素级补间）
     const s = findSession(hash)
     state.currentHash = hash
+    renderChatTopbar() // 会话标题落顶栏（route 之外的直接调用入口同样补渲）
     sendSubscribe() // 2026-08-30 pending 重放：切会话即订阅 → 网关回放该会话未决审批/提问（补弹交互卡）
     if (!s) {
       // 2026-08-30 刷新直进 /session/<hash>：token 门未过时会话列表未拉（loadSessions 空跑），
@@ -441,6 +458,7 @@ export {
   navigate,
   parseRoute,
   pathFor,
+  renderChatTopbar,
   renderHome,
   renderSession,
   route,

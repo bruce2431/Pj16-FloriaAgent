@@ -28,7 +28,7 @@
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
        app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
   <link rel="stylesheet" href="/webui/floria-web.css?v=13" />
-  <link rel="stylesheet" href="/styles.css?v=732" />
+  <link rel="stylesheet" href="/styles.css?v=733" />
   <!-- 侧边浏览器（2026-11-22）：纯组件，目录自带样式；只在 chat 模式由宿主挂载。 -->
   <link rel="stylesheet" href="/browser/SideBrowser/side-browser.css?v=8" />
 </head>
@@ -200,6 +200,12 @@
     <div class="wk-topbar" id="wk-topbar">
       <div class="wk-tb-tabs" id="wk-tb-tabs"></div>
       <button id="wk-tb-tool" class="wk-tb-pill" title="工具栏" aria-label="工具栏"><span class="wk-tb-ico"></span><span class="wk-tb-name">工具栏</span></button>
+    </div>
+    <!-- chat 模式顶栏（2026-11-28）：与 work 顶栏同构（同 .wk-topbar / .wk-tb-pill 几何与左缘让位），
+         只渲当前会话标题一枚只读胶囊（chat/route.js 的 renderChatTopbar，标题源 = 会话列表）。
+         显隐门见 styles.css：chat 模式 + 会话态 + 会话卡在槽内；work 模式与 token 门不出现。 -->
+    <div class="wk-topbar chat-topbar" id="chat-topbar">
+      <div class="wk-tb-tabs" id="chat-tb-tabs"></div>
     </div>
 
     <!-- 工作区编辑区（2026-09-25 work 模式）：查看/编辑项目内文件 = 「文件 tab」的内容，与
@@ -435,6 +441,6 @@
 <script src="/demo-mode.js?v=1"></script>
 <!-- 侧边浏览器纯组件（2026-11-22）：挂 window.UIDesignSideBrowser；须在 app.js 之前加载（宿主启动即挂载）。 -->
 <script src="/browser/SideBrowser/side-browser.js?v=7"></script>
-<script src="/app.js?v=762"></script>
+<script src="/app.js?v=763"></script>
 </body>
 </html>

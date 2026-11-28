@@ -922,6 +922,12 @@ body.kb-open #input-wrap { transition: none; }
      宁可横向越出可视区也不压烂内部布局。 */
   width: max(240px, min(780px, 70vw, calc(100% - 40px)));
 }
+/* chat 模式底栏下沉（2026-11-28 用户截图定案）：整块 #input-wrap（输入卡 + 下方读数条）较 work
+   口径下移一个字符高（22px → 2px，2px 与卡片四周缝同律），使「N tok · 缓存命中」行贴近卡底。
+   work 模式各底栏（会话卡 / 助手浮卡 / 编辑卡）保持 22px 口径不动；空态（stage 内真相对位）不受影响。 */
+#chat-area:not(.work) #input-wrap.docked {
+  top: calc(100% - 2px - var(--kb-lift, 0px));
+}
 /* dsh .card：白输入表面 + 22px 圆角 + 0.10 输入描边 + shadow-lv2 + 16/24 基础字 */
 #input-bar {
   position: relative; /* 2026-09-10：任务浮窗（#task-dock）的定位上下文——bottom:100% 贴本栏上沿 */
@@ -2542,6 +2548,26 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 /* 聊天胶囊右端的关闭钮（×）：只从顶栏移除该 tab，不删会话。 */
 .wk-tb-x { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 16px; margin-right: -5px; border-radius: 4px; color: var(--text-3); font-size: 15px; line-height: 1; }
 .wk-tb-x:hover { background: var(--border); color: var(--text); }
+
+/* ---------- chat 模式顶栏（2026-11-28）----------
+   几何/形式与 work 顶栏同构（同 .wk-topbar 条 + .wk-tb-pill 胶囊），只渲当前会话标题一枚只读胶囊
+   （只读 = 不是 tab，无 ×、无点击链路；标题由 chat/route.js 的 renderChatTopbar 按会话列表落）。
+   显隐门三合一：chat 模式（非 .work）+ 会话态（.in-session，含「加载中/不存在」分支）+ 会话卡在槽内
+   （:has 排除管理/预览卡在场——那两张卡会把 #session-card 置 hidden，顶栏随之消失）；
+   token 门全屏浮层期间不出现（body.token-gate）。
+   右 50px 为右上角摘要圆钮（#summary-root，top 10 / right 12 / 30px）让位；侧栏折叠态与 work 同款
+   让出汉堡位（46px = 10 左距 + 30 钮宽 + 6 缝），汉堡一并收敛成条内透明钮。 */
+#chat-area:not(.work) > .chat-topbar { margin: 2px 2px 0; padding-right: 50px; }
+#chat-area:not(.work).in-session:has(> #session-card:not([hidden])) > .chat-topbar { display: flex; }
+body.token-gate #chat-area > .chat-topbar { display: none; }
+#chat-area:not(.work) .chat-tb-title { cursor: default; }
+#sidebar:not(.open) ~ #chat-area:not(.work) > .chat-topbar { padding-left: 46px; }
+#sidebar:not(.open) ~ #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) #menu-btn {
+  top: 8px; left: 10px; width: 30px; height: 30px; border-radius: 8px;
+  background: transparent; border: 0; box-shadow: none;
+}
+#sidebar:not(.open) ~ #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) #menu-btn svg { width: 18px; height: 18px; }
+#sidebar:not(.open) ~ #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) #menu-btn:hover { background: var(--hover); }
 
 /* 分界条：拖动改预览列宽（work.js bindGutter）；.on 由 applyWorkCols 判定（预览在场）。
    缝本身占 7px，视觉线是 ::before（hover / 拖拽中显形）。 */

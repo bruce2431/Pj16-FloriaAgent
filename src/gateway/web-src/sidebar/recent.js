@@ -1,6 +1,6 @@
 // 侧栏 recent + 行操作（标题展开/内嵌菜单/归档/关闭/重命名）（2026-09-10 web-src 模块化切割自 app.js v287；唯一手改处，web/app.js 为生成物）
 
-import { route, navigate, renderSession } from '../chat/route.js'
+import { route, navigate, renderChatTopbar, renderSession } from '../chat/route.js'
 import { deviceHint } from '../engine/auth.js'
 import { gws, needToken, apiUrl } from '../engine/gateway.js'
 import { I } from '../core/icons.js'
@@ -657,6 +657,7 @@ import { renderList, renderProject } from './mgr.js'
     reliftAfterRebuild(bodyEl, prevExpand)
     renderBubble()
     renderSearch()
+    renderChatTopbar() // 列表每拍刷新：chat 顶栏标题跟会话列表同源对账（重命名/自动标题即时跟上）
   }
 
   // 列表重建后的统一恢复出口（chat 侧栏 renderRecent / work 下沉区 renderWorkBody 共用；root = 该列表
