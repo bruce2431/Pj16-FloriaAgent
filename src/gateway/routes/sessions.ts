@@ -10,6 +10,7 @@ import {
   sessionActivity,
   sessionDeltaSeq,
   sessionEfforts,
+  sessionFilesState,
   sessionModelLaunch,
   sessionModels,
   sessionQueues,
@@ -169,6 +170,9 @@ export async function handleSessionRoutes(ctx: RouteContext): Promise<boolean> {
       const us = sessionUsageState.get(uuid)
       data.usage = us?.usage ?? null
       data.context = us?.context ?? null
+      // 2026-11-28 摘要浮层：CLI files-state 快照原样附带（无活动 CLI → 空）。
+      const fs = sessionFilesState.get(uuid)
+      data.filesState = fs ? { files: fs.files, changed: fs.changed } : null
       sendJson(res, 200, data)
     } catch (e) {
       sendError(res, e)

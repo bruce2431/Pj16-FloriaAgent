@@ -1658,7 +1658,8 @@ const cardBus = (function () {
     // file = jsonl 文件名（uuid），供 SSE queue-state / task-state 事件按会话精确匹配。
     // effort（2026-11-06 每会话思考等级）：网关有该会话档位镜像才给键——缺键 = 该会话没改过档
     // （web 回落全局默认），null = 明确 Off。
-    return { messages: data.display || data.messages, context: data.context || null, usage: data.usage || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
+    // filesState = 摘要浮层快照（CLI files-state 上报：上下文文件 + 变更文件），无则 null。
+    return { messages: data.display || data.messages, context: data.context || null, usage: data.usage || null, filesState: data.filesState || null, model: data.model || null, modelTs: data.modelTs || null, effort: data.effort, vision: !!data.vision, cwd: data.cwd || null, queued: Array.isArray(data.queued) ? data.queued : [], tasks: Array.isArray(data.tasks) ? data.tasks : [], file: typeof data.file === 'string' ? data.file : null, deltaSeq: typeof data.deltaSeq === 'number' ? data.deltaSeq : null }
   }
   // 模型 seat 校准（applySessionModel）已于 2026-10-10 分层治理 4B 迁入 inputbar/model-select.js——
   // 它操作的是输入栏状态（MODEL_CUR/modelUserPicked），归 feature 层；engine 不得 import feature。
@@ -1868,6 +1869,10 @@ function setSessionCwd(v) { sessionCwd = v }
           liveUiPort.renderCtxMeter(ev.context)
           liveUiPort.renderUsageMeter(ev.usage)
         }
+      }
+      else if (ev.type === 'files-state') {
+        // 2026-11-28 摘要浮层实时链（CLI 算、网关只转发）：上下文文件/变更文件变化即时重渲，仅当前会话采纳。
+        if (live.curUuid && ev.session === live.curUuid) liveUiPort.renderSummary({ files: ev.files, changed: ev.changed })
       }
       else if (ev.type === 'session-delta') {
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：引擎变化 delta 直达——CLI 过滤投影
@@ -2086,7 +2091,7 @@ function setSessionCwd(v) { sessionCwd = v }
       const s = findSession(hash)
       if (!s) return
       try {
-        const { messages, context, usage, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
+        const { messages, context, usage, filesState, model, modelTs, effort, cwd, queued, tasks, file, deltaSeq } = await fetchMessages(s.id)
         // 2026-08-30 串会话根治：会话校验只在 await 前做过一次 → fetch 回程期间用户切到其它
         // 会话时，本响应（A 的整份消息/cwd/模型/上下文/队列快照）会写穿全部全局槽并把 A 的
         // 历史 innerHTML 整页渲染进新会话 DOM（CLI 单进程单会话无此异步边界，web 必须在每个
@@ -2107,6 +2112,7 @@ function setSessionCwd(v) { sessionCwd = v }
         onSessionEffort(effort) // 2026-11-06 思考等级同链：缺键 = 该会话没改过档，null = 明确 Off
         liveUiPort.renderCtxMeter(context)
         liveUiPort.renderUsageMeter(usage)
+        liveUiPort.renderSummary(filesState)
         // 2026-09-08 事件流统一 P1（方案 20260908135557）：全量回程 = 权威快照，重置本地 delta
         // 基线（localMessages 副本 + 网关 seq 记账）。此后 session-delta SSE 按「尾部替换」增量
         // 演进副本；fetch 回程是基线唯一重置点（单源），gap/失步由本函数全量对账恢复。
@@ -2751,6 +2757,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     clearTakeover() // 清残留的提问/审批 takeover（输入栏恢复）
     renderCtxMeter(null) // 无会话上下文：隐藏上下文环
     renderUsageMeter(null) // 无会话用量：隐藏 token 胶囊
+    renderSummary(null) // 无会话文件快照：隐藏摘要钮
   }
 
   // 会话卡离场钩子（session-card.js 的 deactivate 契约；registry.openCard 切异卡时调用，preview-card
@@ -2825,6 +2832,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
         messagesEl.innerHTML = '<div class="msg msg-system">加载中…</div>'
         renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
         renderUsageMeter(null)
+        renderSummary(null)
         inputWrap.classList.add('docked')
         chatArea.classList.add('in-session')
         return
@@ -2832,6 +2840,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
       messagesEl.innerHTML = '<div class="msg msg-system">会话不存在或已删除</div>'
       renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
       renderUsageMeter(null)
+      renderSummary(null)
       inputWrap.classList.add('docked')
       chatArea.classList.add('in-session')
       return
@@ -2851,7 +2860,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
     inputWrap.classList.add('docked')
     chatArea.classList.add('in-session')
     fetchMessages(s.id)
-      .then(({ messages, context, usage, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
+      .then(({ messages, context, usage, filesState, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
         if (state.currentHash !== hash) return
         setSessionCwd(cwd)
         // 2026-09-08 事件流统一 P1：首载回程同样重置 delta 本地基线（与 refreshSession 对称，
@@ -2881,6 +2890,7 @@ function setLivePorts(p) { liveMsgPort = p.msg; liveUiPort = p.ui; liveStagePort
         applySessionEffort(effort) // 2026-11-06：思考等级同链——本会话上报档位校准座显（缺键=未改过 → 全局默认）
         renderCtxMeter(context)
         renderUsageMeter(usage)
+        renderSummary(filesState)
         // 首条消息事务期（2026-09-06）：fetch 空（CLI 尚未落盘首条 user）→ 跳过整页重建保留
         // 乐观 DOM（开启气泡+主张折叠是权威，不被「加载中…」/空态行洗掉），真实数据经 SSE
         // refreshSession 接管（refreshSession 同款「空 fetch 不洗盘」守卫已挡后续）。非空照常重建。
@@ -4163,6 +4173,84 @@ function setLastNavHash(v) { lastNavHash = v }
     // 2026-09-07 用户定案：空会话不再渲染「暂无 user/assistant 记录」占位行——该界面让会话
     // 出现「空态/内容态」两种视觉状态；移除后空会话消息区即纯空白，状态统一。
     return html
+  }
+
+  const summaryRoot = $('summary-root')
+  const summaryBtn = $('summary-btn')
+  const summaryPop = $('summary-pop')
+
+  summaryBtn.innerHTML = I.dshPlan
+  summaryBtn.addEventListener('click', () => {
+    if (summaryRoot.hidden) return
+    const open = summaryPop.hidden
+    summaryPop.hidden = !open
+    summaryBtn.setAttribute('aria-expanded', open ? 'true' : 'false')
+  })
+  // 点卡片外任意处 / Esc 收起（与 ctx 面板同交互口径）
+  document.addEventListener('mousedown', (e) => {
+    if (summaryPop.hidden || summaryRoot.contains(e.target)) return
+    closeSummary()
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !summaryPop.hidden) closeSummary()
+  })
+
+  function closeSummary() {
+    summaryPop.hidden = true
+    summaryBtn.setAttribute('aria-expanded', 'false')
+  }
+
+  // md 链接 URL 侧编码（与插入侧同口径）：空格/括号/#/?/% 会拆坏 `[文](url)` 或 parseFileLink，
+  // 一律百分号编码；展示文本仍用原始路径。
+  function mdUrlPath(p) {
+    return p
+      .replace(/%/g, '%25')
+      .replace(/ /g, '%20')
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29')
+      .replace(/#/g, '%23')
+      .replace(/\?/g, '%3F')
+  }
+
+  // 行 = md 文件链接 chip（`[`路径`](路径)` → mention-chip + file-icon，点击交 mention-nav）。
+  function fileRowHtml(p) {
+    return '<div class="summary-row">' + mdInlineText('[' + '`' + p + '`' + '](' + mdUrlPath(p) + ')') + '</div>'
+  }
+
+  function changedRowHtml(c) {
+    const stat = c.isNew
+      ? '<span class="chg-add">新增</span>'
+      : '<span class="chg-add">+' + (Number(c.added) || 0) + '</span> <span class="chg-del">-' + (Number(c.removed) || 0) + '</span>'
+    return '<div class="summary-row">' + mdInlineText('[' + '`' + c.path + '`' + '](' + mdUrlPath(c.path) + ')') + '<span class="summary-stat">' + stat + '</span></div>'
+  }
+
+  function groupHtml(title, rows) {
+    if (!rows.length) return ''
+    return '<div class="summary-group-title">' + title + '</div>' + rows.join('')
+  }
+
+  // 侧边聊天分组（用户定案：渲染代码保留、暂不启用 → 不产出任何 DOM）。
+  const SIDE_CHAT_ENABLED = false
+  function sideChatGroupHtml() {
+    return SIDE_CHAT_ENABLED ? groupHtml('侧边聊天', []) : ''
+  }
+
+  // 快照整份替换：null / 两列表皆空 → 圆钮与浮层整体隐藏。
+  function renderSummary(fs) {
+    const files = fs && Array.isArray(fs.files) ? fs.files.filter((p) => typeof p === 'string' && p) : []
+    const changed = fs && Array.isArray(fs.changed) ? fs.changed.filter((c) => c && typeof c.path === 'string' && c.path) : []
+    if (!files.length && !changed.length) {
+      summaryRoot.hidden = true
+      summaryPop.hidden = true
+      summaryPop.innerHTML = ''
+      summaryBtn.setAttribute('aria-expanded', 'false')
+      return
+    }
+    summaryRoot.hidden = false
+    summaryPop.innerHTML =
+      groupHtml('上下文文件', files.map(fileRowHtml)) +
+      groupHtml('变更文件', changed.map(changedRowHtml)) +
+      sideChatGroupHtml()
   }
 
   // ---------- 侧栏 ----------
@@ -18587,7 +18675,7 @@ function setGatewayPorts(p) { gwApproval = p.approval; gwSendPort = p.send; gwMe
       // chat/messages.js 读基元 + 可变渲染态读取口（getter 现读，勿缓存）
       msg: { isRealUser, isEndStop, fmtDur, stampMsgIn, messagesHtml, absorbPending, queueClaimAdopt, statusFlags, getLastSegInfo, getCharNote },
       // 渲染/暂态/导航出口（feature 层实现）
-      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, renderUsageMeter, claimStartTs, syncTurnLive, syncGwSend, navigate },
+      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, renderUsageMeter, renderSummary, claimStartTs, syncTurnLive, syncGwSend, navigate },
       // 两层消息流 stage（stage 为稳定 const 对象；stageStart 为函数）
       stage: { stage, stageStart },
       // 可变状态读写口（takeover / firstSendHash / pendingUserMsgs；getter 现读，勿缓存）

@@ -456,6 +456,7 @@ export {
   initCodeBlock,
   mdHtml,
   mdInline,
+  mdInlineText,
   messageMd,
   relTime,
   selectionMd,

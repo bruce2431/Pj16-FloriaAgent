@@ -15,6 +15,7 @@ import {
   persistWebSessions,
   sessionActivity,
   sessionDeltaSeq,
+  sessionFilesState,
   sessionModels,
   sessionQueues,
   sessionTasks,
@@ -558,6 +559,18 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
             })
             return
           }
+          if (m.type === 'files-state') {
+            // 2026-11-28：摘要浮层快照（CLI gatewayFilesSnapshot 算，网关不解释字段，只存转发）。
+            const files = Array.isArray(m.files) ? m.files : []
+            const changed = Array.isArray(m.changed) ? m.changed : []
+            sessionFilesState.set(sid, { files, changed, updatedAt: Date.now() })
+            sweepStaleMaps()
+            const s = `data: ${JSON.stringify({ type: 'files-state', session: sid, files, changed })}\n\n`
+            sendAll(sseClients, (c) => {
+              c.res.write(s)
+            })
+            return
+          }
           if (m.type === 'spinner-state') {
             const label = typeof m.label === 'string' ? m.label.slice(0, 60) : ''
             if (label) {
@@ -758,6 +771,7 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
           sessionModels.delete(sid)
           sessionTasks.delete(sid)
           sessionUsageState.delete(sid)
+          sessionFilesState.delete(sid)
           const prevDetach = detachTimers.get(sid)
           if (prevDetach) clearTimeout(prevDetach)
           detachTimers.set(

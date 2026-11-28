@@ -64,6 +64,8 @@ export const sessionQueues = new Map<
 export const sessionTasks = new Map<string, { tasks: GatewayTaskItem[]; updatedAt: number }>()
 // 用量/上下文快照（2026-11-28）：CLI usage-state 上报，网关只存转发 + /gateway/session 附带给 web。
 export const sessionUsageState = new Map<string, { usage: unknown; context: unknown; updatedAt: number }>()
+// 摘要浮层快照（2026-11-28）：CLI files-state 上报（上下文文件 + 变更文件），网关只存转发。
+export const sessionFilesState = new Map<string, { files: unknown[]; changed: unknown[]; updatedAt: number }>()
 export const turnEndAt = new Map<string, number>()
 export const turnBeatAt = new Map<string, number>()
 export const sessionDeltaSeq = new Map<string, number>()

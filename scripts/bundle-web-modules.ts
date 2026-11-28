@@ -57,6 +57,9 @@ const PIECES: { file: string; part: number }[] = [
   { file: 'chat/messages/icons.js', part: 1 },
   { file: 'chat/messages/usage.js', part: 1 },
   { file: 'chat/messages/renderer.js', part: 1 },
+  // 会话摘要浮层（2026-11-28）：右上角圆钮 + 卡片，数据 = CLI files-state 快照（网关只传输）；
+  // 行内文件走 core/markdown 的 md 链接 chip（icon + 文本），故须排在 markdown.js 之后。
+  { file: 'chat/summary.js', part: 1 },
   { file: 'sidebar/recent.js', part: 1 },
   { file: 'sidebar/rail-ext.js', part: 1 },
   { file: 'sidebar/mgr.js', part: 1 },

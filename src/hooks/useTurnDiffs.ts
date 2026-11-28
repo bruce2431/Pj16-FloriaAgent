@@ -67,6 +67,44 @@ function countHunkLines(hunks: StructuredPatchHunk[]): {
   return { added, removed }
 }
 
+export type ChangedFileStat = {
+  filePath: string
+  linesAdded: number
+  linesRemoved: number
+  isNewFile: boolean
+}
+
+/**
+ * 汇总整段转录里的文件变更（不按回合分组）：摘要卡「变更文件」与 /diff 共用的同一套
+ * 抽取规则（isFileEditResult / countHunkLines / 新建文件合成行数）。
+ */
+export function collectChangedFiles(
+  messages: readonly Message[],
+): ChangedFileStat[] {
+  const files = new Map<string, ChangedFileStat>()
+  for (const message of messages) {
+    if (message.type !== 'user' || !message.toolUseResult) continue
+    const result = message.toolUseResult
+    if (!isFileEditResult(result)) continue
+    const { filePath, structuredPatch } = result
+    const isNewFile = 'type' in result && result.type === 'create'
+    let entry = files.get(filePath)
+    if (!entry) {
+      entry = { filePath, linesAdded: 0, linesRemoved: 0, isNewFile: false }
+      files.set(filePath, entry)
+    }
+    if (isNewFile && structuredPatch.length === 0 && isFileWriteOutput(result)) {
+      entry.linesAdded += result.content.split('\n').length
+    } else {
+      const { added, removed } = countHunkLines(structuredPatch)
+      entry.linesAdded += added
+      entry.linesRemoved += removed
+    }
+    if (isNewFile) entry.isNewFile = true
+  }
+  return [...files.values()]
+}
+
 function getUserPromptPreview(message: Message): string {
   if (message.type !== 'user') return ''
   const content = message.message.content

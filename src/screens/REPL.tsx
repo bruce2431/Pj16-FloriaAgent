@@ -138,6 +138,8 @@ import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/grow
 import { textForResubmit, handleMessageFromStream, type StreamingToolUse, type StreamingThinking, isCompactBoundaryMessage, getMessagesAfterCompactBoundary, getContentText, createUserMessage, createAssistantMessage, createTurnDurationMessage, createAgentsKilledMessage, createApiMetricsMessage, createSystemMessage, createCommandInputMessage, formatCommandInputTags } from '../utils/messages.js';
 import { buildDisplayDelta, exportConversationToServer, sendSessionActivity } from '../utils/conversationDisplay.js';
 import { buildUsageState } from '../utils/gatewayUsageSnapshot.js';
+import { buildFilesState } from '../utils/gatewayFilesSnapshot.js';
+import { getCwd } from '../utils/cwd.js';
 import { generateSessionTitle } from '../utils/sessionTitle.js';
 import { BASH_INPUT_TAG, COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG, LOCAL_COMMAND_STDOUT_TAG } from '../constants/xml.js';
 import { escapeXml } from '../utils/xml.js';
@@ -1610,10 +1612,14 @@ export function REPL({
       // 2026-11-28 用量/上下文快照（网关只做传输）：与 delta 同拍上报，web 底栏 token 胶囊 +
       // 上下文环的唯一数据源；估算带每条消息 WeakMap 缓存，流式只重算末条。
       const usageState = buildUsageState(messages, mainLoopModel)
+      // 2026-11-28 摘要浮层快照（与 usage 同拍）：上下文文件（/files 同源）+ 变更文件（/diff 同源），
+      // 网关只做传输；readFileState 是本进程唯一持有处，取数必须在此完成。
+      const filesState = buildFilesState(messages, readFileState.current, getCwd())
       void import('../utils/gatewayClient.js')
         .then((m) => {
           if (d) m.notifySessionDelta(d.seq, d.anchorSid, d.messages)
           m.notifyUsageState(usageState)
+          m.notifyFilesState(filesState)
         })
         .catch(() => {})
     }

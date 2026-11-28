@@ -28,7 +28,7 @@
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
        app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
   <link rel="stylesheet" href="/webui/floria-web.css?v=13" />
-  <link rel="stylesheet" href="/styles.css?v=730" />
+  <link rel="stylesheet" href="/styles.css?v=731" />
   <!-- 侧边浏览器（2026-11-22）：纯组件，目录自带样式；只在 chat 模式由宿主挂载。 -->
   <link rel="stylesheet" href="/browser/SideBrowser/side-browser.css?v=8" />
 </head>
@@ -177,6 +177,13 @@
     <button id="menu-btn" title="打开侧栏" aria-label="打开侧栏">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
+    <!-- 会话摘要（2026-11-28）：chat 模式右上角圆钮「摘要」+ 浮层卡。数据 = CLI files-state 快照
+         （上下文文件 / 变更文件，网关只传输）；无文件数据整体 hidden，work 模式与 token 门隐藏。
+         行内文件 = 与消息流相同的 md 链接 chip（icon + 文本，点击走 mention-nav）。 -->
+    <div id="summary-root" hidden>
+      <button id="summary-btn" type="button" title="摘要" aria-label="摘要" aria-haspopup="dialog" aria-expanded="false"></button>
+      <div id="summary-pop" role="dialog" aria-label="摘要" hidden></div>
+    </div>
     <!-- 角色形象：左侧空缺处展示，随 AI 操作切换（读/搜=3、写/编=2、执行/命令=4、其余=1）。
          仅已开始的对话（#chat-area.in-session）+ 侧栏折叠（#sidebar 无 .open）+ 宽屏时显示，
          首页新对话不显示；pointer-events:none 不挡交互。
@@ -425,6 +432,6 @@
 <script src="/demo-mode.js?v=1"></script>
 <!-- 侧边浏览器纯组件（2026-11-22）：挂 window.UIDesignSideBrowser；须在 app.js 之前加载（宿主启动即挂载）。 -->
 <script src="/browser/SideBrowser/side-browser.js?v=7"></script>
-<script src="/app.js?v=761"></script>
+<script src="/app.js?v=762"></script>
 </body>
 </html>

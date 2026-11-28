@@ -313,6 +313,8 @@ function openSocket(token: string): void {
     resendSpinnerState()
     // 用量/上下文快照：网关重启后内存清空，重连即补发一次，web 底栏按钮不缺数
     resendUsageState()
+    // 摘要浮层快照：同上，重连补发，web 摘要浮层不缺数
+    resendFilesState()
     // 2026-08-31 跨网关重启 pending 补发：仍挂起的审批/提问逐条重发 → 网关重新暂存+broadcast，
     // web 补弹可交互卡（重启前弹的卡随网关内存清空丢失，此前只剩只读兜底卡无法作答）
     resendPendingApprovalRequests()
@@ -713,6 +715,31 @@ export function notifyUsageState(state: { usage: unknown; context: unknown }): v
 }
 function resendUsageState(): void {
   if (lastUsageStateJson) sendUsageState(lastUsageStateJson)
+}
+
+/**
+ * 摘要浮层快照通道（2026-11-28，同 usage-state：网关只做传输）：
+ * REPL messages 变化 → gatewayFilesSnapshot 算 {files, changed} → {type:'files-state'} →
+ * 网关按会话存快照 + SSE 群发 → web 摘要浮层。整份快照无状态、乱序无害；重连补发一次。
+ */
+let lastFilesStateJson = ''
+function sendFilesState(payload: string): void {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(payload)
+    } catch {
+      /* 断开忽略 */
+    }
+  }
+}
+export function notifyFilesState(state: { files: unknown[]; changed: unknown[] }): void {
+  const payload = JSON.stringify({ type: 'files-state', ...state })
+  if (payload === lastFilesStateJson) return
+  lastFilesStateJson = payload
+  sendFilesState(payload)
+}
+function resendFilesState(): void {
+  if (lastFilesStateJson) sendFilesState(lastFilesStateJson)
 }
 
 /**

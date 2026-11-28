@@ -1180,3 +1180,13 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 - **接线**：宿主 `core/markdown.js` 的 `linkGlyph(u)` 调 `window.FloriaCM6.linkIcon(raw)`，只对绝对 `http(s)` 链接前置字形（相对路径与附件/文件 chip 不加）；行内链接与自动链接两处出口同一函数。
 - **样式**：`styles.css` 的 `.msg .body a`（`--blue` + `font-weight:500`、`text-decoration:none`；hover/`focus-visible` 点状下划线、`text-underline-offset:3px`）；字形几何唯一真源在包内 `styles.js` 的 `.md-scope a > svg`。
 - **不变量**：字形只由 href 决定、不从页内元数据或站点响应推导；无法识别主机时不显示站点标记（回退地球），绝不隐去链接文字。
+
+## 79. 会话摘要浮层（`#summary-root` / `#summary-pop`，chat 模式右上角）
+
+chat 模式内容卡右上角的圆形「摘要」钮（`I.dshPlan`），点击弹出浮层卡；数据 = CLI `files-state` 快照，网关只做传输。
+
+- **数据源**：CLI `src/utils/gatewayFilesSnapshot.ts` 的 `buildFilesState(messages, readFileState, cwd)`——`files` = `FileStateCache` 键（与 `/files` 同源，路径相对 cwd、`/` 归一）；`changed` = 转录 `toolUseResult` 聚合的文件变更（`useTurnDiffs.ts` 的 `collectChangedFiles`，与 `/diff` 同一抽取规则，含新增/删除行数与 `isNew`）。
+- **上报链**：REPL messages effect 与 usage 快照同拍 → `gatewayClient.notifyFilesState`（JSON 去重 + 重连 `resendFilesState`）→ `/clients` WS `{type:'files-state'}` → `wsBridge` 存 `sessionFilesState` + SSE 群发（detach 清理）→ `GET /gateway/session` 附带 `filesState`；`live.js` 收 `files-state` 即时重渲，`refreshSession`/首载回程同源渲染。
+- **可见性**：`files` 与 `changed` 皆空 → 根元素 `hidden`，圆钮与浮层整体不出现；work 模式与 token 门恒隐藏。
+- **行渲染**：每行 = 与消息流相同的 md 文件链接 chip（`` [`路径`](路径) `` 经 `core/markdown.js` 的 `mdInlineText`，图标 + 文本，点击走 `mention-nav`）；变更行尾列 `+N -N`（新文件「新增」），配色复用 `@floria/web` delivery 的 `.chg-add` / `.chg-del`。
+- **分组**：上下文文件、变更文件；侧边聊天分组的渲染代码保留（`sideChatGroupHtml`），暂不启用、不产出 DOM。

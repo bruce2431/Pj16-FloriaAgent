@@ -13,6 +13,7 @@ import { loadMgrView } from '../core/storage.js'
 import { renderTransient, claimStartTs, syncTurnLive, takeover, clearTakeover, sendSubscribe, renderTaskDock } from '../inputbar/approval.js'
 import { renderProjSeat, closeProjPop } from '../inputbar/commands.js'
 import { renderCtxMeter, renderUsageMeter } from '../inputbar/ctx-meter.js'
+import { renderSummary } from './summary.js'
 import { closeMentionPop } from '../inputbar/mention.js'
 import { applySessionEffort, applySessionModel, syncSeatToGlobalDefault } from '../inputbar/model-select.js'
 import { gwSend, syncGwSend } from '../inputbar/send.js'
@@ -232,6 +233,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     clearTakeover() // 清残留的提问/审批 takeover（输入栏恢复）
     renderCtxMeter(null) // 无会话上下文：隐藏上下文环
     renderUsageMeter(null) // 无会话用量：隐藏 token 胶囊
+    renderSummary(null) // 无会话文件快照：隐藏摘要钮
   }
 
   // 会话卡离场钩子（session-card.js 的 deactivate 契约；registry.openCard 切异卡时调用，preview-card
@@ -306,6 +308,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
         messagesEl.innerHTML = '<div class="msg msg-system">加载中…</div>'
         renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
         renderUsageMeter(null)
+        renderSummary(null)
         inputWrap.classList.add('docked')
         chatArea.classList.add('in-session')
         return
@@ -313,6 +316,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
       messagesEl.innerHTML = '<div class="msg msg-system">会话不存在或已删除</div>'
       renderCtxMeter(null) // 无会话数据 → 隐藏上下文环
       renderUsageMeter(null)
+      renderSummary(null)
       inputWrap.classList.add('docked')
       chatArea.classList.add('in-session')
       return
@@ -332,7 +336,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     inputWrap.classList.add('docked')
     chatArea.classList.add('in-session')
     fetchMessages(s.id)
-      .then(({ messages, context, usage, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
+      .then(({ messages, context, usage, filesState, model, modelTs, effort, cwd, file, queued, tasks, deltaSeq }) => {
         if (state.currentHash !== hash) return
         setSessionCwd(cwd)
         // 2026-09-08 事件流统一 P1：首载回程同样重置 delta 本地基线（与 refreshSession 对称，
@@ -362,6 +366,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
         applySessionEffort(effort) // 2026-11-06：思考等级同链——本会话上报档位校准座显（缺键=未改过 → 全局默认）
         renderCtxMeter(context)
         renderUsageMeter(usage)
+        renderSummary(filesState)
         // 首条消息事务期（2026-09-06）：fetch 空（CLI 尚未落盘首条 user）→ 跳过整页重建保留
         // 乐观 DOM（开启气泡+主张折叠是权威，不被「加载中…」/空态行洗掉），真实数据经 SSE
         // refreshSession 接管（refreshSession 同款「空 fetch 不洗盘」守卫已挡后续）。非空照常重建。

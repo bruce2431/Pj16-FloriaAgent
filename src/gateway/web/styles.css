@@ -1927,6 +1927,40 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
 /* #sidebar 与 #chat-area 同为 #app 子元素 → 兄弟选择器直取「侧栏展开」这一状态 */
 #sidebar.open ~ #chat-area #menu-btn { display: none; }
 
+/* ---------- 会话摘要浮层 #summary-root（2026-11-28）----------
+   chat 模式内容卡右上角圆钮「摘要」+ 下方浮层卡；数据 = CLI files-state 快照（上下文文件 /
+   变更文件）。无数据时根元素 hidden（summary.js 统一切换）；work 模式与 token 门恒隐藏。
+   浮层行 = md 文件链接 chip（.mention-chip，icon + 文本），行尾列变更行数（.chg-add/.chg-del
+   复用 @floria/web delivery 同款配色）。 */
+#summary-root { position: absolute; top: 10px; right: 12px; z-index: 15; }
+#summary-root[hidden] { display: none; }
+#chat-area.work #summary-root,
+body.token-gate #summary-root { display: none; }
+#summary-btn {
+  display: grid; place-items: center; flex: none;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--ink-2);
+  box-shadow: var(--shadow-sm); cursor: pointer;
+}
+#summary-btn:hover { background: var(--hover); color: var(--ink); }
+#summary-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+#summary-btn svg { width: 15px; height: 15px; display: block; }
+#summary-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 20;
+  box-sizing: border-box; width: 320px; padding: 10px 12px;
+  max-height: min(420px, 60vh); overflow-y: auto;
+  border: 1px solid var(--hairline-2); border-radius: 12px; background: var(--bg);
+  box-shadow: var(--shadow-sm), 0 12px 32px 0 rgba(0, 0, 0, 0.08);
+  font-size: 13px; line-height: 20px; color: var(--ink-2); cursor: default;
+}
+#summary-pop[hidden] { display: none; }
+#summary-pop .summary-group-title { margin: 8px 0 2px; font-size: 11px; line-height: 16px; color: var(--ink-4); }
+#summary-pop .summary-group-title:first-child { margin-top: 0; }
+#summary-pop .summary-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 1px 0; }
+#summary-pop .summary-row > .mention-chip { min-width: 0; max-width: 100%; }
+#summary-pop .summary-stat { margin-left: auto; flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
+
 /* 左缘唤出无对应元素（2026-09-25）：判据「指针到达窗口左缘」由 app.js 的 document 级监听承担
    （mousemove clientX ≤ 8 / mouseout 从左缘出窗口），守卫（折叠态 / 非手机 / 非 token 门）与之同处。
    原 #edge-hot 细条靠 hit-test，快速移动会在同一取样间隔内直接冲出窗口而整段跳过——已撤。 */

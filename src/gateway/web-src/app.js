@@ -33,6 +33,7 @@ import { initSideBrowser } from './feature/side-browser/side-browser-host.js'
 import { absorbPending, fmtDur, getCharNote, getLastSegInfo, getPendingUserMsgs, isEndStop, isRealUser, messagesHtml, queueClaimAdopt, setPendingUserMsgs, stampMsgIn, statusFlags } from './chat/messages.js'
 import { claimStartTs, clearTakeover, getTakeover, getShownApprovalId, renderSettle, renderTaskDock, renderTransient, syncTurnLive, addSystem, getApprovalPending, renderApproval, setApprovalPending, showApprovalError, sendSubscribe } from './inputbar/approval.js'
 import { renderCtxMeter, renderUsageMeter } from './inputbar/ctx-meter.js'
+import { renderSummary } from './chat/summary.js'
 
 /* @module __app__ */
   // ---------- 事件绑定 ----------
@@ -143,7 +144,7 @@ import { renderCtxMeter, renderUsageMeter } from './inputbar/ctx-meter.js'
       // chat/messages.js 读基元 + 可变渲染态读取口（getter 现读，勿缓存）
       msg: { isRealUser, isEndStop, fmtDur, stampMsgIn, messagesHtml, absorbPending, queueClaimAdopt, statusFlags, getLastSegInfo, getCharNote },
       // 渲染/暂态/导航出口（feature 层实现）
-      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, renderUsageMeter, claimStartTs, syncTurnLive, syncGwSend, navigate },
+      ui: { renderTransient, renderSettle, renderRecent, renderTaskDock, renderCtxMeter, renderUsageMeter, renderSummary, claimStartTs, syncTurnLive, syncGwSend, navigate },
       // 两层消息流 stage（stage 为稳定 const 对象；stageStart 为函数）
       stage: { stage, stageStart },
       // 可变状态读写口（takeover / firstSendHash / pendingUserMsgs；getter 现读，勿缓存）
