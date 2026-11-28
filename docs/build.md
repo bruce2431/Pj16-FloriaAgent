@@ -65,7 +65,7 @@
 |---|---|---|---|
 | `BUILTIN_EXPLORE_PLAN_AGENTS` | 内置 explore/plan agent 预设 | `src/tools/AgentTool/builtInAgents.ts` | 默认开（也在 dev-full 集） |
 | `PRIVATE_GATEWAY` | 内置网关：`/server` 指令、`--gateway` 独立进程、内嵌 web 前端；token 落 `getPortableRoot()/.claude/gateway/token`，空闲 10 分钟（`GATEWAY_IDLE_MINUTES`）自动回收 | `src/commands.ts`、`src/utils/gatewayClient.ts` | 默认开 |
-| `REACTIVE_COMPACT` | 拒答（usage-policy refusal）、PTL、媒体超限三类自动剥图恢复；可 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 停用 | `src/services/compact/reactiveCompact.ts`、`src/query.ts` | 默认开（见 §2.10） |
+| `REACTIVE_COMPACT` | 拒答（usage-policy refusal）、PTL、媒体超限三类自动剥图恢复；可 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 停用 | `src/services/compact/reactiveCompact.ts`、`src/query.ts` | 默认开 |
 | `SESSION_LINK` | 会话间协作：`session_send`（只认 sid）+ `session_search`（本项目最近 10 个标题） | `src/tools/SessionSendTool/SessionSendTool.ts`、`src/tools/SessionSearchTool/SessionSearchTool.ts` | 默认开 |
 | `CARD_API` | `CardCall` 工具：agent 驱动浏览器在场卡片（list/call） | `src/tools/CardCallTool/CardCallTool.ts`、`src/tools.ts` | 默认开 |
 
@@ -77,7 +77,7 @@
 | `AGENT_TRIGGERS_REMOTE` | 远程触发工具 `RemoteTrigger` | `src/tools/RemoteTriggerTool/RemoteTriggerTool.ts`、`src/tools.ts` | 实验 |
 | `MONITOR_TOOL` | `Monitor` 工具：spawn 后台监控进程并流式通知 | `src/tools/MonitorTool/MonitorTool.tsx` | 已恢复（默认不编入） |
 | `REVIEW_ARTIFACT` | `ReviewArtifact` 工具：批准弹窗选 finding，产物落 `.claude/reviews/` | `src/tools/ReviewArtifactTool/ReviewArtifactTool.tsx` | 已恢复（默认不编入） |
-| `WORKFLOW_SCRIPTS` | `Workflow` 工具：扫描 `.claude/workflows/*.md` 并 spawn 后台任务；脚本另注册为 `/name` | `src/tools/WorkflowTool/WorkflowTool.tsx`、`src/commands/workflows/` | 已恢复（默认不编入，见 §2.10） |
+| `WORKFLOW_SCRIPTS` | `Workflow` 工具：扫描 `.claude/workflows/*.md` 并 spawn 后台任务；脚本另注册为 `/name` | `src/tools/WorkflowTool/WorkflowTool.tsx`、`src/commands/workflows/` | 已恢复（默认不编入，需 `--feature=WORKFLOW_SCRIPTS`） |
 | `HISTORY_SNIP` | `SnipTool` + 历史裁剪投影 | `src/tools/SnipTool/` | stub（禁用） |
 | `KAIROS_PUSH_NOTIFICATION` | `PushNotificationTool` | `src/tools/PushNotificationTool/` | stub（禁用） |
 | `OVERFLOW_TEST_TOOL` | `OverflowTestTool` | `src/tools/OverflowTestTool/` | stub（禁用） |
@@ -196,11 +196,7 @@
 | `CONNECTOR_TEXT` | connector 文本块在 API/日志/UI 的处理 | `src/constants/betas.ts`、`src/services/api/claude.ts` | 实验 |
 | `KAIROS` | 云端 assistant 完整栈（需 Anthropic 后端+账号） | `src/bridge/bridgeMain.ts`、`src/cli/print.ts` | 已放弃（`KAIROS_BRIEF`/`KAIROS_CHANNELS` 独立保留） |
 
-### 2.10 关键实现备注
 
-- **`REACTIVE_COMPACT`**：三类恢复——PTL（`isWithheldPromptTooLong`）/ 媒体超限（`isWithheldMediaSizeError`）/ usage-policy 拒绝（`isUsagePolicyRefusalMessage` + `isWithheldUsagePolicyRefusal` + `policyStripRetry`，全剥 user/tool_result 内嵌 image/document 为文本标记后重建）。仅内存剥图不动 jsonl；无媒体可剥则上抛；`hasAttemptedReactiveCompact` 防螺旋。入口约束：`tryReactiveCompact` 的 `errorMsg` 必传（唯一调用方 `query.ts` 传 `lastMessage`）。
-- **`WORKFLOW_SCRIPTS`**：单 agent 最小版。①脚本发现用 `getProjectRoot()`（非 `getOriginalCwd()`），`WorkflowTool.call()` 与 `/workflows` 两处对齐；②spawn 带 `--no-session-persistence`（否则 fork 会在 `.claude/projects/` 生成独立会话 jsonl 污染 `/resume`）；③多行 CJK prompt 走 `$(cat '<temp>.md')`；④工具 require 直连（IIFE 会触发 esbuild `--minify-identifiers` 改名 bug）；⑤`isInBundledMode()` 对 `--bytecode` exe 须带 `process.argv[1].includes('/~BUN/')` 分支（`Bun.embeddedFiles` 为空数组，误判会污染所有 spawn 前缀共用方）。
-- **已恢复三件的文件面**：`MONITOR_TOOL` = MonitorTool + MonitorMcpTask + 两个权限/详情组件；`REVIEW_ARTIFACT` = ReviewArtifactTool + 权限弹窗 + `skills/bundled/hunter.ts`；`COORDINATOR_MODE` = `workerAgent.ts` + `coordinatorMode.ts` 导出 `INTERNAL_WORKER_TOOLS`。
 
 ### 2.11 有用入口
 
