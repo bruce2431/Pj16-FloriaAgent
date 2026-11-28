@@ -35,11 +35,13 @@
 
 - **ripgrep 内嵌**（Grep/Glob 依赖）：exe 不自带系统 rg，构建时把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 内嵌进产物。**不变量：Grep/Glob 与 Bash 的 `rg` 必须共用同一 `ripgrepCommand()` 解析；勿回退 `argv0='rg'` 分发。**
 
-### 1.4 前端内嵌打包与 cache-busting（改 web 前端必读）
+### 1.4 前端内嵌打包（改 web 前端必读）
 
-前端权威 `src/gateway/web-src/`（`gateway/web/app.js` 为构建生成物勿手改；模块边界是源码组织、拼接时 import/export 全剥除，模块清单与分层见 [web-ui.md](web-ui.md) §12）；构建时 `scripts/gen-web-assets.ts` 把 `src/gateway/web/` 递归 base64 内联进 exe（build.ts 每次构建前自动运行）。运行时唯一投送点 = `src/gateway/webAssets.ts`：存在 dev 磁盘 web 目录（exe 邻接或 cwd）则读磁盘，否则用内嵌资源。**dev 磁盘层改前端刷新即生效；部署 exe 走内嵌层，前端改动必须重新构建。****cache-busting**：index.html 资源引用带版本号 `?v=N`（styles.css/app.js），每次前端改动同步 bump 该号（+ sw.js CACHE），浏览器强制下载新版绕过 HTTP 缓存（资源引用为绝对路径，见 [web-ui.md](web-ui.md) §1）；**注意：前端从未注册 Service Worker**（web/ 目录无 serviceWorker 代码，sw.js 是死文件，浏览器不跑它——更新可靠靠 cache-busting 而非 sw）。**bytecode exe 内嵌资产不可 grep**（字符串经编码），验证资产版本用 `curl http://127.0.0.1:8124/sw.js` 与 `/app.js`。
+- **内嵌**：`scripts/gen-web-assets.ts` 在 build.ts 每次构建前自动把 `src/gateway/web/` 递归 base64 内联进 exe。
+- **两层投送**：运行时投送点 `src/gateway/webAssets.ts` 优先读 dev 磁盘 web 目录（exe 邻接或 cwd），否则用内嵌资源 ⇒ **dev 改前端刷新即生效；部署 exe 走内嵌层，前端改动必须重新构建。**
+- **第三方库**：拼接器不解析 npm，第三方预打包成全局 IIFE 放进 `src/gateway/web/`（先例 KaTeX、CM6）；**生成器手动跑、不接进 build.ts ⇒ 常规构建不联网。**
 
-**vendored 第三方库（拼接器不解析 npm，第三方一律全局 `<script>`）**：拼接器 `bundle-web-modules.ts` 只拼 `web-src/**`、**不解析 npm 依赖** ⇒ 任何 npm 包必须**预打包成全局 IIFE** 提交进 `src/gateway/web/`（`gen-web-assets.ts` 递归自动内嵌，`sw.js` CORE 可预缓存，`index.html` 在 `/app.js` 之前以 `<script>` 引入）。先例 = KaTeX（`vendor/katex/`，见 [web-ui.md](web-ui.md) §57）与 CM6 编辑层（`cm6/floria-cm6.iife.js`，全局 `window.FloriaCM6`，见 §71）。**生成器/构建手动跑、不接进 `build.ts`** ⇒ **常规构建不联网**。CM6 IIFE 的生成工程 = 兄弟目录 `SubPj4-CodeMirror6开发`（`bun build.ts` → `dist/floria-cm6.iife.js`，CM6 依赖全内联），`bun tools/sync.ts deploy --yes` 只把该 IIFE 拷进 `Floria/src/gateway/web/cm6/`；ESM/sourcemap 不部署（exe 内嵌按字节计）。该包直连 npm 的 `@codemirror/*`（state/view/commands/autocomplete/language 及 lang-markdown/javascript/json/css/html/python）、`@codemirror/legacy-modes`（shell/yaml/stex）、`@lezer/markdown`、`@lezer/highlight`、`codemirror-live-markdown@0.5.1-alpha.1`。**上游库补丁**：包内 `package.json` 的 `patchedDependencies` 指向 `patches/codemirror-live-markdown@0.5.1-alpha.1.patch`（`[floria patch]`：围栏行隐藏 + 语言钮），`bun install` 时自动重放；**改库版本后必须重做补丁**（补丁按行号定位，版本一变即漂）。
+前端手改处、cache-busting、sw.js、CM6 包与上游补丁 → [web-ui.md](web-ui.md)。
 
 ## 2. Feature Flag 总表
 
