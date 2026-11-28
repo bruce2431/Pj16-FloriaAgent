@@ -2444,10 +2444,11 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 #chat-area.work > #session-card,
 #chat-area.work > #wk-plugins-pane { grid-column: 1; grid-row: 2; min-width: 0; }
 
-/* 顶栏格取侧栏同色（= #app.work 底板色：暗色 --chat-bg、白天 --plane），整条读作侧栏延伸，
-   不留描边、不另造卡形。左右 2px 外边距保留——与预览卡四周的 2px 缝同律，切模式时内容左右边界不平移。 */
+/* 顶栏条与 chat 同构（2026-11-28）：底色 = 侧栏/底板色（暗 --chat-bg、白天 --plane），满幅铺到内容卡
+   上沿——左右不留缝、顶角随卡半径，读作侧栏底色贯穿整个顶栏（chat 顶栏正是这个形态，标题条直接落在
+   底板色上）。顶 padding 补回原 margin-top 的 2px，胶囊与折叠态汉堡（top 8）纵向位置不变。 */
 #chat-area.work > .wk-topbar {
-  margin: 2px 2px 0; border-radius: var(--radius); background: var(--chat-bg);
+  margin: 0; padding-top: 8px; border-radius: var(--radius) var(--radius) 0 0; background: var(--chat-bg);
 }
 html:not([data-theme="dark"]) #chat-area.work > .wk-topbar { background: var(--plane); }
 /* 键盘在场：壳体本身就是可视窗（body 收到键盘上沿），work 下沉区的 grid row2 自然落在窗内，
