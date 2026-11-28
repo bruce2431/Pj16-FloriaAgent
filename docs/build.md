@@ -67,11 +67,11 @@
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `BUILTIN_EXPLORE_PLAN_AGENTS` | 内置 explore/plan agent 预设 | `src/tools/AgentTool/builtInAgents.ts` | 默认开（也在 dev-full 集） |
-| `PRIVATE_GATEWAY` | 内置网关：`/server` 指令、`--gateway` 独立进程、内嵌 web 前端；token 落 `getPortableRoot()/.claude/gateway/token`，空闲 10 分钟（`GATEWAY_IDLE_MINUTES`）自动回收 | `src/commands.ts`、`src/utils/gatewayClient.ts` | 默认开 |
-| `REACTIVE_COMPACT` | 拒答（usage-policy refusal）、PTL、媒体超限三类自动剥图恢复；可 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 停用 | `src/services/compact/reactiveCompact.ts`、`src/query.ts` | 默认开 |
-| `SESSION_LINK` | 会话间协作：`session_send`（只认 sid）+ `session_search`（本项目最近 10 个标题） | `src/tools/SessionSendTool/SessionSendTool.ts`、`src/tools/SessionSearchTool/SessionSearchTool.ts` | 默认开 |
-| `CARD_API` | `CardCall` 工具：agent 驱动浏览器在场卡片（list/call） | `src/tools/CardCallTool/CardCallTool.ts`、`src/tools.ts` | 默认开 |
+| `BUILTIN_EXPLORE_PLAN_AGENTS` | 内置 explore/plan agent 预设 | [`src/tools/AgentTool/builtInAgents.ts`](../src/tools/AgentTool/builtInAgents.ts) | 默认开（也在 dev-full 集） |
+| `PRIVATE_GATEWAY` | 内置网关：`/server` 指令、`--gateway` 独立进程、内嵌 web 前端；token 落 `getPortableRoot()/.claude/gateway/token`，空闲 10 分钟（`GATEWAY_IDLE_MINUTES`）自动回收 | [`src/commands.ts`](../src/commands.ts)、[`src/utils/gatewayClient.ts`](../src/utils/gatewayClient.ts) | 默认开 |
+| `REACTIVE_COMPACT` | 拒答（usage-policy refusal）、PTL、媒体超限三类自动剥图恢复；可 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 停用 | [`src/services/compact/reactiveCompact.ts`](../src/services/compact/reactiveCompact.ts)、[`src/query.ts`](../src/query.ts) | 默认开 |
+| `SESSION_LINK` | 会话间协作：`session_send`（只认 sid）+ `session_search`（本项目最近 10 个标题） | [`src/tools/SessionSendTool/SessionSendTool.ts`](../src/tools/SessionSendTool/SessionSendTool.ts)、[`src/tools/SessionSearchTool/SessionSearchTool.ts`](../src/tools/SessionSearchTool/SessionSearchTool.ts) | 默认开 |
+| `CARD_API` | `CardCall` 工具：agent 驱动浏览器在场卡片（list/call） | [`src/tools/CardCallTool/CardCallTool.ts`](../src/tools/CardCallTool/CardCallTool.ts)、[`src/tools.ts`](../src/tools.ts) | 默认开 |
 
 ### 2.2 工具
 
@@ -93,71 +93,71 @@
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `AGENT_MEMORY_SNAPSHOT` | 自定义 agent 记忆快照 | `src/tools/AgentTool/loadAgentsDir.ts`、`src/main.tsx` | 实验 |
-| `CACHED_MICROCOMPACT` | 微压缩缓存状态 | `src/query.ts`、`src/constants/prompts.ts` | 实验 |
-| `COMPACTION_REMINDERS` | 压缩与附件流程提醒文案 | `src/utils/attachments.ts` | 实验 |
-| `EXTRACT_MEMORIES` | 对话后记忆抽取 hook | `src/memdir/paths.ts`、`src/cli/print.ts` | 实验 |
-| `PROMPT_CACHE_BREAK_DETECTION` | 缓存断点检测 | `src/services/api/claude.ts`、`src/commands/compact/compact.ts` | 实验 |
-| `TEAMMEM` | 团队记忆文件、watcher 与 UI 消息 | `src/components/memory/`、`src/memdir/` | 实验 |
-| `VERIFICATION_AGENT` | 验证 agent 提示与任务/todo 工具引导 | `src/tools/AgentTool/builtInAgents.ts`、`src/constants/prompts.ts` | 实验 |
-| `COORDINATOR_MODE` | coordinator + worker 两个内置 agent（`subagent_type: 'worker'`） | `src/coordinator/workerAgent.ts`、`src/coordinator/coordinatorMode.ts` | 已恢复（默认不编入） |
+| `AGENT_MEMORY_SNAPSHOT` | 自定义 agent 记忆快照 | [`src/tools/AgentTool/loadAgentsDir.ts`](../src/tools/AgentTool/loadAgentsDir.ts)、[`src/main.tsx`](../src/main.tsx) | 实验 |
+| `CACHED_MICROCOMPACT` | 微压缩缓存状态 | [`src/query.ts`](../src/query.ts)、[`src/constants/prompts.ts`](../src/constants/prompts.ts) | 实验 |
+| `COMPACTION_REMINDERS` | 压缩与附件流程提醒文案 | [`src/utils/attachments.ts`](../src/utils/attachments.ts) | 实验 |
+| `EXTRACT_MEMORIES` | 对话后记忆抽取 hook | [`src/memdir/paths.ts`](../src/memdir/paths.ts)、[`src/cli/print.ts`](../src/cli/print.ts) | 实验 |
+| `PROMPT_CACHE_BREAK_DETECTION` | 缓存断点检测 | [`src/services/api/claude.ts`](../src/services/api/claude.ts)、[`src/commands/compact/compact.ts`](../src/commands/compact/compact.ts) | 实验 |
+| `TEAMMEM` | 团队记忆文件、watcher 与 UI 消息 | [`src/components/memory/`](../src/components/memory/)、[`src/memdir/`](../src/memdir/) | 实验 |
+| `VERIFICATION_AGENT` | 验证 agent 提示与任务/todo 工具引导 | [`src/tools/AgentTool/builtInAgents.ts`](../src/tools/AgentTool/builtInAgents.ts)、[`src/constants/prompts.ts`](../src/constants/prompts.ts) | 实验 |
+| `COORDINATOR_MODE` | coordinator + worker 两个内置 agent（`subagent_type: 'worker'`） | [`src/coordinator/workerAgent.ts`](../src/coordinator/workerAgent.ts)、[`src/coordinator/coordinatorMode.ts`](../src/coordinator/coordinatorMode.ts) | 已恢复（默认不编入） |
 | `PROACTIVE` | 云端主动任务栈 | `src/proactive/`（缺失） | 已放弃 |
 
 ### 2.7 UI / 交互（13）
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `AWAY_SUMMARY` | 离开回来摘要 | `src/hooks/useAwaySummary.ts`、`src/screens/REPL.tsx` | 实验 |
-| `HISTORY_PICKER` | 交互式提示历史选择器 | `src/hooks/useHistorySearch.ts`、`src/components/PromptInput/PromptInput.tsx` | 实验 |
-| `HOOK_PROMPTS` | hook 执行流接收 prompt/request 文本 | `src/screens/REPL.tsx` | 实验 |
-| `KAIROS_BRIEF` | brief-only 转录布局与 `BriefTool` 导向 UX | `src/commands/brief.ts` | 实验（不恢复完整 assistant 栈） |
-| `KAIROS_CHANNELS` | 频道通知与 MCP/频道回调 | `src/components/LogoV2/ChannelsNotice.tsx`、`src/cli/print.ts` | 实验 |
-| `LODESTONE` | 深链/协议注册与设置接线 | `src/main.tsx`、`src/interactiveHelpers.tsx` | 实验 |
-| `MESSAGE_ACTIONS` | 交互 UI 的消息动作入口 | `src/screens/REPL.tsx`、`src/keybindings/defaultBindings.ts` | 实验 |
-| `QUICK_SEARCH` | 提示快速搜索 | `src/components/PromptInput/PromptInput.tsx`、`src/keybindings/defaultBindings.ts` | 实验 |
-| `SHOT_STATS` | 附加投递分布统计视图 | `src/utils/stats.ts`、`src/components/Stats.tsx` | 实验 |
-| `TOKEN_BUDGET` | token 预算跟踪、提示触发与警告 UI | `src/components/Spinner.tsx`、`src/components/PromptInput/PromptInput.tsx` | 实验 |
-| `ULTRATHINK` | 额外思考深度档 | `src/utils/thinking.ts` | 实验 |
-| `STREAMLINED_OUTPUT` | headless `stream-json` 的精简输出（`CLAUDE_CODE_STREAMLINED_OUTPUT=true`） | `src/cli/print.ts` | 实验 |
-| `AUTO_THEME` | OSC 11 主题跟随（5s 轮询） | `src/components/design-system/ThemeProvider.tsx`、`src/tools/ConfigTool/supportedSettings.ts` | stub |
+| `AWAY_SUMMARY` | 离开回来摘要 | [`src/hooks/useAwaySummary.ts`](../src/hooks/useAwaySummary.ts)、[`src/screens/REPL.tsx`](../src/screens/REPL.tsx) | 实验 |
+| `HISTORY_PICKER` | 交互式提示历史选择器 | [`src/hooks/useHistorySearch.ts`](../src/hooks/useHistorySearch.ts)、[`src/components/PromptInput/PromptInput.tsx`](../src/components/PromptInput/PromptInput.tsx) | 实验 |
+| `HOOK_PROMPTS` | hook 执行流接收 prompt/request 文本 | [`src/screens/REPL.tsx`](../src/screens/REPL.tsx) | 实验 |
+| `KAIROS_BRIEF` | brief-only 转录布局与 `BriefTool` 导向 UX | [`src/commands/brief.ts`](../src/commands/brief.ts) | 实验（不恢复完整 assistant 栈） |
+| `KAIROS_CHANNELS` | 频道通知与 MCP/频道回调 | [`src/components/LogoV2/ChannelsNotice.tsx`](../src/components/LogoV2/ChannelsNotice.tsx)、[`src/cli/print.ts`](../src/cli/print.ts) | 实验 |
+| `LODESTONE` | 深链/协议注册与设置接线 | [`src/main.tsx`](../src/main.tsx)、[`src/interactiveHelpers.tsx`](../src/interactiveHelpers.tsx) | 实验 |
+| `MESSAGE_ACTIONS` | 交互 UI 的消息动作入口 | [`src/screens/REPL.tsx`](../src/screens/REPL.tsx)、[`src/keybindings/defaultBindings.ts`](../src/keybindings/defaultBindings.ts) | 实验 |
+| `QUICK_SEARCH` | 提示快速搜索 | [`src/components/PromptInput/PromptInput.tsx`](../src/components/PromptInput/PromptInput.tsx)、[`src/keybindings/defaultBindings.ts`](../src/keybindings/defaultBindings.ts) | 实验 |
+| `SHOT_STATS` | 附加投递分布统计视图 | [`src/utils/stats.ts`](../src/utils/stats.ts)、[`src/components/Stats.tsx`](../src/components/Stats.tsx) | 实验 |
+| `TOKEN_BUDGET` | token 预算跟踪、提示触发与警告 UI | [`src/components/Spinner.tsx`](../src/components/Spinner.tsx)、[`src/components/PromptInput/PromptInput.tsx`](../src/components/PromptInput/PromptInput.tsx) | 实验 |
+| `ULTRATHINK` | 额外思考深度档 | [`src/utils/thinking.ts`](../src/utils/thinking.ts) | 实验 |
+| `STREAMLINED_OUTPUT` | headless `stream-json` 的精简输出（`CLAUDE_CODE_STREAMLINED_OUTPUT=true`） | [`src/cli/print.ts`](../src/cli/print.ts) | 实验 |
+| `AUTO_THEME` | OSC 11 主题跟随（5s 轮询） | [`src/components/design-system/ThemeProvider.tsx`](../src/components/design-system/ThemeProvider.tsx)、[`src/tools/ConfigTool/supportedSettings.ts`](../src/tools/ConfigTool/supportedSettings.ts) | stub |
 
 ### 2.8 平台 / 远程 / 权限（12）
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `BRIDGE_MODE` | Remote Control / REPL bridge 与 entitlement 路径 | `src/bridge/bridgeEnabled.ts`、`src/commands/bridge/index.ts` | 已放弃（内置网关覆盖） |
-| `CCR_AUTO_CONNECT` | CCR 自动连接默认路径 | `src/bridge/bridgeEnabled.ts`、`src/utils/config.ts` | 已放弃 |
-| `CCR_MIRROR` | 只出向 CCR 镜像会话 | `src/bridge/remoteBridgeCore.ts` | 已放弃（本地已由 `conversationDisplay.ts` 上报链承担） |
-| `DIRECT_CONNECT` | `claude open <cc://url>` 外部直连会话 | `src/main.tsx` | 已放弃（依赖缺失的 `src/server/parseConnectUrl.js`） |
+| `BRIDGE_MODE` | Remote Control / REPL bridge 与 entitlement 路径 | [`src/bridge/bridgeEnabled.ts`](../src/bridge/bridgeEnabled.ts)、[`src/commands/bridge/index.ts`](../src/commands/bridge/index.ts) | 已放弃（内置网关覆盖） |
+| `CCR_AUTO_CONNECT` | CCR 自动连接默认路径 | [`src/bridge/bridgeEnabled.ts`](../src/bridge/bridgeEnabled.ts)、[`src/utils/config.ts`](../src/utils/config.ts) | 已放弃 |
+| `CCR_MIRROR` | 只出向 CCR 镜像会话 | [`src/bridge/remoteBridgeCore.ts`](../src/bridge/remoteBridgeCore.ts) | 已放弃（本地已由 `conversationDisplay.ts` 上报链承担） |
+| `DIRECT_CONNECT` | `claude open <cc://url>` 外部直连会话 | [`src/main.tsx`](../src/main.tsx) | 已放弃（依赖缺失的 `src/server/parseConnectUrl.js`） |
 | `SSH_REMOTE` | `claude ssh <host>` 远程机器执行 | `src/ssh/createSSHSession.js`（缺失） | 已放弃 |
 | `BYOC_ENVIRONMENT_RUNNER` | 自带环境 runner | `src/environment-runner/main.js`（缺失） | 缺文件 |
 | `SELF_HOSTED_RUNNER` | 自托管 runner | `src/self-hosted-runner/main.js`（缺失） | 缺文件 |
-| `ALLOW_TEST_VERSIONS` | 安装器允许测试版本 | `src/utils/nativeInstaller/download.ts` | 支持 |
-| `IS_LIBC_GLIBC` | 强制 glibc 环境检测 | `src/utils/envDynamic.ts` | 支持 |
-| `IS_LIBC_MUSL` | 强制 musl 环境检测 | `src/utils/envDynamic.ts` | 支持 |
-| `UNATTENDED_RETRY` | API 重试流的无人值守重试 | `src/services/api/withRetry.ts` | 实验 |
-| `HARD_FAIL` | 更严格的失败/日志行为 | `src/utils/log.ts`、`src/main.tsx` | 支持 |
+| `ALLOW_TEST_VERSIONS` | 安装器允许测试版本 | [`src/utils/nativeInstaller/download.ts`](../src/utils/nativeInstaller/download.ts) | 支持 |
+| `IS_LIBC_GLIBC` | 强制 glibc 环境检测 | [`src/utils/envDynamic.ts`](../src/utils/envDynamic.ts) | 支持 |
+| `IS_LIBC_MUSL` | 强制 musl 环境检测 | [`src/utils/envDynamic.ts`](../src/utils/envDynamic.ts) | 支持 |
+| `UNATTENDED_RETRY` | API 重试流的无人值守重试 | [`src/services/api/withRetry.ts`](../src/services/api/withRetry.ts) | 实验 |
+| `HARD_FAIL` | 更严格的失败/日志行为 | [`src/utils/log.ts`](../src/utils/log.ts)、[`src/main.tsx`](../src/main.tsx) | 支持 |
 
 ### 2.9 构建 / 遥测 / 内部（16）
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `ABLATION_BASELINE` | CLI 消融/基线入口 | `src/entrypoints/cli.tsx` | 支持 |
-| `ANTI_DISTILLATION_CC` | 反蒸馏请求元数据 | `src/services/api/claude.ts` | 支持 |
-| `COWORKER_TYPE_TELEMETRY` | coworker 类型遥测字段 | `src/services/analytics/metadata.ts` | 支持 |
-| `DOWNLOAD_USER_SETTINGS` | 设置同步拉取路径 | `src/commands/reload-plugins/reload-plugins.ts`、`src/cli/print.ts` | 支持 |
-| `UPLOAD_USER_SETTINGS` | 设置同步推送路径 | `src/main.tsx` | 支持 |
-| `DUMP_SYSTEM_PROMPT` | 系统提示导出路径 | `src/entrypoints/cli.tsx` | 支持 |
-| `FILE_PERSISTENCE` | 文件持久化接线 | `src/utils/filePersistence/filePersistence.ts`、`src/cli/print.ts` | 支持 |
-| `PERFETTO_TRACING` | perfetto 追踪 hook | `src/utils/telemetry/perfettoTracing.ts` | 支持 |
-| `SLOW_OPERATION_LOGGING` | 慢操作日志 | `src/utils/slowOperations.ts` | 支持 |
-| `SKIP_DETECTION_WHEN_AUTOUPDATES_DISABLED` | 自动更新关闭时跳过更新检测 | `src/components/AutoUpdaterWrapper.tsx` | 支持 |
-| `MEMORY_SHAPE_TELEMETRY` | 记忆形状遥测（no-op） | `src/memdir/findRelevantMemories.ts` | stub |
-| `TRANSCRIPT_CLASSIFIER` | 转录分类器三模式提示 | `src/cli/print.ts`、`src/cli/structuredIO.ts` | stub |
-| `TEMPLATES` | 模板任务 | `src/entrypoints/cli.tsx`、`src/query/stopHooks.ts` | stub |
-| `COMMIT_ATTRIBUTION` | 提交归因 hook（no-op） | `src/cli/print.ts`、`src/commands/clear/caches.ts` | stub |
-| `CONNECTOR_TEXT` | connector 文本块在 API/日志/UI 的处理 | `src/constants/betas.ts`、`src/services/api/claude.ts` | 实验 |
-| `KAIROS` | 云端 assistant 完整栈（需 Anthropic 后端+账号） | `src/bridge/bridgeMain.ts`、`src/cli/print.ts` | 已放弃（`KAIROS_BRIEF`/`KAIROS_CHANNELS` 独立保留） |
+| `ABLATION_BASELINE` | CLI 消融/基线入口 | [`src/entrypoints/cli.tsx`](../src/entrypoints/cli.tsx) | 支持 |
+| `ANTI_DISTILLATION_CC` | 反蒸馏请求元数据 | [`src/services/api/claude.ts`](../src/services/api/claude.ts) | 支持 |
+| `COWORKER_TYPE_TELEMETRY` | coworker 类型遥测字段 | [`src/services/analytics/metadata.ts`](../src/services/analytics/metadata.ts) | 支持 |
+| `DOWNLOAD_USER_SETTINGS` | 设置同步拉取路径 | [`src/commands/reload-plugins/reload-plugins.ts`](../src/commands/reload-plugins/reload-plugins.ts)、[`src/cli/print.ts`](../src/cli/print.ts) | 支持 |
+| `UPLOAD_USER_SETTINGS` | 设置同步推送路径 | [`src/main.tsx`](../src/main.tsx) | 支持 |
+| `DUMP_SYSTEM_PROMPT` | 系统提示导出路径 | [`src/entrypoints/cli.tsx`](../src/entrypoints/cli.tsx) | 支持 |
+| `FILE_PERSISTENCE` | 文件持久化接线 | [`src/utils/filePersistence/filePersistence.ts`](../src/utils/filePersistence/filePersistence.ts)、[`src/cli/print.ts`](../src/cli/print.ts) | 支持 |
+| `PERFETTO_TRACING` | perfetto 追踪 hook | [`src/utils/telemetry/perfettoTracing.ts`](../src/utils/telemetry/perfettoTracing.ts) | 支持 |
+| `SLOW_OPERATION_LOGGING` | 慢操作日志 | [`src/utils/slowOperations.ts`](../src/utils/slowOperations.ts) | 支持 |
+| `SKIP_DETECTION_WHEN_AUTOUPDATES_DISABLED` | 自动更新关闭时跳过更新检测 | [`src/components/AutoUpdaterWrapper.tsx`](../src/components/AutoUpdaterWrapper.tsx) | 支持 |
+| `MEMORY_SHAPE_TELEMETRY` | 记忆形状遥测（no-op） | [`src/memdir/findRelevantMemories.ts`](../src/memdir/findRelevantMemories.ts) | stub |
+| `TRANSCRIPT_CLASSIFIER` | 转录分类器三模式提示 | [`src/cli/print.ts`](../src/cli/print.ts)、[`src/cli/structuredIO.ts`](../src/cli/structuredIO.ts) | stub |
+| `TEMPLATES` | 模板任务 | [`src/entrypoints/cli.tsx`](../src/entrypoints/cli.tsx)、[`src/query/stopHooks.ts`](../src/query/stopHooks.ts) | stub |
+| `COMMIT_ATTRIBUTION` | 提交归因 hook（no-op） | [`src/cli/print.ts`](../src/cli/print.ts)、[`src/commands/clear/caches.ts`](../src/commands/clear/caches.ts) | stub |
+| `CONNECTOR_TEXT` | connector 文本块在 API/日志/UI 的处理 | [`src/constants/betas.ts`](../src/constants/betas.ts)、[`src/services/api/claude.ts`](../src/services/api/claude.ts) | 实验 |
+| `KAIROS` | 云端 assistant 完整栈（需 Anthropic 后端+账号） | [`src/bridge/bridgeMain.ts`](../src/bridge/bridgeMain.ts)、[`src/cli/print.ts`](../src/cli/print.ts) | 已放弃（`KAIROS_BRIEF`/`KAIROS_CHANNELS` 独立保留） |
 
 ### 2.11 有用入口
 

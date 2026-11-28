@@ -7,72 +7,72 @@
 
 | 命令 | 功能 | 源码 |
 |---|---|---|
-| `/add-dir` | 添加额外工作目录 | `src/commands/add-dir/` |
-| `/agents` | 管理 agent 配置 | `src/commands/agents/` |
-| `/advisor` | 配置 advisor 模型 | `src/commands/advisor.ts` |
-| `/btw` | 不打断主对话的侧问 | `src/commands/btw/` |
-| `/branch` | 在当前会话点创建分支 | `src/commands/branch/` |
-| `/chrome` | Claude in Chrome 设置 | `src/commands/chrome/` |
-| `/clear` | 清空对话历史并释放上下文 | `src/commands/clear/` |
-| `/color` | 设置输入栏颜色 | `src/commands/color/` |
-| `/compact` | 压缩对话为摘要（可带摘要指令） | `src/commands/compact/` |
-| `/config` | 打开配置面板 | `src/commands/config/` |
-| `/context` | 以彩色网格可视化上下文占用 | `src/commands/context/` |
-| `/copy` | 复制回复内容 | `src/commands/copy/` |
-| `/cost` | 显示会话成本与时长 | `src/commands/cost/` |
-| `/desktop` | 在桌面端继续当前会话 | `src/commands/desktop/` |
-| `/diff` | 查看未提交改动与逐回合差异 | `src/commands/diff/` |
-| `/doctor` | 诊断安装与设置 | `src/commands/doctor/` |
-| `/effort` | 设置模型推理等级 | `src/commands/effort/` |
-| `/exit` | 退出 REPL | `src/commands/exit/` |
-| `/export` | 导出当前会话（文件或剪贴板） | `src/commands/export/` |
-| `/extra-usage` | 额度用尽后的额外用量配置 | `src/commands/extra-usage/` |
-| `/fast` | 切换 fast 模式 | `src/commands/fast/` |
-| `/feedback` | 提交反馈 | `src/commands/feedback/` |
-| `/files` | 列出上下文中全部文件 | `src/commands/files/` |
-| `/heapdump` | 导出 JS 堆到桌面 | `src/commands/heapdump/` |
-| `/help` | 显示帮助与可用命令 | `src/commands/help/` |
-| `/hooks` | 查看工具事件的 hook 配置 | `src/commands/hooks/` |
-| `/ide` | 管理 IDE 集成 | `src/commands/ide/` |
-| `/init` | 初始化项目配置 | `src/commands/init.ts` |
-| `/insights` | 生成会话分析报告 | `src/commands/insights.ts` |
-| `/install-github-app` | 配置仓库的 GitHub Actions | `src/commands/install-github-app/` |
-| `/install-slack-app` | 安装 Claude Slack 应用 | `src/commands/install-slack-app/` |
-| `/keybindings` | 打开/创建快捷键配置 | `src/commands/keybindings/` |
-| `/mcp` | 管理 MCP 服务器 | `src/commands/mcp/` |
-| `/memory` | 编辑记忆文件 | `src/commands/memory/` |
-| `/mobile` | 下载移动端的二维码 | `src/commands/mobile/` |
-| `/model` | 切换模型 | `src/commands/model/` |
-| `/output-style` | 输出样式（已弃用，改用 `/config`） | `src/commands/output-style/` |
-| `/passes` | 邀请奖励（分享免费周） | `src/commands/passes/` |
-| `/permissions` | 管理 allow / deny 权限规则 | `src/commands/permissions/` |
-| `/plan` | 开启计划模式或查看当前计划 | `src/commands/plan/` |
-| `/plugin` | 管理插件 | `src/commands/plugin/` |
-| `/pr-comments` | 获取 PR 评论 | `src/commands/pr_comments/` |
-| `/privacy-settings` | 查看与更新隐私设置 | `src/commands/privacy-settings/` |
-| `/rate-limit-options` | 限额到达时的选项 | `src/commands/rate-limit-options/` |
-| `/release-notes` | 查看发布说明 | `src/commands/release-notes/` |
-| `/reload-plugins` | 在当前会话激活待生效的插件变更 | `src/commands/reload-plugins/` |
-| `/remote-env` | 配置 teleport 会话的默认远程环境 | `src/commands/remote-env/` |
-| `/rename` | 重命名当前会话 | `src/commands/rename/` |
-| `/resume` | 恢复历史会话 | `src/commands/resume/` |
-| `/rewind` | 回退代码和/或对话到先前节点 | `src/commands/rewind/` |
-| `/sandbox` | 切换沙箱 | `src/commands/sandbox-toggle/` |
-| `/security-review` | 审查当前分支待提交改动的安全性 | `src/commands/security-review.js` |
-| `/session` | 显示远程会话 URL 与二维码 | `src/commands/session/` |
-| `/skills` | 列出可用技能 | `src/commands/skills/` |
-| `/stats` | 查看使用统计 | `src/commands/stats/` |
-| `/status` | 显示版本、模型、账户、API 连通与工具状态 | `src/commands/status/` |
-| `/statusline` | 配置状态栏 | `src/commands/statusline/` |
-| `/stickers` | 订购贴纸 | `src/commands/stickers/` |
-| `/tag` | 为当前会话切换可搜索标记 | `src/commands/tag/` |
-| `/tasks` | 列出并管理后台任务 | `src/commands/tasks/` |
-| `/terminal-setup` | 配置终端快捷键 | `src/commands/terminalSetup/` |
-| `/theme` | 切换主题 | `src/commands/theme/` |
-| `/think-back` | 年度回顾 | `src/commands/thinkback/` |
-| `/thinkback-play` | 播放回顾动画 | `src/commands/thinkback-play/` |
-| `/upgrade` | 升级订阅档位 | `src/commands/upgrade/` |
-| `/vim` | 切换 Vim / 普通编辑模式 | `src/commands/vim/` |
+| `/add-dir` | 添加额外工作目录 | [`src/commands/add-dir/`](../src/commands/add-dir/) |
+| `/agents` | 管理 agent 配置 | [`src/commands/agents/`](../src/commands/agents/) |
+| `/advisor` | 配置 advisor 模型 | [`src/commands/advisor.ts`](../src/commands/advisor.ts) |
+| `/btw` | 不打断主对话的侧问 | [`src/commands/btw/`](../src/commands/btw/) |
+| `/branch` | 在当前会话点创建分支 | [`src/commands/branch/`](../src/commands/branch/) |
+| `/chrome` | Claude in Chrome 设置 | [`src/commands/chrome/`](../src/commands/chrome/) |
+| `/clear` | 清空对话历史并释放上下文 | [`src/commands/clear/`](../src/commands/clear/) |
+| `/color` | 设置输入栏颜色 | [`src/commands/color/`](../src/commands/color/) |
+| `/compact` | 压缩对话为摘要（可带摘要指令） | [`src/commands/compact/`](../src/commands/compact/) |
+| `/config` | 打开配置面板 | [`src/commands/config/`](../src/commands/config/) |
+| `/context` | 以彩色网格可视化上下文占用 | [`src/commands/context/`](../src/commands/context/) |
+| `/copy` | 复制回复内容 | [`src/commands/copy/`](../src/commands/copy/) |
+| `/cost` | 显示会话成本与时长 | [`src/commands/cost/`](../src/commands/cost/) |
+| `/desktop` | 在桌面端继续当前会话 | [`src/commands/desktop/`](../src/commands/desktop/) |
+| `/diff` | 查看未提交改动与逐回合差异 | [`src/commands/diff/`](../src/commands/diff/) |
+| `/doctor` | 诊断安装与设置 | [`src/commands/doctor/`](../src/commands/doctor/) |
+| `/effort` | 设置模型推理等级 | [`src/commands/effort/`](../src/commands/effort/) |
+| `/exit` | 退出 REPL | [`src/commands/exit/`](../src/commands/exit/) |
+| `/export` | 导出当前会话（文件或剪贴板） | [`src/commands/export/`](../src/commands/export/) |
+| `/extra-usage` | 额度用尽后的额外用量配置 | [`src/commands/extra-usage/`](../src/commands/extra-usage/) |
+| `/fast` | 切换 fast 模式 | [`src/commands/fast/`](../src/commands/fast/) |
+| `/feedback` | 提交反馈 | [`src/commands/feedback/`](../src/commands/feedback/) |
+| `/files` | 列出上下文中全部文件 | [`src/commands/files/`](../src/commands/files/) |
+| `/heapdump` | 导出 JS 堆到桌面 | [`src/commands/heapdump/`](../src/commands/heapdump/) |
+| `/help` | 显示帮助与可用命令 | [`src/commands/help/`](../src/commands/help/) |
+| `/hooks` | 查看工具事件的 hook 配置 | [`src/commands/hooks/`](../src/commands/hooks/) |
+| `/ide` | 管理 IDE 集成 | [`src/commands/ide/`](../src/commands/ide/) |
+| `/init` | 初始化项目配置 | [`src/commands/init.ts`](../src/commands/init.ts) |
+| `/insights` | 生成会话分析报告 | [`src/commands/insights.ts`](../src/commands/insights.ts) |
+| `/install-github-app` | 配置仓库的 GitHub Actions | [`src/commands/install-github-app/`](../src/commands/install-github-app/) |
+| `/install-slack-app` | 安装 Claude Slack 应用 | [`src/commands/install-slack-app/`](../src/commands/install-slack-app/) |
+| `/keybindings` | 打开/创建快捷键配置 | [`src/commands/keybindings/`](../src/commands/keybindings/) |
+| `/mcp` | 管理 MCP 服务器 | [`src/commands/mcp/`](../src/commands/mcp/) |
+| `/memory` | 编辑记忆文件 | [`src/commands/memory/`](../src/commands/memory/) |
+| `/mobile` | 下载移动端的二维码 | [`src/commands/mobile/`](../src/commands/mobile/) |
+| `/model` | 切换模型 | [`src/commands/model/`](../src/commands/model/) |
+| `/output-style` | 输出样式（已弃用，改用 `/config`） | [`src/commands/output-style/`](../src/commands/output-style/) |
+| `/passes` | 邀请奖励（分享免费周） | [`src/commands/passes/`](../src/commands/passes/) |
+| `/permissions` | 管理 allow / deny 权限规则 | [`src/commands/permissions/`](../src/commands/permissions/) |
+| `/plan` | 开启计划模式或查看当前计划 | [`src/commands/plan/`](../src/commands/plan/) |
+| `/plugin` | 管理插件 | [`src/commands/plugin/`](../src/commands/plugin/) |
+| `/pr-comments` | 获取 PR 评论 | [`src/commands/pr_comments/`](../src/commands/pr_comments/) |
+| `/privacy-settings` | 查看与更新隐私设置 | [`src/commands/privacy-settings/`](../src/commands/privacy-settings/) |
+| `/rate-limit-options` | 限额到达时的选项 | [`src/commands/rate-limit-options/`](../src/commands/rate-limit-options/) |
+| `/release-notes` | 查看发布说明 | [`src/commands/release-notes/`](../src/commands/release-notes/) |
+| `/reload-plugins` | 在当前会话激活待生效的插件变更 | [`src/commands/reload-plugins/`](../src/commands/reload-plugins/) |
+| `/remote-env` | 配置 teleport 会话的默认远程环境 | [`src/commands/remote-env/`](../src/commands/remote-env/) |
+| `/rename` | 重命名当前会话 | [`src/commands/rename/`](../src/commands/rename/) |
+| `/resume` | 恢复历史会话 | [`src/commands/resume/`](../src/commands/resume/) |
+| `/rewind` | 回退代码和/或对话到先前节点 | [`src/commands/rewind/`](../src/commands/rewind/) |
+| `/sandbox` | 切换沙箱 | [`src/commands/sandbox-toggle/`](../src/commands/sandbox-toggle/) |
+| `/security-review` | 审查当前分支待提交改动的安全性 | [`src/commands/security-review.ts`](../src/commands/security-review.ts) |
+| `/session` | 显示远程会话 URL 与二维码 | [`src/commands/session/`](../src/commands/session/) |
+| `/skills` | 列出可用技能 | [`src/commands/skills/`](../src/commands/skills/) |
+| `/stats` | 查看使用统计 | [`src/commands/stats/`](../src/commands/stats/) |
+| `/status` | 显示版本、模型、账户、API 连通与工具状态 | [`src/commands/status/`](../src/commands/status/) |
+| `/statusline` | 配置状态栏 | [`src/commands/statusline.tsx`](../src/commands/statusline.tsx) |
+| `/stickers` | 订购贴纸 | [`src/commands/stickers/`](../src/commands/stickers/) |
+| `/tag` | 为当前会话切换可搜索标记 | [`src/commands/tag/`](../src/commands/tag/) |
+| `/tasks` | 列出并管理后台任务 | [`src/commands/tasks/`](../src/commands/tasks/) |
+| `/terminal-setup` | 配置终端快捷键 | [`src/commands/terminalSetup/`](../src/commands/terminalSetup/) |
+| `/theme` | 切换主题 | [`src/commands/theme/`](../src/commands/theme/) |
+| `/think-back` | 年度回顾 | [`src/commands/thinkback/`](../src/commands/thinkback/) |
+| `/thinkback-play` | 播放回顾动画 | [`src/commands/thinkback-play/`](../src/commands/thinkback-play/) |
+| `/upgrade` | 升级订阅档位 | [`src/commands/upgrade/`](../src/commands/upgrade/) |
+| `/vim` | 切换 Vim / 普通编辑模式 | [`src/commands/vim/`](../src/commands/vim/) |
 
 ## 2. 条件编入的命令
 
@@ -109,14 +109,14 @@
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `VOICE_MODE` | `/voice`、push-to-talk、语音通知与听写编排 | `src/commands/voice/`、`src/components/PromptInput/Notifications.tsx` | 实验；OAuth 语音后端已移除，运行期恒不可用 |
-| `ULTRAPLAN` | `/ultraplan`、提示触发与退出计划 UI | `src/commands/ultraplan.tsx` | 实验 |
-| `NEW_INIT` | `/init` 新决策路径 | `src/commands/init.ts` | 实验 |
-| `BREAK_CACHE_COMMAND` | `/break-cache` 命令 | `src/context.ts`、`src/commands/break-cache/` | 支持 |
-| `KAIROS_GITHUB_WEBHOOKS` | `/subscribe-pr` + `SubscribePRTool` + GitHub webhook 消息 | `src/commands/subscribe-pr.js`、`src/hooks/useReplBridge.tsx` | stub（禁用） |
-| `FORK_SUBAGENT` | `/fork` 子 agent 与 boilerplate | `src/commands/branch/index.ts` | stub（禁用） |
-| `BUDDY` | `/buddy` 伴侣角色 | `src/buddy/` | stub（禁用） |
-| `TORCH` | `/torch` 命令 | `src/commands/torch.js` | stub（禁用） |
-| `BG_SESSIONS` | 后台会话命令与退出处理 | `src/commands/exit/exit.tsx` | stub（禁用） |
+| `VOICE_MODE` | `/voice`、push-to-talk、语音通知与听写编排 | [`src/commands/voice/`](../src/commands/voice/)、[`src/components/PromptInput/Notifications.tsx`](../src/components/PromptInput/Notifications.tsx) | 实验；OAuth 语音后端已移除，运行期恒不可用 |
+| `ULTRAPLAN` | `/ultraplan`、提示触发与退出计划 UI | [`src/commands/ultraplan.tsx`](../src/commands/ultraplan.tsx) | 实验 |
+| `NEW_INIT` | `/init` 新决策路径 | [`src/commands/init.ts`](../src/commands/init.ts) | 实验 |
+| `BREAK_CACHE_COMMAND` | `/break-cache` 命令 | [`src/context.ts`](../src/context.ts)、[`src/commands/break-cache/`](../src/commands/break-cache/) | 支持 |
+| `KAIROS_GITHUB_WEBHOOKS` | `/subscribe-pr` + `SubscribePRTool` + GitHub webhook 消息 | [`src/commands/subscribe-pr.js`](../src/commands/subscribe-pr.js)、[`src/hooks/useReplBridge.tsx`](../src/hooks/useReplBridge.tsx) | stub（禁用） |
+| `FORK_SUBAGENT` | `/fork` 子 agent 与 boilerplate | [`src/commands/branch/index.ts`](../src/commands/branch/index.ts) | stub（禁用） |
+| `BUDDY` | `/buddy` 伴侣角色 | [`src/buddy/`](../src/buddy/) | stub（禁用） |
+| `TORCH` | `/torch` 命令 | [`src/commands/torch.js`](../src/commands/torch.js) | stub（禁用） |
+| `BG_SESSIONS` | 后台会话命令与退出处理 | [`src/commands/exit/exit.tsx`](../src/commands/exit/exit.tsx) | stub（禁用） |
 | `DAEMON` | `/remoteControlServer` 常驻远程控制 | `src/commands/remoteControlServer/`（缺失） | 已放弃（内置网关承担） |
-| `CCR_REMOTE_SETUP` | 远程 setup 命令路径 | `src/commands.ts` | 已放弃 |
+| `CCR_REMOTE_SETUP` | 远程 setup 命令路径 | [`src/commands.ts`](../src/commands.ts) | 已放弃 |

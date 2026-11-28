@@ -9,23 +9,23 @@
 
 | 技能 | 功能 | 源码 | 注册条件 |
 |---|---|---|---|
-| `update-config` | 通过 settings.json 配置 harness（hook、权限、环境变量等） | `src/skills/bundled/updateConfig.ts` | 无条件 |
-| `keybindings-help` | 自定义键盘快捷键与绑定 | `src/skills/bundled/keybindings.ts` | 无条件 |
-| `verify` | 运行应用验证代码改动 | `src/skills/bundled/verify.ts` | 无条件 |
-| `debug` | 调试会话 | `src/skills/bundled/debug.ts` | 无条件 |
-| `lorem-ipsum` | 生成填充文本做长上下文测试 | `src/skills/bundled/loremIpsum.ts` | 无条件（ANT 文案） |
-| `skillify` | 把当前会话沉淀为技能 | `src/skills/bundled/skillify.ts` | 无条件 |
-| `remember` | 审查自动记忆条目并提议晋升到 CLAUDE.md / 共享记忆 | `src/skills/bundled/remember.ts` | 无条件 |
-| `simplify` | 审查改动代码的复用、质量与效率并修复 | `src/skills/bundled/simplify.ts` | 无条件 |
-| `batch` | 大规模改动的并行拆解与执行（5–30 个 worktree agent） | `src/skills/bundled/batch.ts` | 无条件 |
-| `stuck` | 诊断卡死/缓慢会话并产出报告（ANT） | `src/skills/bundled/stuck.ts` | 无条件 |
+| `update-config` | 通过 settings.json 配置 harness（hook、权限、环境变量等） | [`src/skills/bundled/updateConfig.ts`](../src/skills/bundled/updateConfig.ts) | 无条件 |
+| `keybindings-help` | 自定义键盘快捷键与绑定 | [`src/skills/bundled/keybindings.ts`](../src/skills/bundled/keybindings.ts) | 无条件 |
+| `verify` | 运行应用验证代码改动 | [`src/skills/bundled/verify.ts`](../src/skills/bundled/verify.ts) | 无条件 |
+| `debug` | 调试会话 | [`src/skills/bundled/debug.ts`](../src/skills/bundled/debug.ts) | 无条件 |
+| `lorem-ipsum` | 生成填充文本做长上下文测试 | [`src/skills/bundled/loremIpsum.ts`](../src/skills/bundled/loremIpsum.ts) | 无条件（ANT 文案） |
+| `skillify` | 把当前会话沉淀为技能 | [`src/skills/bundled/skillify.ts`](../src/skills/bundled/skillify.ts) | 无条件 |
+| `remember` | 审查自动记忆条目并提议晋升到 CLAUDE.md / 共享记忆 | [`src/skills/bundled/remember.ts`](../src/skills/bundled/remember.ts) | 无条件 |
+| `simplify` | 审查改动代码的复用、质量与效率并修复 | [`src/skills/bundled/simplify.ts`](../src/skills/bundled/simplify.ts) | 无条件 |
+| `batch` | 大规模改动的并行拆解与执行（5–30 个 worktree agent） | [`src/skills/bundled/batch.ts`](../src/skills/bundled/batch.ts) | 无条件 |
+| `stuck` | 诊断卡死/缓慢会话并产出报告（ANT） | [`src/skills/bundled/stuck.ts`](../src/skills/bundled/stuck.ts) | 无条件 |
 | `dream` | 云端 dream 技能 | `src/skills/bundled/dream.js`（缺失） | `KAIROS` / `KAIROS_DREAM` |
-| `hunter` | 当前改动中找 bug 并产出审查产物 | `src/skills/bundled/hunter.ts` | `REVIEW_ARTIFACT` |
-| `loop` | 按间隔重复执行提示或命令 | `src/skills/bundled/loop.ts` | `AGENT_TRIGGERS`（另有运行期 `isEnabled`） |
-| `schedule` | 管理定时远程 agent（triggers） | `src/skills/bundled/scheduleRemoteAgents.ts` | `AGENT_TRIGGERS_REMOTE` |
-| `claude-api` | 用 Claude API / Anthropic SDK 构建应用 | `src/skills/bundled/claudeApi.ts` | `BUILDING_CLAUDE_APPS` |
-| `claude-in-chrome` | Chrome 集成 | `src/skills/bundled/claudeInChrome.ts` | `shouldAutoEnableClaudeInChrome()` |
-| `run-skill-generator` | 技能生成器 | `src/skills/bundled/runSkillGenerator.js` | `RUN_SKILL_GENERATOR`（注册即禁用） |
+| `hunter` | 当前改动中找 bug 并产出审查产物 | [`src/skills/bundled/hunter.ts`](../src/skills/bundled/hunter.ts) | `REVIEW_ARTIFACT` |
+| `loop` | 按间隔重复执行提示或命令 | [`src/skills/bundled/loop.ts`](../src/skills/bundled/loop.ts) | `AGENT_TRIGGERS`（另有运行期 `isEnabled`） |
+| `schedule` | 管理定时远程 agent（triggers） | [`src/skills/bundled/scheduleRemoteAgents.ts`](../src/skills/bundled/scheduleRemoteAgents.ts) | `AGENT_TRIGGERS_REMOTE` |
+| `claude-api` | 用 Claude API / Anthropic SDK 构建应用 | [`src/skills/bundled/claudeApi.ts`](../src/skills/bundled/claudeApi.ts) | `BUILDING_CLAUDE_APPS` |
+| `claude-in-chrome` | Chrome 集成 | [`src/skills/bundled/claudeInChrome.ts`](../src/skills/bundled/claudeInChrome.ts) | `shouldAutoEnableClaudeInChrome()` |
+| `run-skill-generator` | 技能生成器 | [`src/skills/bundled/runSkillGenerator.js`](../src/skills/bundled/runSkillGenerator.js) | `RUN_SKILL_GENERATOR`（注册即禁用） |
 
 ## 2. 工作区技能
 
@@ -63,15 +63,15 @@
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `BUILDING_CLAUDE_APPS` | `claude-api` 技能（Claude API 应用构建） | `src/skills/bundled/claudeApi.ts` | stub（仅多语言 `.md` 资产） |
-| `RUN_SKILL_GENERATOR` | 技能生成器技能 | `src/skills/bundled/runSkillGenerator.js` | stub（注册即禁用） |
+| `BUILDING_CLAUDE_APPS` | `claude-api` 技能（Claude API 应用构建） | [`src/skills/bundled/claudeApi.ts`](../src/skills/bundled/claudeApi.ts) | stub（仅多语言 `.md` 资产） |
+| `RUN_SKILL_GENERATOR` | 技能生成器技能 | [`src/skills/bundled/runSkillGenerator.js`](../src/skills/bundled/runSkillGenerator.js) | stub（注册即禁用） |
 | `KAIROS_DREAM` | 云端 dream 技能与任务行为 | `src/skills/bundled/dream.js`（缺失） | 已放弃 |
-| `MCP_SKILLS` | MCP 技能发现 | `src/services/mcp/client.ts`、`src/commands.ts` | stub（返回 `[]`） |
+| `MCP_SKILLS` | MCP 技能发现 | [`src/services/mcp/client.ts`](../src/services/mcp/client.ts)、[`src/commands.ts`](../src/commands.ts) | stub（返回 `[]`） |
 | `EXPERIMENTAL_SKILL_SEARCH` | 技能检索服务（localSearch/prefetch） | `src/services/skillSearch/`（缺失） | 缺文件 |
-| `SKILL_IMPROVEMENT` | 技能改进 hook | `src/utils/hooks/skillImprovement.ts` | 支持（默认关） |
+| `SKILL_IMPROVEMENT` | 技能改进 hook | [`src/utils/hooks/skillImprovement.ts`](../src/utils/hooks/skillImprovement.ts) | 支持（默认关） |
 
 ## 5. 插件类 Feature Flag
 
 | 名称 | 功能 | 源码文件 | 状态 |
 |---|---|---|---|
-| `MCP_RICH_OUTPUT` | MCP 工具富输出渲染 UI | `src/tools/MCPTool/UI.tsx` | 实验 |
+| `MCP_RICH_OUTPUT` | MCP 工具富输出渲染 UI | [`src/tools/MCPTool/UI.tsx`](../src/tools/MCPTool/UI.tsx) | 实验 |
