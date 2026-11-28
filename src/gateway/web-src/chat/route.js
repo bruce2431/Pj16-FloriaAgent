@@ -59,7 +59,7 @@ import { hydrateExtCardId } from '../engine/ext-runtime.js'
     if (state.sbMode === 'work' || !state.currentHash) { if (box.innerHTML) box.innerHTML = ''; return }
     const s = findSession(state.currentHash)
     const title = (s && s.title) || '未命名会话'
-    const html = `<span class="wk-tb-pill on chat-tb-title" title="${esc(title)}"><span class="wk-tb-name">${esc(title)}</span></span>`
+    const html = `<span class="wk-tb-pill chat-tb-title" title="${esc(title)}"><span class="wk-tb-name">${esc(title)}</span></span>`
     if (box.innerHTML !== html) box.innerHTML = html
   }
 

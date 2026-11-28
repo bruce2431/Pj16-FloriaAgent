@@ -1952,12 +1952,13 @@ html[data-theme="dark"] .folder-head { color: var(--text-2); }
 #summary-root[hidden] { display: none; }
 #chat-area.work #summary-root,
 body.token-gate #summary-root { display: none; }
+/* 2026-11-28 用户定案：与 chat 顶栏标题同口径——无边框、无底色、无投影（静息纯图标钮）。 */
 #summary-btn {
   display: grid; place-items: center; flex: none;
   width: 30px; height: 30px; padding: 0;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--bg); color: var(--ink-2);
-  box-shadow: var(--shadow-sm); cursor: pointer;
+  border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-2);
+  cursor: pointer;
 }
 #summary-btn:hover { background: var(--hover); color: var(--ink); }
 #summary-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
@@ -2563,7 +2564,9 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 #chat-area:not(.work) > .chat-topbar { margin: 2px 2px 0; padding-right: 50px; }
 #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) > .chat-topbar { display: flex; }
 body.token-gate #chat-area > .chat-topbar { display: none; }
-#chat-area:not(.work) .chat-tb-title { cursor: default; }
+/* 标题胶囊 = 纯文字：无边框、无底色（2026-11-28 用户定案），也不参与 hover 高亮。 */
+#chat-area:not(.work) .chat-tb-title { border: 0; background: transparent; color: var(--text); cursor: default; }
+#chat-area:not(.work) .chat-tb-title:hover { background: transparent; color: var(--text); }
 #sidebar:not(.open) ~ #chat-area:not(.work) > .chat-topbar { padding-left: 46px; }
 #sidebar:not(.open) ~ #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) #menu-btn {
   top: 8px; left: 10px; width: 30px; height: 30px; border-radius: 8px;
