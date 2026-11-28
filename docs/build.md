@@ -98,7 +98,7 @@
 | `COMPACTION_REMINDERS` | 压缩与附件流程提醒文案 | [`src/utils/attachments.ts`](../src/utils/attachments.ts) | 实验 |
 | `EXTRACT_MEMORIES` | 对话后记忆抽取 hook | [`src/memdir/paths.ts`](../src/memdir/paths.ts)、[`src/cli/print.ts`](../src/cli/print.ts) | 实验 |
 | `PROMPT_CACHE_BREAK_DETECTION` | 缓存断点检测 | [`src/services/api/claude.ts`](../src/services/api/claude.ts)、[`src/commands/compact/compact.ts`](../src/commands/compact/compact.ts) | 实验 |
-| `TEAMMEM` | 团队记忆文件、watcher 与 UI 消息 | [`src/components/memory/`](../src/components/memory/)、[`src/memdir/`](../src/memdir/) | 实验 |
+| `TEAMMEM` | 团队记忆文件、watcher 与 UI 消息 | [`src/components/memory/MemoryFileSelector.tsx`](../src/components/memory/MemoryFileSelector.tsx)、[`src/memdir/memdir.ts`](../src/memdir/memdir.ts) | 实验 |
 | `VERIFICATION_AGENT` | 验证 agent 提示与任务/todo 工具引导 | [`src/tools/AgentTool/builtInAgents.ts`](../src/tools/AgentTool/builtInAgents.ts)、[`src/constants/prompts.ts`](../src/constants/prompts.ts) | 实验 |
 | `COORDINATOR_MODE` | coordinator + worker 两个内置 agent（`subagent_type: 'worker'`） | [`src/coordinator/workerAgent.ts`](../src/coordinator/workerAgent.ts)、[`src/coordinator/coordinatorMode.ts`](../src/coordinator/coordinatorMode.ts) | 已恢复（默认不编入） |
 | `PROACTIVE` | 云端主动任务栈 | `src/proactive/`（缺失） | 已放弃 |
