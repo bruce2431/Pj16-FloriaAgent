@@ -13,6 +13,7 @@ import {
   gwState,
   persistTurnEndAt,
   persistWebSessions,
+  recordSessionModelLaunch,
   sessionActivity,
   sessionDeltaSeq,
   sessionFilesState,
@@ -687,7 +688,14 @@ export function attachWsServers(server: Server, root: string): WebSocketServer {
               reply(false, `model "${modelRaw}" 不在凭据池任何供应商模型清单中`)
             } else {
               const newSid = randomUUID()
-              spawnWebSession(undefined, project, newSid, modelRaw ? { model: modelRaw } : undefined)
+              const createProvider = modelRaw ? findModelProvider(modelRaw) : null
+              if (modelRaw && createProvider) recordSessionModelLaunch(newSid, modelRaw, createProvider)
+              spawnWebSession(
+                undefined,
+                project,
+                newSid,
+                modelRaw ? { model: modelRaw, ...(createProvider ? { provider: createProvider } : {}) } : undefined,
+              )
                 .then(async () => {
                   const p = join(webSessionProjectRoot(project), '.claude', 'projects', `${newSid}.jsonl`)
                   try {

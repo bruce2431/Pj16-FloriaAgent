@@ -584,7 +584,7 @@ import { renderList, renderProject } from './mgr.js'
   // 分层治理 4C（2026-10-10）：engine/live.js 的读取口（写侧仍是尾部 setFirstSendHash）——每次现读，
   // 调用方严禁缓存返回值。
   function getFirstSendHash() { return firstSendHash }
-  async function newWebSession(projectLabel, model) {
+  async function newWebSession(projectLabel, model, provider) {
     if (needToken()) return toast('请先完成 token 验证')
     if (webCreating) return null
     webCreating = true
@@ -595,6 +595,8 @@ import { renderList, renderProject } from './mgr.js'
       const body = {}
       if (projectLabel) body.project = projectLabel
       if (model) body.model = model
+      // 同 ID 多供应商：随模型下发所选供应商 Key，网关 spawn 时注入 FLORIA_SESSION_PROVIDER 精确路由
+      if (model && provider) body.provider = provider
       const res = await fetch(apiUrl('/gateway/wsession'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await res.json()
       if (!d.hash || !d.id) throw new Error(d.error || 'bad response')

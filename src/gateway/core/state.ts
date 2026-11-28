@@ -182,7 +182,16 @@ export function loadSessionModelLaunch(): void {
 
 export function recordSessionModelLaunch(sid: string, model: string, provider?: string): void {
   if (!sid || !model.trim()) return
-  sessionModelLaunch.set(sid, { model: model.trim(), ...(provider ? { provider } : {}), updatedAt: Date.now() })
+  const nextModel = model.trim()
+  // 同模型重报（如 CLI model-report 不带 provider）时保留已绑定的供应商，避免 resume 丢失路由。
+  const prev = sessionModelLaunch.get(sid)
+  const keepProvider = !provider && prev && prev.model === nextModel ? prev.provider : undefined
+  const effProvider = provider || keepProvider
+  sessionModelLaunch.set(sid, {
+    model: nextModel,
+    ...(effProvider ? { provider: effProvider } : {}),
+    updatedAt: Date.now(),
+  })
   persistSessionModelLaunch()
 }
 

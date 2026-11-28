@@ -4840,7 +4840,7 @@ function setLastNavHash(v) { lastNavHash = v }
   // 分层治理 4C（2026-10-10）：engine/live.js 的读取口（写侧仍是尾部 setFirstSendHash）——每次现读，
   // 调用方严禁缓存返回值。
   function getFirstSendHash() { return firstSendHash }
-  async function newWebSession(projectLabel, model) {
+  async function newWebSession(projectLabel, model, provider) {
     if (needToken()) return toast('请先完成 token 验证')
     if (webCreating) return null
     webCreating = true
@@ -4851,6 +4851,8 @@ function setLastNavHash(v) { lastNavHash = v }
       const body = {}
       if (projectLabel) body.project = projectLabel
       if (model) body.model = model
+      // 同 ID 多供应商：随模型下发所选供应商 Key，网关 spawn 时注入 FLORIA_SESSION_PROVIDER 精确路由
+      if (model && provider) body.provider = provider
       const res = await fetch(apiUrl('/gateway/wsession'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await res.json()
       if (!d.hash || !d.id) throw new Error(d.error || 'bad response')
@@ -15293,21 +15295,28 @@ function wkMerge3(base, local, remote) {
   // 模型目录（真实凭据池，与 floria MGR 模型 tab 同源）：2026-08-29 直接切模型自动切供应商 →
   // 全池模型可选（items 内 src 以「凭据池」开头的行，跨商直选由网关自动切供应商）；回落 providerModels → items。
   // 2026-08-22 取代 MOCK_MODEL_DIR（anthropic 上游）。
+  // 模型目录条目：{ id=模型 ID, providerId=供应商 Key（网关下发 items[].providerId）, provider=展示标签 }。
+  // 同一模型 ID 可被多个供应商声明（2026-11-28）：按 (providerId, id) 逐条保留，不可按 ID 去重，
+  // 否则后声明的供应商被吞掉、无法选中。
   function modelDir() {
-    const pool = ((MODELS && Array.isArray(MODELS.items) ? MODELS.items : []) || [])
-      .filter(it => it && typeof it.src === 'string' && it.src.startsWith('凭据池') && it.v)
-      .map(it => String(it.v))
-    const raw = pool.length
-      ? pool
-      : ((MODELS && Array.isArray(MODELS.providerModels) && MODELS.providerModels.length)
-        ? MODELS.providerModels
-        : ((MODELS && Array.isArray(MODELS.items) ? MODELS.items : []).map(it => String(it.v)).filter(Boolean)))
+    const items = ((MODELS && Array.isArray(MODELS.items) ? MODELS.items : []) || [])
+    const pool = items.filter(it => it && typeof it.src === 'string' && it.src.startsWith('凭据池') && it.v)
     const seen = new Set()
     const out = []
-    for (const id of raw) {
-      if (!id || seen.has(id)) continue
-      seen.add(id)
-      out.push(id)
+    const push = (id, providerId, provider) => {
+      const key = `${providerId || ''}::${id}`
+      if (!id || seen.has(key)) return
+      seen.add(key)
+      out.push({ id, providerId: providerId || '', provider: provider || '' })
+    }
+    if (pool.length) {
+      for (const it of pool) push(String(it.v), String(it.providerId || ''), String(it.provider || ''))
+    } else if (MODELS && Array.isArray(MODELS.providerModels) && MODELS.providerModels.length) {
+      for (const id of MODELS.providerModels) push(String(id), '', '')
+    } else {
+      for (const it of items) {
+        if (it && it.v) push(String(it.v), String(it.providerId || ''), String(it.provider || ''))
+      }
     }
     return out
   }
@@ -15321,7 +15330,9 @@ function wkMerge3(base, local, remote) {
       const raw = localStorage.getItem(MODEL_KEY)
       if (!raw) return null
       const o = JSON.parse(raw)
-      if (o && typeof o === 'object' && typeof o.model === 'string' && o.model) return o
+      if (o && typeof o === 'object' && typeof o.model === 'string' && o.model) {
+        return { ...o, provider: typeof o.provider === 'string' ? o.provider : '', providerId: typeof o.providerId === 'string' ? o.providerId : '' }
+      }
     } catch { /* 存储不可用忽略 */ }
     return null
   }
@@ -15330,10 +15341,10 @@ function wkMerge3(base, local, remote) {
       // 2026-09-19：ts 同时回写 MODEL_CUR（不只写 localStorage）——applySessionModel 的「切换前在途
       // 快照」判定要比 modelTs < MODEL_CUR.ts，ts 只落盘不进内存则内存版恒无 ts，判定失效。
       MODEL_CUR.ts = Date.now()
-      localStorage.setItem(MODEL_KEY, JSON.stringify({ provider: MODEL_CUR.provider, model: MODEL_CUR.model, effortLevel: MODEL_CUR.effortLevel, ts: MODEL_CUR.ts }))
+      localStorage.setItem(MODEL_KEY, JSON.stringify({ provider: MODEL_CUR.provider, providerId: MODEL_CUR.providerId, model: MODEL_CUR.model, effortLevel: MODEL_CUR.effortLevel, ts: MODEL_CUR.ts }))
     } catch { /* 存储不可用忽略 */ }
   }
-  let MODEL_CUR = loadModelCur() || { provider: '', model: '', effortLevel: undefined }
+  let MODEL_CUR = loadModelCur() || { provider: '', providerId: '', model: '', effortLevel: undefined }
   // 用户本次会话内主动切换过模型 → 不再被 /gateway/session 旧上报覆盖（切换会话时重置）。避免
   // POST /gateway/model 尚未落地前的一次刷新把刚切的选择回滚成旧值。
   let modelUserPicked = false
@@ -15346,8 +15357,12 @@ function wkMerge3(base, local, remote) {
   // 发送首条消息时随会话级切换（POST /gateway/model 带 sessionId，见 send.js 空态分支）落到新会话，
   // 消费即清；回首页且无待定选择时 seat 回落凭据池全局默认（syncSeatToGlobalDefault）。
   let newSessionModel = ''
+  // 与模型成对的新会话供应商 Key（同 ID 多供应商时按所选条目路由；空 = 网关按 findModelProvider 判据）
+  let newSessionProvider = ''
   function getNewSessionModel() { return newSessionModel }
   function setNewSessionModel(v) { newSessionModel = typeof v === 'string' ? v : '' }
+  function getNewSessionProvider() { return newSessionProvider }
+  function setNewSessionProvider(v) { newSessionProvider = typeof v === 'string' ? v : '' }
   // 用 CLI 上报的会话实际模型校准模型 seat（2026-10-10 分层治理 4B 自 engine/sessions.js 反转迁入：
   // 「校准 seat」是输入栏行为，归 feature 层——engine 不再 import feature，故本函数随状态同处）。
   // 网关的每会话模型是权威源（CLI 上报即真，见 reportCurrentModel），web 一律采纳；唯一例外是
@@ -15367,7 +15382,8 @@ function wkMerge3(base, local, remote) {
       modelTs < MODEL_CUR.ts
     ) return
     setModelUserPicked(false)
-    setModelCur({ ...MODEL_CUR, model })
+    // 会话上报只带模型 ID：模型变了则供应商归属未知，清掉旧 providerId（同 ID 不同供应商时不得沿用）。
+    setModelCur({ ...MODEL_CUR, model, providerId: '', provider: '' })
     saveModelCur()
     renderModelSeat()
   }
@@ -15685,7 +15701,7 @@ function wkMerge3(base, local, remote) {
   function currentChoice() {
     const id = MODEL_CUR.model || (MODELS && (MODELS.activeModel || (MODELS.model ? String(MODELS.model) : ''))) || ''
     if (!id) return null
-    return { model: { id, name: id } }
+    return { model: { id, name: id }, providerId: MODEL_CUR.providerId || '' }
   }
   // 推理等级名（全局；effortLevel 未设置 = Off / 无 off 档模型显示「默认」）
   function effLabel() {
@@ -15700,7 +15716,10 @@ function wkMerge3(base, local, remote) {
   function modelEffortLevels() {
     const id = MODEL_CUR.model
     if (!id || !MODELS || !Array.isArray(MODELS.items)) return null
-    const it = MODELS.items.find(x => x && x.v === id)
+    const pid = MODEL_CUR.providerId || ''
+    const cands = MODELS.items.filter(x => x && x.v === id)
+    // 同 ID 多供应商：有 providerId 按 (供应商, 模型) 精确匹配；否则仅唯一候选时采用
+    const it = pid ? cands.find(x => (x.providerId || '') === pid) : (cands.length === 1 ? cands[0] : null)
     return it && Array.isArray(it.effortLevels) && it.effortLevels.length ? it.effortLevels.map(String) : null
   }
   function renderModelSeat() {
@@ -15754,9 +15773,11 @@ function wkMerge3(base, local, remote) {
     if (state.currentHash || newSessionModel) return
     const g = MODELS && (MODELS.activeModel || (MODELS.model ? String(MODELS.model) : ''))
     if (!g) return
-    const prov = MODELS.activeProvider || MODEL_CUR.provider
-    if (MODEL_CUR.model === g && MODEL_CUR.provider === prov) return
-    setModelCur({ ...MODEL_CUR, model: g, provider: prov })
+    const provId = MODELS.activeProvider || MODEL_CUR.providerId || ''
+    const hit = ((MODELS && MODELS.items) || []).find(x => x && x.v === g && (!provId || (x.providerId || '') === provId))
+    const prov = (hit && hit.provider) || MODEL_CUR.provider || ''
+    if (MODEL_CUR.model === g && (MODEL_CUR.providerId || '') === provId) return
+    setModelCur({ ...MODEL_CUR, model: g, provider: prov, providerId: provId })
     saveModelCur()
     renderModelSeat()
   }
@@ -15783,7 +15804,7 @@ function wkMerge3(base, local, remote) {
   function mselRows() {
     if (msel.pane === 'model') {
       const rows = []
-      for (const id of modelDir()) rows.push({ kind: 'model', id })
+      for (const r of modelDir()) rows.push({ kind: 'model', id: r.id, providerId: r.providerId, provider: r.provider })
       return rows
     }
     if (msel.pane === 'effort') {
@@ -15817,28 +15838,31 @@ function wkMerge3(base, local, remote) {
       html += `<button type="button" class="cell"><span class="cellLabel">推理等级</span><span class="cellValue">${esc(ename)}</span><span class="cellChevron">${I.dshChevRight}</span></button>`
     } else if (msel.pane === 'model') {
       // dsh model 面板：.groups > .group[.groupTitle + .option×]，check 尾勾；分组按凭据池供应商（与 MGR 模型 tab 同判据）
-      const ids = modelDir()
-      if (!ids.length) {
+      const rows = mselRows()
+      if (!rows.length) {
         html += `<div class="empty">暂无模型</div>`
       } else {
         html += `<div class="groups">`
+        // 分组按供应商（providerId 区分同标签的不同供应商条目）；同 ID 多供应商各成一条，不按 ID 去重
         const groups = []
-        for (const id of ids) {
-          // 2026-08-29 全池可选：优先用网关下发的真实归属供应商标签（items[].provider），缺失再走启发式前缀判定
-          const it = ((MODELS && MODELS.items) || []).find(x => x && x.v === id)
-          const p = (it && it.provider) || modelProviderOf(it || { k: id, v: id })
-          let g = groups.find((x) => x.provider === p)
-          if (!g) { g = { provider: p, items: [] }; groups.push(g) }
-          g.items.push(id)
+        for (const r of rows) {
+          const key = r.providerId || r.provider || modelProviderOf({ k: r.id, v: r.id })
+          const title = r.provider || r.providerId || modelProviderOf({ k: r.id, v: r.id })
+          let g = groups.find((x) => x.key === key)
+          if (!g) { g = { key, provider: title, items: [] }; groups.push(g) }
+          g.items.push(r)
         }
         let idx = 0
-        const curId = currentChoice()?.model.id
+        const cur = currentChoice()
+        const curId = cur?.model.id
+        const curProv = cur?.providerId || ''
         for (const g of groups) {
           html += `<div class="group"><div class="groupTitle">${esc(g.provider)}</div>`
-          for (const id of g.items) {
+          for (const r of g.items) {
             const on = idx === msel.active ? ' on' : ''
-            const selected = id === curId
-            html += `<button type="button" class="option${on}" data-idx="${idx}" role="menuitemradio" aria-checked="${selected}"><span class="optionCopy"><span class="modelName">${esc(id)}</span></span><span class="check">${selected ? I.dshCheck : ''}</span></button>`
+            // 能区分供应商时按 (供应商, 模型) 匹配；否则回落仅按模型 ID
+            const selected = r.id === curId && (r.providerId ? r.providerId === curProv : true)
+            html += `<button type="button" class="option${on}" data-idx="${idx}" role="menuitemradio" aria-checked="${selected}"><span class="optionCopy"><span class="modelName">${esc(r.id)}</span></span><span class="check">${selected ? I.dshCheck : ''}</span></button>`
             idx++
           }
           html += `</div>`
@@ -15873,11 +15897,13 @@ function wkMerge3(base, local, remote) {
     if (!row) return
     if (msel.pane === 'model') {
       const id = row.id
-      if (MODEL_CUR.model === id) { closeModelPop(); return }
-      const it = ((MODELS && MODELS.items) || []).find(x => x && (x.v === id || x.k === id))
-      // 2026-08-29 直接切模型自动切供应商：MODEL_CUR.provider 同步真实归属（网关侧按会话绑定供应商）
+      const providerId = row.providerId || ''
+      // 同 ID 不同供应商也算切换（按 (供应商, 模型) 判同）
+      if (MODEL_CUR.model === id && (MODEL_CUR.providerId || '') === providerId) { closeModelPop(); return }
+      const it = ((MODELS && MODELS.items) || []).find(x => x && x.v === id && (providerId ? (x.providerId || '') === providerId : true))
+      // 2026-08-29 直接切模型自动切供应商：providerId 同步所选条目的真实供应商 Key（网关侧按会话绑定供应商）
       const prevEff = MODEL_CUR.effortLevel
-      MODEL_CUR = { ...MODEL_CUR, model: id, provider: (it && it.provider) || MODEL_CUR.provider }
+      MODEL_CUR = { ...MODEL_CUR, model: id, providerId, provider: row.provider || (it && it.provider) || MODEL_CUR.provider }
       // 切模型校验档位（2026-10-14 待办#7 补缺）：新模型有官方档位声明且当前档不在其中（例：从
       // DeepSeek 切 GLM 时残留 off，GLM 声明无 off）→ 清回「默认」，避免座显/菜单展示无效档；
       // 有会话时随切换下发改档（'off' 语义 = 网关 delete settings.effortLevel），与 effort 面板同链。
@@ -15902,10 +15928,11 @@ function wkMerge3(base, local, remote) {
       const home = !state.currentHash
       if (home) {
         setNewSessionModel(id)
+        setNewSessionProvider(providerId)
         toast(`新会话将使用 ${id}（仅本次）`)
         return
       }
-      void apiSetModel({ model: id, sessionId: state.currentHash })
+      void apiSetModel({ model: id, ...(providerId ? { provider: providerId } : {}), sessionId: state.currentHash })
         .then(r => toast(!r.ok ? '切换失败 · 网关未连接' : r.applied === false
           ? `已设为 ${id} · 会话启动后生效`
           : `模型已切换为 ${id}`))
@@ -17826,7 +17853,9 @@ async function addImageUrls(urls, target, filePath) {
       // 它只作用于本次新建会话——随建会话请求下发，网关 spawn 时落 --model 启动参数（见 newWebSession），
       // 不改全局默认（全局默认唯一入口 = 凭据池 credentials.json，见 model-select.js 注释）。
       const prevModel = getNewSessionModel()
+      const prevProvider = getNewSessionProvider()
       setNewSessionModel('')
+      setNewSessionProvider('')
       // 丝滑过渡（2026-08-30）：不等 wsession 返回（spawn CLI 窗口+注册常 >1s，期间空态冻结
       // 是「不丝滑」根源）——发送瞬间即进会话视觉：输入栏 FLIP 沉底 + 趴栏淡出 + 首条消息
       // 乐观上屏（气泡+正在处理折叠）。pre 标记 + hash 暂空：renderSession 创建中不洗
@@ -17839,7 +17868,7 @@ async function addImageUrls(urls, target, filePath) {
       addUser(text, imgs, files)
       composerSetText('')
       syncGwSend()
-      const d = await newWebSession(tgt || undefined, prevModel || undefined)
+      const d = await newWebSession(tgt || undefined, prevModel || undefined, prevProvider || undefined)
       if (!d || !d.hash) {
         setFirstSendHash('') // 事务终止：创建失败，乐观 DOM 随下方空态回滚一并清空
         setPendingUserMsgs(pendingUserMsgs.filter((p) => p.hash)) // 丢弃无归属（hash=''）的乐观项
@@ -17850,6 +17879,7 @@ async function addImageUrls(urls, target, filePath) {
         syncGwSend()
         state.newProject = prevNew
         setNewSessionModel(prevModel)
+        setNewSessionProvider(prevProvider)
         composerFocus()
         return true
       }

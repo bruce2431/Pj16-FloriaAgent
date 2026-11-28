@@ -75,7 +75,7 @@ export function spawnWebSession(
   resume: string | undefined,
   project: string | undefined,
   sidForNew?: string,
-  opts?: { model?: string },
+  opts?: { model?: string; provider?: string },
 ): Promise<string> {
   if (gwState.ejecting) return Promise.reject(new Error('网关正在安全卸载'))
   if (resume && webSessions.has(resume)) {
@@ -104,18 +104,30 @@ export function spawnWebSession(
   }
   const p = new Promise<string>((resolvePromise, reject) => {
     const args = resume ? ['--resume', resume] : ['--session-id', sid]
-    const launchModel = opts?.model?.trim() || (resume ? sessionModelLaunch.get(sid)?.model : undefined)
+    const optModel = opts?.model?.trim()
+    const storedLaunch = resume ? sessionModelLaunch.get(sid) : undefined
+    const launchModel = optModel || storedLaunch?.model
+    // 供应商与模型成对：显式传入优先；resume 且无显式模型时沿用启动表里的供应商（旧表无该字段 = 不传）。
+    const launchProvider = launchModel
+      ? optModel
+        ? opts?.provider?.trim() || undefined
+        : storedLaunch?.provider
+      : undefined
     if (launchModel) args.push('--model', launchModel)
     const cwd = webSessionProjectRoot(effectiveProject)
     const exe = webSessionExe()
     const gwUrl = `http://127.0.0.1:${gwState.currentPort}`
     console.log(
-      `[gateway] wsession: spawn 开始 resume=${resume ?? '新建'} sid=${sid} project=${effectiveProject ?? '(笔/全局根)'} model=${launchModel ?? '(默认)'} exe=${exe} cwd=${cwd}`,
+      `[gateway] wsession: spawn 开始 resume=${resume ?? '新建'} sid=${sid} project=${effectiveProject ?? '(笔/全局根)'} model=${launchModel ?? '(默认)'} provider=${launchProvider ?? '(默认)'} exe=${exe} cwd=${cwd}`,
     )
+    // resume 不得继承任何残留供应商：显式清掉后再按本次启动表决定是否注入。
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, FLOIRA_GATEWAY: gwUrl, FLORIA_IN_WT: '1' }
+    delete childEnv.FLORIA_SESSION_PROVIDER
+    if (launchProvider) childEnv.FLORIA_SESSION_PROVIDER = launchProvider
     let child: ChildProcess
     try {
       child = spawn('wt.exe', ['-w', 'last', 'nt', '-d', cwd, exe, ...args], {
-        env: { ...process.env, FLOIRA_GATEWAY: gwUrl, FLORIA_IN_WT: '1' },
+        env: childEnv,
         stdio: 'ignore',
       })
     } catch (e) {

@@ -115,7 +115,7 @@ import { safeParseJSON } from './utils/json.js';
 import { logError } from './utils/log.js';
 import { getModelDeprecationWarning } from './utils/model/deprecation.js';
 import { getDefaultMainLoopModel, getUserSpecifiedModelSetting, normalizeModelStringForAPI, parseUserSpecifiedModel } from './utils/model/model.js';
-import { findModelProvider, getActiveModel, setSessionProviderOverride } from './utils/credentials/pool.js';
+import { findModelProvider, getActiveModel, isModelInProvider, setSessionProviderOverride } from './utils/credentials/pool.js';
 import { ensureModelStringsInitialized } from './utils/model/modelStrings.js';
 import { PERMISSION_MODES } from './utils/permissions/PermissionMode.js';
 import { checkAndDisableBypassPermissions, getAutoModeEnabledStateIfCached, initializeToolPermissionContext, initialPermissionModeFromCLI, isDefaultPermissionModeAuto, parseToolListFromCLI, removeDangerousPermissions, stripDangerousPermissionsForAutoMode, verifyAutoModeGateAccess } from './utils/permissions/permissionSetup.js';
@@ -2124,7 +2124,15 @@ async function run(): Promise<CommanderCommand> {
     //（model.tsx handleSelect），补全启动口的凭据同源不变量：网关 spawn --model 传跨供应商
     // 模型时若无此绑定，凭据仍取启动快照 provider → 「模型名 A、endpoint/key B」400（2026-09-10
     // 事故同型）。池外模型（firstParty/Bedrock/Vertex 等 findModelProvider 落空）保持启动快照原样。
-    const bootModelProvider = effectiveModel ? findModelProvider(effectiveModel) : null;
+    // 同一模型 ID 可被多个供应商声明：网关 spawn 时经 FLORIA_SESSION_PROVIDER 显式指定本次会话
+    // 供应商（web 新建会话选中的那一条），按 (供应商, 模型) 校验通过则优先采用；未提供/不匹配时
+    // 保持原 findModelProvider 判据（resume 的 env 由网关按启动表重设/清空，不继承残留）。
+    const envProvider = (process.env.FLORIA_SESSION_PROVIDER || '').trim();
+    const bootModelProvider = effectiveModel
+      ? envProvider && isModelInProvider(envProvider, effectiveModel)
+        ? envProvider
+        : findModelProvider(effectiveModel)
+      : null;
     if (bootModelProvider) {
       setSessionProviderOverride(bootModelProvider);
     }

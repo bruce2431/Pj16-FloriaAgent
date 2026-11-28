@@ -59,9 +59,12 @@ export function listModels(root: string): Record<string, unknown> {
     src: string
     vision?: boolean
     provider?: string
+    providerId?: string
     effortLevels?: string[]
   }> = []
-  const poolSet = new Set<string>()
+  // 同一模型 ID 可被多个供应商声明：按 (供应商, 模型) 逐条下发，k 全局唯一；跨供应商不再去重。
+  // poolModelIds 仅用于过滤 settings/env 里与池内同名的条目（保持原行为）。
+  const poolModelIds = new Set<string>()
   for (const [name, cfg0] of Object.entries(creds.providers)) {
     const cfg = (cfg0 && typeof cfg0 === 'object' ? cfg0 : {}) as Record<string, unknown>
     const models = Array.isArray(cfg.models) ? (cfg.models as string[]) : []
@@ -71,21 +74,24 @@ export function listModels(root: string): Record<string, unknown> {
       ? (cfg.effortLevels as unknown[]).map((s) => String(s).toLowerCase().trim()).filter(Boolean)
       : undefined
     const label = modelProviderLabel(name)
+    const seenInProvider = new Set<string>()
     for (const m of models) {
-      if (poolSet.has(m)) continue
+      if (seenInProvider.has(m)) continue
+      seenInProvider.add(m)
       if (isToolBoundModel(name, cfg as unknown as ProviderConfig, m)) continue
-      poolSet.add(m)
+      poolModelIds.add(m)
       poolRows.push({
-        k: m,
+        k: `${name}::${m}`,
         v: m,
         src: `凭据池·${label}`,
         vision: mv[m] === true,
         provider: label,
+        providerId: name,
         ...(effLv && effLv.length ? { effortLevels: effLv } : {}),
       })
     }
   }
-  const cfgItems = items.filter((it) => !poolSet.has(it.v))
+  const cfgItems = items.filter((it) => !poolModelIds.has(it.v))
   const activeModel = getGlobalActiveModel()
   const activeCfg = getGlobalActiveProviderConfig()
   return {

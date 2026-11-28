@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { findModelProvider, getGlobalActiveModel } from '../../utils/credentials/pool.js'
+import { findModelProvider, getGlobalActiveModel, isModelInProvider } from '../../utils/credentials/pool.js'
 import { modelSupportsVision } from '../../utils/model/vision.js'
 import {
   conversationDisplays,
@@ -66,16 +66,26 @@ export async function handleSessionRoutes(ctx: RouteContext): Promise<boolean> {
       const project =
         typeof parsed.project === 'string' && parsed.project.trim() ? parsed.project.trim() : undefined
       let launchModel: string | undefined
+      let launchProvider: string | undefined
       if (typeof parsed.model === 'string' && parsed.model.trim()) {
         const m = parsed.model.trim()
-        if (!findModelProvider(m)) {
+        const preferred =
+          typeof parsed.provider === 'string' && parsed.provider.trim() ? parsed.provider.trim() : undefined
+        if (preferred !== undefined) {
+          if (!isModelInProvider(preferred, m)) {
+            sendJson(res, 400, { error: `供应商 "${preferred}" 不存在或其模型清单不含 "${m}"` })
+            return true
+          }
+          launchProvider = preferred
+        } else if (!findModelProvider(m)) {
           sendJson(res, 400, { error: `model "${m}" 不在凭据池任何供应商模型清单中` })
           return true
         }
         launchModel = m
       }
       const sid = resume ?? randomUUID()
-      spawnWebSession(resume, project, sid, launchModel ? { model: launchModel } : undefined).catch((e) => {
+      if (launchModel) recordSessionModelLaunch(sid, launchModel, launchProvider)
+      spawnWebSession(resume, project, sid, launchModel ? { model: launchModel, provider: launchProvider } : undefined).catch((e) => {
         console.error(`[gateway] wsession: 后台启动失败 sid=${sid}`, e)
         pendingDeliveries.delete(sid)
         const s = `data: ${JSON.stringify({ type: 'ws-failed', session: sid, error: e?.message ?? String(e) })}\n\n`

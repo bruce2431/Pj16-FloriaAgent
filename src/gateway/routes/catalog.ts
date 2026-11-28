@@ -1,6 +1,6 @@
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { findModelProvider } from '../../utils/credentials/pool.js'
+import { findModelProvider, isModelInProvider } from '../../utils/credentials/pool.js'
 import { CUSTOMIZATION_DISABLED_MARKER } from '../../utils/customizationToggle.js'
 import { parseEffortValue, toPersistableEffort } from '../../utils/effort.js'
 import { updateSettingsForSource } from '../../utils/settings/settings.js'
@@ -214,10 +214,20 @@ export async function handleCatalogRoutes(ctx: RouteContext): Promise<boolean> {
       let modelProvider: string | null = null
       let modelApplied = true
       if (model !== undefined) {
-        modelProvider = findModelProvider(model)
-        if (!modelProvider) {
-          sendJson(res, 400, { error: `model "${model}" 不在凭据池任何供应商模型清单中` })
-          return true
+        const preferred =
+          typeof parsed.provider === 'string' && parsed.provider.trim() ? parsed.provider.trim() : undefined
+        if (preferred !== undefined) {
+          if (!isModelInProvider(preferred, model)) {
+            sendJson(res, 400, { error: `供应商 "${preferred}" 不存在或其模型清单不含 "${model}"` })
+            return true
+          }
+          modelProvider = preferred
+        } else {
+          modelProvider = findModelProvider(model)
+          if (!modelProvider) {
+            sendJson(res, 400, { error: `model "${model}" 不在凭据池任何供应商模型清单中` })
+            return true
+          }
         }
       }
       if (effortLevel !== undefined && !sessionId) {

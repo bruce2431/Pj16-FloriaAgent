@@ -427,6 +427,18 @@ export function removeProvider(name: string): boolean {
  * Returns null if no provider lists the model.
  */
 export function findModelProvider(model: string): string | null {
+  return pickModelProvider(model)
+}
+
+/** 该供应商存在且其模型清单包含该模型。用于显式指定供应商的路由。 */
+export function isModelInProvider(provider: string, model: string): boolean {
+  if (!provider || !model) return false
+  const creds = loadCredentials()
+  const cfg = creds.providers[provider]
+  return !!cfg && Array.isArray(cfg.models) && cfg.models.includes(model)
+}
+
+function pickModelProvider(model: string): string | null {
   const creds = loadCredentials()
   const cur = creds.activeProvider ? creds.providers[creds.activeProvider] : undefined
   if (cur && Array.isArray(cur.models) && cur.models.includes(model)) {

@@ -12,7 +12,7 @@ import { renderTransient, turnLive, setBtnMode } from './approval.js'
 import { pendingImages, pendingFiles, clearPendingImages, clearPendingFiles } from './images.js'
 import { serializeInput, closeMentionPop } from './mention.js'
 import { webCreating, firstSendHash, newWebSession } from '../sidebar/recent.js'
-import { getNewSessionModel, setNewSessionModel } from './model-select.js'
+import { getNewSessionModel, setNewSessionModel, getNewSessionProvider, setNewSessionProvider } from './model-select.js'
 /* @module inputbar/send.js */
   async function gwSend() {
     if (!GATEWAY) return false
@@ -52,7 +52,9 @@ import { getNewSessionModel, setNewSessionModel } from './model-select.js'
       // 它只作用于本次新建会话——随建会话请求下发，网关 spawn 时落 --model 启动参数（见 newWebSession），
       // 不改全局默认（全局默认唯一入口 = 凭据池 credentials.json，见 model-select.js 注释）。
       const prevModel = getNewSessionModel()
+      const prevProvider = getNewSessionProvider()
       setNewSessionModel('')
+      setNewSessionProvider('')
       // 丝滑过渡（2026-08-30）：不等 wsession 返回（spawn CLI 窗口+注册常 >1s，期间空态冻结
       // 是「不丝滑」根源）——发送瞬间即进会话视觉：输入栏 FLIP 沉底 + 趴栏淡出 + 首条消息
       // 乐观上屏（气泡+正在处理折叠）。pre 标记 + hash 暂空：renderSession 创建中不洗
@@ -65,7 +67,7 @@ import { getNewSessionModel, setNewSessionModel } from './model-select.js'
       addUser(text, imgs, files)
       composerSetText('')
       syncGwSend()
-      const d = await newWebSession(tgt || undefined, prevModel || undefined)
+      const d = await newWebSession(tgt || undefined, prevModel || undefined, prevProvider || undefined)
       if (!d || !d.hash) {
         setFirstSendHash('') // 事务终止：创建失败，乐观 DOM 随下方空态回滚一并清空
         setPendingUserMsgs(pendingUserMsgs.filter((p) => p.hash)) // 丢弃无归属（hash=''）的乐观项
@@ -76,6 +78,7 @@ import { getNewSessionModel, setNewSessionModel } from './model-select.js'
         syncGwSend()
         state.newProject = prevNew
         setNewSessionModel(prevModel)
+        setNewSessionProvider(prevProvider)
         composerFocus()
         return true
       }
