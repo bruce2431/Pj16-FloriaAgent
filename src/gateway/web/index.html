@@ -28,7 +28,7 @@
   <!-- UI 基础包（@floria/web，2026-10-24）：主题令牌 + reset + 统一滚动条。须排在业务样式之前，
        app.js 之前另加载其 IIFE（window.FloriaWeb）。源 = SubPj1-FloriaWebUI安装包开发/packages/web/。 -->
   <link rel="stylesheet" href="/webui/floria-web.css?v=13" />
-  <link rel="stylesheet" href="/styles.css?v=731" />
+  <link rel="stylesheet" href="/styles.css?v=732" />
   <!-- 侧边浏览器（2026-11-22）：纯组件，目录自带样式；只在 chat 模式由宿主挂载。 -->
   <link rel="stylesheet" href="/browser/SideBrowser/side-browser.css?v=8" />
 </head>
@@ -312,20 +312,6 @@
                     <!-- 模型·推理等级弹窗（dsh ModelSelect .menu）：root→Model/Effort 两级 drill -->
                     <div id="model-pop" hidden></div>
                   </div>
-                  <!-- 会话 token 用量（dsh UsagePill，2026-11-28）：发送钮左侧的胶囊，展示会话累计
-                       token 与缓存命中率，点击展开明细（缓存命中/未缓存输入/缓存读取/缓存写入/输出）。
-                       数据来自 CLI usage-state 快照（网关 /gateway/session 附带 + SSE 实时推送）。 -->
-                  <div id="usage-meter" class="usage-meter" hidden>
-                    <button id="usage-btn" class="usage-trigger" type="button" title="会话 token 用量" aria-label="会话 token 用量" aria-haspopup="dialog" aria-expanded="false"></button>
-                    <div id="usage-panel" class="usage-panel" role="dialog" aria-label="会话 token 用量" hidden></div>
-                  </div>
-                  <!-- 上下文占用（dsh ContextMeter）：发送钮左边的环形小圆，展示上下文已用百分比，
-                       点击展开 breakdown 面板。数据来自 CLI usage-state 快照（网关只转发）。
-                       无数据（无 usage / 无模型窗口）时 hidden。 -->
-                  <div id="ctx-meter" class="ctx-meter" hidden>
-                    <button id="ctx-btn" class="ctx-trigger" type="button" title="上下文已用" aria-label="上下文已用" aria-haspopup="dialog" aria-expanded="false"></button>
-                    <div id="ctx-panel" class="ctx-panel" role="dialog" aria-label="上下文已用" hidden></div>
-                  </div>
                   <button id="send-btn" class="primary" title="只读查看 · 无法发送" aria-label="发送"></button>
                 </div>
               </div>
@@ -343,6 +329,23 @@
               <div id="task-dock" hidden>
                 <button id="task-lip" class="td-lip" type="button" aria-expanded="false" aria-controls="task-panel" title="展开任务清单"></button>
                 <div id="task-panel" class="td-panel" role="region" aria-label="任务清单"></div>
+              </div>
+            </div>
+            <!-- 输入卡下方读数条（dsh InputBar .dock）：会话用量胶囊 + 上下文环，居中排在输入卡
+                 下方而非卡内工具行。数据来自 CLI usage-state 快照（网关 /gateway/session 附带 +
+                 SSE 实时推送）；两个读数都 hidden 时整条不占位（:has 收起），会话态预留一行防跳动。 -->
+            <div id="composer-dock" class="composer-dock">
+              <!-- 会话 token 用量（dsh UsagePill）：图标 + 「N tok · 缓存命中 x%」，点击展开明细
+                   （缓存命中/未缓存输入/缓存读取/缓存写入/输出）。无 token 活动时 hidden。 -->
+              <div id="usage-meter" class="usage-meter" hidden>
+                <button id="usage-btn" class="usage-trigger" type="button" title="会话 token 用量" aria-label="会话 token 用量" aria-haspopup="dialog" aria-expanded="false"></button>
+                <div id="usage-panel" class="usage-panel" role="dialog" aria-label="会话 token 用量" hidden></div>
+              </div>
+              <!-- 上下文占用（dsh ContextMeter）：环形小圆 + 百分比，点击展开 breakdown 面板。
+                   无数据（无 usage / 无模型窗口）时 hidden。 -->
+              <div id="ctx-meter" class="ctx-meter" hidden>
+                <button id="ctx-btn" class="ctx-trigger" type="button" title="上下文已用" aria-label="上下文已用" aria-haspopup="dialog" aria-expanded="false"></button>
+                <div id="ctx-panel" class="ctx-panel" role="dialog" aria-label="上下文已用" hidden></div>
               </div>
             </div>
             <!-- 命令菜单（dsh PopupSelectView shell：.search + .status + .viewport[.row .label/.detail/.check]）：

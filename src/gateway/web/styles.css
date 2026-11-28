@@ -916,10 +916,10 @@ body.kb-open #input-wrap { transition: none; }
      浏览器 reveal 只认布局/渲染位置；走 transform 它看不见，照样会 pan 整页） */
   top: calc(100% - 22px - var(--kb-lift, 0px));
   transform: translate(-50%, -100%);
-  /* 下限 240px（2026-09-27 用户定案「增大最小宽度阈值」）：工具行的 min-content ≈234px
-     （左组 + 28 / 项目 chip 图标 14+箭头 14+内垫 16 / 右组 模型 chip 30 + 上下文 28 + 发送 34
-     + 各组 GAP 与行内垫），卡片再窄就无处可让——固定件互相挤压重叠（「上下文按钮和模型选择 tab
-     重叠」在极窄档复现）。设下限后卡片在此止步，宁可横向越出可视区也不压烂内部布局。 */
+  /* 下限 240px（2026-09-27 用户定案「增大最小宽度阈值」）：工具行的 min-content ≈200px
+     （左组 + 28 / 项目 chip 图标 14+箭头 14+内垫 16 / 右组 模型 chip 30 + 发送 34
+     + 各组 GAP 与行内垫；上下文环已移入卡下读数条，不再参与工具行宽度）。设下限后卡片在此止步，
+     宁可横向越出可视区也不压烂内部布局。 */
   width: max(240px, min(780px, 70vw, calc(100% - 40px)));
 }
 /* dsh .card：白输入表面 + 22px 圆角 + 0.10 输入描边 + shadow-lv2 + 16/24 基础字 */
@@ -1100,7 +1100,7 @@ body.kb-open #input-wrap { transition: none; }
 
 /* 窄容器下的间距收敛（@container 参照 = #input-bar 自身宽度，非视口）：
    文本省略交给收缩链（#model-root → #model-seat → .triggerLabel 省略号），这里只收 gap 与
-   chip 内垫，让「+ / 项目 chip / 模型 chip / 上下文 / 发送」在窄栏里仍齐整一行。
+   chip 内垫，让「+ / 项目 chip / 模型 chip / 发送」在窄栏里仍齐整一行。
    两档阈值 2026-09-27 上调（用户「增大最小宽度阈值」）：480 / 400——提前让位，别等贴到
    工具行的 min-content（≈234px）才动。 */
 @container (max-width: 480px) {
@@ -1109,35 +1109,43 @@ body.kb-open #input-wrap { transition: none; }
   #input-bar .row { gap: 8px; }
   #model-seat.trigger { padding: 0 2px 0 6px; }
 }
-/* 极窄容器：固定件（+ / 上下文 / 发送）与 chip 图标必须保住，让位的是可再生的文字——
+/* 极窄容器：固定件（+ / 发送）与 chip 图标必须保住，让位的是可再生的文字——
    推理等级「Low」（点开模型菜单仍可见）与项目 chip 的下拉箭头（图标文字仍在，仍可点开）。
    两条合起来把工具行的 min-content 从 ~260px 压到 ~234px，与 #input-wrap.docked 的
    240px 下限配套：下限之上永不重叠，下限之下卡片止步不再压烂。 */
 @container (max-width: 400px) {
   #model-seat.trigger .triggerEffort { display: none; }
   #proj-seat .chevron { display: none; }
-  /* 会话用量胶囊让位文字（图标仍可点开明细），保住 + / 上下文 / 发送固定件 */
-  #usage-btn .um-txt { display: none; }
-  #usage-btn.usage-trigger { padding: 0 8px; }
 }
 
+/* ===== 输入栏下方读数条（dsh InputBar .dock）=====
+   用量胶囊与上下文环是输入卡的**下一行**（卡外、居中、gap 12），不是工具行里的兄弟件。
+   两个读数都 hidden 时整条不占位；会话态预留一行（与读数同高），投影到达不改变底栏高度。 */
+#composer-dock {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  max-width: 100%; padding-top: 4px;
+}
+/* 空态没有读数就不占位（hero 卡片随 stage 居中，多一行会整体偏移） */
+#empty-hint #composer-dock:has(> #usage-meter[hidden]):has(> #ctx-meter[hidden]) { display: none; }
+/* 会话态常驻一行（dsh 同款）：读数晚到不改变底栏高度 */
+#input-wrap.docked #composer-dock { min-height: 24px; }
+
 /* ===== 上下文占用指示（dsh ContextMeter 完全移植：ContextMeter.module.css）=====
-   发送钮左边环形小圆（28px 圆触发钮 + 14px/2px 圆环），点击展开 breakdown 面板
+   读数条里的环形钮（14px/2px 圆环），无边框、静止 tertiary 字色，hover/展开才出
+   interactive-bg-hover 底（dsh .trigger 同款）。点击展开 breakdown 面板
    （264px、r12、透明 hairline + 阴影，表面同 #model-pop 菜单）。token 映射：
    label-secondary=#61666b / label-tertiary=#adb2b8 / label-primary=#0f1115 /
    border-l3=rgba(0,0,0,0.12) / interactive-bg-hover=rgba(38,49,72,0.06) */
-/* flex:none（2026-09-27 根修）：#ctx-meter 此前无 flex 声明 ⇒ 作为 .trailing 的 flex 项
-   默认 flex:0 1 auto **会被压扁**（宽度缩到 <28px），27px 圆环溢出自身盒子与左侧模型 chip
-   重叠（实报「上下文按钮和模型选择 tab 重叠」）。圆钮不参与收缩，让位交给模型 chip 的文本。 */
 #ctx-meter { position: relative; display: inline-flex; flex: none; }
 #ctx-meter[hidden] { display: none; }
 #ctx-btn.ctx-trigger {
-  display: grid; place-items: center; flex: none;
-  width: 28px; height: 28px;
-  border: none; border-radius: 999px;
-  background: transparent; color: var(--ink-2); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 1px 8px; border: none; border-radius: 6px;
+  background: transparent; color: var(--ink-4); cursor: pointer;
+  font-family: inherit; font-size: 12px; line-height: 20px; font-variant-numeric: tabular-nums;
 }
-#ctx-btn.ctx-trigger:hover { background: var(--hover-ink); }
+#ctx-btn.ctx-trigger:hover,
+#ctx-btn.ctx-trigger[aria-expanded="true"] { background: var(--hover-ink); color: var(--ink-2); }
 #ctx-btn.ctx-trigger svg { width: 14px; height: 14px; display: block; }
 #ctx-btn .ctx-track { fill: none; stroke: var(--hairline); stroke-width: 2; }
 #ctx-btn .ctx-fill { fill: none; stroke: var(--ink-4); stroke-width: 2; stroke-linecap: round; }
@@ -1182,18 +1190,20 @@ body.kb-open #input-wrap { transition: none; }
 #ctx-panel .ctx-kv .ctx-ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ===== 会话 token 用量胶囊（dsh UsagePill，2026-11-28）=====
-   上下文环左侧的 pill：数据库图标 + 「3.6M tok · 缓存命中 98%」，点击展开明细面板。
+   读数条里的 pill：数据库图标 + 「3.6M tok · 缓存命中 98%」，无边框、静止 tertiary 字色，
+   hover/展开才出 interactive-bg-hover 底（dsh .pill 同款）。点击展开明细面板。
    数据 = CLI usage-state 快照（网关只转发）。无 token 活动整窗 hidden。 */
-#usage-meter { position: relative; display: inline-flex; flex: none; }
+#usage-meter { position: relative; display: inline-flex; flex: none; min-width: 0; max-width: 100%; }
 #usage-meter[hidden] { display: none; }
+#usage-btn .um-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #usage-btn.usage-trigger {
-  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
-  border: 1px solid var(--hairline-2); border-radius: 999px; background: var(--bg);
-  color: var(--ink-3); font-family: inherit; font-size: 12px; line-height: 1;
+  display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px;
+  border: none; border-radius: 6px; background: transparent;
+  color: var(--ink-4); font-family: inherit; font-size: 12px; line-height: 20px;
   white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums;
 }
-#usage-btn.usage-trigger:hover { background: var(--hover-ink); color: var(--ink-2); }
-#usage-btn.usage-trigger[aria-expanded="true"] { background: var(--hover-ink); color: var(--ink); }
+#usage-btn.usage-trigger:hover,
+#usage-btn.usage-trigger[aria-expanded="true"] { background: var(--hover-ink); color: var(--ink-2); }
 #usage-btn .um-ico { display: inline-flex; }
 #usage-btn .um-ico svg { width: 14px; height: 14px; display: block; }
 #usage-panel {

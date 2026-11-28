@@ -1122,7 +1122,7 @@ URL 带 `demo=1` 时前端以静态数据渲染完整界面，不连网关。用
 
 ## 74. 上下文占用面板（`#ctx-meter` / `#ctx-panel`）
 
-底栏上下文圆环（14px/2px 环，`aria-expanded` 开合）点击弹出明细面板。数据全来自 `/gateway/session` 的 `context`（字段契约见 gateway.md §22），前端**不重算** token；唯一手改处 `inputbar/ctx-meter.js`。
+输入卡下方读数条（`#composer-dock`，dsh InputBar `.dock`：卡外、居中、gap 12）里的上下文环（14px/2px 环，无边框、静止 tertiary 字色，`aria-expanded` 开合）点击弹出明细面板。数据全来自 `/gateway/session` 的 `context` = CLI `usage-state` 快照（网关只转发，字段契约见 gateway.md §22），前端**不重算** token；唯一手改处 `inputbar/ctx-meter.js`。两个读数都 `hidden` 时整条不占位，会话态预留一行防投影到达时底栏跳动。
 
 - **两组口径刻意不 reconcile**：provider 精确的 `percent` / `~used/window` 是环与面板的 headline；`breakdown` 七类是 4 字符/token 启发式估算，**每项一律带 `~` 前缀**，并与精确总量各说各的——dsh 同口径，禁止把估算行按比例缩放到精确总量（会伪造精度）。
 - **面板结构（自上而下）**：header（`上下文已用` + 精确百分比 + `~used / window`）→ 6px 分段条 + 阈值线 → 分类图例 → 自动压缩阈值脚注 → 「输入明细」→「Top 工具」→「Top 附件」。
@@ -1190,3 +1190,12 @@ chat 模式内容卡右上角的圆形「摘要」钮（`I.dshPlan`），点击�
 - **可见性**：`files` 与 `changed` 皆空 → 根元素 `hidden`，圆钮与浮层整体不出现；work 模式与 token 门恒隐藏。
 - **行渲染**：每行 = 与消息流相同的 md 文件链接 chip（`` [`路径`](路径) `` 经 `core/markdown.js` 的 `mdInlineText`，图标 + 文本，点击走 `mention-nav`）；变更行尾列 `+N -N`（新文件「新增」），配色复用 `@floria/web` delivery 的 `.chg-add` / `.chg-del`。
 - **分组**：上下文文件、变更文件；侧边聊天分组的渲染代码保留（`sideChatGroupHtml`），暂不启用、不产出 DOM。
+
+## 80. 会话 token 用量胶囊（`#usage-meter` / `#usage-panel`）
+
+读数条里上下文环左侧的胶囊（dsh `UsagePill`）：数据库图标 + `N tok · 缓存命中 x%`，无边框、静止 tertiary 字色，hover/展开出 `--hover-ink` 底；点击弹出明细。数据 = `/gateway/session` 的 `usage` = CLI `usage-state` 快照（网关只转发），前端**不重算**；唯一手改处 `inputbar/ctx-meter.js`。
+
+- **口径（`src/utils/gatewayUsageSnapshot.ts`）**：`billedInput = 未缓存输入 + 缓存读取 + 缓存写入`，`total = billedInput + 输出`，`cacheHit = 缓存读取 / billedInput`（一位小数，无计费输入为 null）——与 dsh StatsPills 契约一致，取会话累计而非单回合。
+- **面板**：标题行（图标 + `会话用量` + 总额）→ 6 行 `Token 用量 / 缓存命中 / 未缓存输入 / 缓存读取 / 缓存写入 / 输出`。
+- **无数据即隐藏**：无 `usage` 或 `total ≤ 0`（会话无 token 活动）时胶囊 `hidden` 且面板收合。
+- **上报链**：REPL messages effect → `gatewayClient.notifyUsageState`（JSON 去重 + 重连补发）→ `/clients` WS `{type:'usage-state'}` → `wsBridge` 存 `sessionUsageState` + SSE 群发 → `GET /gateway/session`；`live.js` 收 `usage-state` 即时重渲。无在线 CLI 的会话（旧进程/网关重启后未重连）两处读数为 null，接口不再由网关估算。

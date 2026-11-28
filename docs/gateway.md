@@ -465,19 +465,20 @@ work 文件树 / 顶栏文件 pill 行菜单「下载」的唯一取件口。与
 - **不变量**：接受 eject 后 `ejecting` 置位，`spawnWebSession` 直接拒绝、`gatewayStopping` 提前置位阻断新后端就绪探测——卷上不再产生新进程。pid 未知且不响应 shutdown 的旧 exe 会话可能残留，由调用方在卷停稳后核对进程表。
 - **配套脚本**：`Neuron-Pj16/l3.raw/files/20261110183000-safe-eject.ts`（在工作区外执行：读 `.claude/gateway/{token,port}` → POST → 轮询端口关闭 → 扫描残留进程并给出「可弹出」结论）。
 
-## 22. 会话上下文用量（`GET /gateway/session` 的 `context` 字段）
+## 22. 会话用量与上下文（`GET /gateway/session` 的 `usage` / `context` 字段）
 
-`/gateway/session` 响应新增 `context`（无可计价 usage 时为 `null`），供底栏上下文占用环与明细面板消费。**总量精确、分类启发式**——两组数刻意不强行对齐。
+**计算在 CLI，网关只做传输**：CLI `src/utils/gatewayUsageSnapshot.ts` 在 messages 变化时算一份快照，经 `/clients` WS `{type:'usage-state', usage, context}` 上报 → `wsBridge` 存 `sessionUsageState` + SSE 群发同型事件（含 `session`）→ `/gateway/session` 原样附带两个字段；无在线 CLI 的会话为 `null`（网关不读转录、不估算）。`live.js` 收 SSE `usage-state` 即时重渲。`usage` = 会话累计（下文），`context` = 上下文占用（**总量精确、分类启发式**，两组数刻意不强行对齐）。
 
-- **精确总量**：取转录中最后一条带 `message.usage` 的 assistant 记录，`usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`；`contextWindow = getContextWindowForModel(model)`（未知模型 → `null`）；`percent = min(100, round(usedTokens / contextWindow * 100))`。
-- **`usage`**：同一份原始计数原样下发 `{input, cacheCreate, cacheRead, output}`，前端据此拆「缓存命中 / 缓存写入 / 新鲜输入」。
-- **`breakdown`**（七个键，单位 token）：`fixed / user / assistant / thinking / toolCall / toolResult / attachment`。**只统计最后一条 `compact_boundary` 之后的记录**（压缩前的历史不再占当前窗口，与 `getMessagesAfterCompactBoundary` 同义）。计价 = `roughTokenCountEstimation`（固定 4 字符/token）+ 每块 `BLOCK_OVERHEAD`；image 块只计 `{type,source:{type,media_type}}` 结构（剥离 base64 字节）。assistant 侧按块分流（`thinking` / `tool_use` → toolCall / 其余 → assistant），user 侧 `tool_result` 块归 toolResult（按 `tool_use_id` 归属到发起工具），`type:'attachment'` 记录归 attachment。
+- **`usage`**：会话累计 `{total, input, cacheRead, cacheWrite, output, cacheHit, model}`；`total = input + cacheRead + cacheWrite + output`，`cacheHit = cacheRead / (input + cacheRead + cacheWrite)`（一位小数，无计费输入为 `null`）。来源 = CLI cost-tracker 会话累加器（与 `/cost` 同源）。
+- **`context` 精确总量**：取 CLI 当前 messages 中最后一条带 usage 的 assistant 记录，`usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`；`contextWindow = getContextWindowForModel(model)`（未知模型 / 无用量 → `context:null`）；`percent = min(100, round(usedTokens / contextWindow * 100))`。
+- **`context.usage`**：最后一次调用的原始计数原样下发 `{input, cacheCreate, cacheRead, output}`，前端据此拆「缓存命中 / 缓存写入 / 新鲜输入」（与会话级 `usage` 是两份数据：一个单次、一个累计）。
+- **`context.breakdown`**（七个键，单位 token）：`fixed / user / assistant / thinking / toolCall / toolResult / attachment`。估算范围 = CLI 当前 messages（压缩后只剩窗口内消息，天然不含已压历史）。计价 = `roughTokenCountEstimation`（固定 4 字符/token）；image/document 块按 2000 估（禁对 base64 计长）。assistant 侧按块分流（`thinking` / `tool_use` → toolCall / 其余 → assistant），user 侧 `tool_result` 块归 toolResult（按 `tool_use_id` 归属到发起工具），`type:'attachment'` 记录归 attachment。逐消息估算带 WeakMap 缓存。
 - **`fixed` = 差额项**：`max(0, usedTokens − 六类消息估算和)`。系统提示与工具 schema 在转录里不存在，无法单独拆分；此键即「provider 报的精确总量 − 可估消息」，前端如实标为「系统与工具」。这是唯一一处把启发式与精确值相减的地方，其含义 = 未被转录解释的部分。
 - **`autoCompactThreshold`**：`min(contextWindow, getEffectiveContextWindowSize(model) − AUTOCOMPACT_BUFFER_TOKENS)`，与 CLI 自动压缩同一常量来源；面板据此在占比条上画阈值线。
 - **`topTools` / `topAttachments`**：`[{name,tokens}]` 各取前 6（tokens > 0 降序）。工具名由 `tool_use_id → name` 映射，toolCall 与 toolResult 合并计数；附件名取记录 `attachment.type`。
 - **不变量**：`breakdown` 七键之和恒等于 `fixed + 消息估算`，其中 `fixed` 被钳在 ≥0——估算超过 provider 精确值时（CJK/代码偏贵），超出部分仍只落在消息分类，不做负值回填。
 
-前端消费见 web-ui.md §74。
+前端消费见 web-ui.md §74（上下文环）与 §80（会话用量胶囊）。
 
 ## 23. 预览目录变化自动刷新（SSE `preview-changed`）
 
