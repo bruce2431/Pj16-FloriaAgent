@@ -20,8 +20,6 @@
 | `bun run build:dev:full` | 项目根 `cli-dev-<ts>.exe` | 等价 `--dev --feature-set=dev-full`，开全部实验特性 |
 | `bun run dev` | — | 源码直跑（入口 `src/entrypoints/cli.tsx`） |
 
-`build:dev:gateway` 已废弃，不再使用。
-
 ### 1.2 参数
 
 `scripts/build.ts` 直接读 `process.argv`，参数随 `bun run ./scripts/build.ts` 一起传（npm 脚本只是快捷方式）：
@@ -30,23 +28,16 @@
 |---|---|---|
 | `--dev` | 开关 | dev 模式：产物前缀 `cli-dev`，版本串 `x.y.z+<日期>.t<时分秒>.sha<HEAD 8 位>` |
 | `--compile` | 开关 | 产物落 `dist/`（与 `--dev` 组合时为 `dist/cli-dev-…`） |
-| `--feature=X` | `--feature=X` 或 `--feature X`，可多次 | 追加单个特性；产物名末尾追加 `-<代号>`（多个代号用 `+` 连接）。VOICE_MODE、NEURON_RAG 默认关，只能这样显式编入 |
+| `--feature=X` | `--feature=X` 或 `--feature X`，可多次 | 追加单个特性；产物名末尾追加 `-<代号>`（多个代号用 `+` 连接）。|
 | `--feature-set=dev-full` | `--feature-set=dev-full` 或 `--feature-set dev-full` | 并入全部实验特性（32 项，见各表状态列「实验」） |
-
-默认特性 5 项（见 §2.1）任何构建都编入，不写进产物名。
 
 ### 1.3 产物规则
 
-- 命名 = `<前缀>-<YYYYMMDDHHMMSS>[-<显式特性代号>]`。**exe 时间戳强制、不允许覆盖**（禁止改成固定名如 `cli-dev.exe`）；部署换新 = 直接用新时间戳 exe 启动，旧产物原样保留。
-- 产物是**自包含单文件二进制**（`bun build --compile --bytecode --packages bundle`），可拷到任意目录运行，运行时不需要 `src/`/`node_modules`。
-- 构建只依赖「正在运行的那个 bun」，不依赖 PATH：本机 bun 是便携副本，`scripts/build.ts` 内部子脚本一律用 `process.execPath` 启动，不裸名 `bun`。
-- 版本串：dev 构建的构建元数据挂 `+`（`build metadata`，不参与优先级比较）；`-` 在 SemVer 里是 pre-release 段，不得挪作「开发版」标记。发布版版本串 = `package.json` 的 `version` 原值；递增按 SemVer（修 bug → PATCH、新功能 → MINOR、不兼容 → MAJOR）。
-- **ripgrep 内嵌**（Grep/Glob 依赖）：构建时把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 作为资产内嵌（虚拟说明符 `virtual:ripgrep-bin`，宿主平台二进制缺失即构建硬失败）；运行时 `src/utils/ripgrep.ts` 原子落地到 `tmpdir()/floria-ripgrep/` 再 spawn。**不变量：Grep/Glob 与 Bash 内的 `rg` 会话集成共用同一 `ripgrepCommand()`；dev 直跑走 `src/vendor/ripgrep/...` 分支，两者都必须解析到可执行的 rg。** 旧链 `argv0='rg'` 分发在本机 bun 1.4.2 已不存在——勿回退。
-- codegraph 索引：`src/.codegraph/`（相对路径存储，随 src 迁移有效）；MCP 查询带 `projectPath=Pj16-CodeAgent构建/Floria/src`。
+- **ripgrep 内嵌**（Grep/Glob 依赖）：exe 不自带系统 rg，构建时把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 内嵌进产物。**不变量：Grep/Glob 与 Bash 的 `rg` 必须共用同一 `ripgrepCommand()` 解析；勿回退 `argv0='rg'` 分发。**
 
 ### 1.4 前端内嵌打包与 cache-busting（改 web 前端必读）
 
-前端权威 `src/gateway/web-src/`（41 ESM 模块，`gateway/web/app.js` 为构建生成物勿手改；模块边界是源码组织、拼接时 import/export 全剥除，见 [web-ui.md](web-ui.md) §12）；构建时 `scripts/gen-web-assets.ts` 递归 base64 内联进 exe（build.ts 每次构建前自动运行），`localGateway.ts` 内嵌优先、磁盘 public 仅兜底（项目根优先 + 便携根兜底）。**前端改动必须重新构建 exe 才生效**（无磁盘热重载）；**cache-busting**：index.html 资源引用带版本号 `?v=N`（styles.css/app.js），每次前端改动同步 bump 该号（+ sw.js CACHE），浏览器强制下载新版绕过 HTTP 缓存（资源引用为绝对路径，见 [gateway.md](gateway.md) pushState 路由章节）；**注意：前端从未注册 Service Worker**（web/ 目录无 serviceWorker 代码，sw.js 是死文件，浏览器不跑它——更新可靠靠 cache-busting 而非 sw）。**bytecode exe 内嵌资产不可 grep**（字符串经编码），验证资产版本用 `curl http://127.0.0.1:8124/sw.js` 与 `/app.js`。
+前端权威 `src/gateway/web-src/`（`gateway/web/app.js` 为构建生成物勿手改；模块边界是源码组织、拼接时 import/export 全剥除，模块清单与分层见 [web-ui.md](web-ui.md) §12）；构建时 `scripts/gen-web-assets.ts` 把 `src/gateway/web/` 递归 base64 内联进 exe（build.ts 每次构建前自动运行）。运行时唯一投送点 = `src/gateway/webAssets.ts`：存在 dev 磁盘 web 目录（exe 邻接或 cwd）则读磁盘，否则用内嵌资源。**dev 磁盘层改前端刷新即生效；部署 exe 走内嵌层，前端改动必须重新构建。****cache-busting**：index.html 资源引用带版本号 `?v=N`（styles.css/app.js），每次前端改动同步 bump 该号（+ sw.js CACHE），浏览器强制下载新版绕过 HTTP 缓存（资源引用为绝对路径，见 [web-ui.md](web-ui.md) §1）；**注意：前端从未注册 Service Worker**（web/ 目录无 serviceWorker 代码，sw.js 是死文件，浏览器不跑它——更新可靠靠 cache-busting 而非 sw）。**bytecode exe 内嵌资产不可 grep**（字符串经编码），验证资产版本用 `curl http://127.0.0.1:8124/sw.js` 与 `/app.js`。
 
 **vendored 第三方库（拼接器不解析 npm，第三方一律全局 `<script>`）**：拼接器 `bundle-web-modules.ts` 只拼 `web-src/**`、**不解析 npm 依赖** ⇒ 任何 npm 包必须**预打包成全局 IIFE** 提交进 `src/gateway/web/`（`gen-web-assets.ts` 递归自动内嵌，`sw.js` CORE 可预缓存，`index.html` 在 `/app.js` 之前以 `<script>` 引入）。先例 = KaTeX（`vendor/katex/`，见 [web-ui.md](web-ui.md) §57）与 CM6 编辑层（`cm6/floria-cm6.iife.js`，全局 `window.FloriaCM6`，见 §71）。**生成器/构建手动跑、不接进 `build.ts`** ⇒ **常规构建不联网**。CM6 IIFE 的生成工程 = 兄弟目录 `SubPj4-CodeMirror6开发`（`bun build.ts` → `dist/floria-cm6.iife.js`，CM6 依赖全内联），`bun tools/sync.ts deploy --yes` 只把该 IIFE 拷进 `Floria/src/gateway/web/cm6/`；ESM/sourcemap 不部署（exe 内嵌按字节计）。该包直连 npm 的 `@codemirror/*`（state/view/commands/autocomplete/language 及 lang-markdown/javascript/json/css/html/python）、`@codemirror/legacy-modes`（shell/yaml/stex）、`@lezer/markdown`、`@lezer/highlight`、`codemirror-live-markdown@0.5.1-alpha.1`。**上游库补丁**：包内 `package.json` 的 `patchedDependencies` 指向 `patches/codemirror-live-markdown@0.5.1-alpha.1.patch`（`[floria patch]`：围栏行隐藏 + 语言钮），`bun install` 时自动重放；**改库版本后必须重做补丁**（补丁按行号定位，版本一变即漂）。
 
