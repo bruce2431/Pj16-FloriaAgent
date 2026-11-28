@@ -2557,6 +2557,9 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
    token 门全屏浮层期间不出现（body.token-gate）。
    右 50px 为右上角摘要圆钮（#summary-root，top 10 / right 12 / 30px）让位；侧栏折叠态与 work 同款
    让出汉堡位（46px = 10 左距 + 30 钮宽 + 6 缝），汉堡一并收敛成条内透明钮。 */
+/* work 模式硬隐藏：work 顶栏规则 `#chat-area.work > .wk-topbar{display:flex}` 会连本元素一起命中
+   （本元素也带 .wk-topbar），两条 .wk-topbar 会叠在同一 grid 格，chat 条在上层吞掉 work 顶栏点击。 */
+#chat-area.work > .chat-topbar { display: none; }
 #chat-area:not(.work) > .chat-topbar { margin: 2px 2px 0; padding-right: 50px; }
 #chat-area:not(.work).in-session:has(> #session-card:not([hidden])) > .chat-topbar { display: flex; }
 body.token-gate #chat-area > .chat-topbar { display: none; }
