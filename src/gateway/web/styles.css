@@ -2520,9 +2520,24 @@ html[data-theme="dark"] .row-peek { color: var(--text-2); }
 #chat-area.work .wk-tb-tabs { align-items: flex-end; }
 #chat-area.work .wk-tb-pill { border-radius: 8px 8px 0 0; }
 #chat-area.work .wk-tb-pill.on {
-  position: relative; z-index: 1;
+  position: relative; z-index: 1; overflow: visible;
   background: var(--sunken-bg); border-color: transparent; color: var(--text);
   box-shadow: 0 1px 0 var(--sunken-bg);
+}
+/* 激活标签与卡顶边的衔接 = 两侧 8px 凹角过渡（径向渐变填角，卡片同色）：标签左右边线与卡顶边
+   之间由四分之一圆弧平滑连上，读作标签从卡体长出。bottom:-1px 压过按钮的 1px 透明底边，贴住卡顶。 */
+#chat-area.work .wk-tb-pill.on::before,
+#chat-area.work .wk-tb-pill.on::after {
+  content: ''; position: absolute; bottom: -1px; width: 8px; height: 8px;
+  pointer-events: none; z-index: -1;
+}
+#chat-area.work .wk-tb-pill.on::before {
+  left: -8px;
+  background: radial-gradient(circle at 0 0, transparent 7.5px, var(--sunken-bg) 8.5px);
+}
+#chat-area.work .wk-tb-pill.on::after {
+  right: -8px;
+  background: radial-gradient(circle at 100% 0, transparent 7.5px, var(--sunken-bg) 8.5px);
 }
 #chat-area.work #wk-tb-tool { align-self: center; }
 /* 顶栏工具栏胶囊 #wk-tb-tool：**轻量描边态**——静息无底、细描边 + --text-2，悬停才浮起浅底；
