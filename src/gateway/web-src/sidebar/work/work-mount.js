@@ -304,6 +304,21 @@ import { resetWorkPreviewOnBoot } from '../../core/storage.js'
     body.addEventListener('dragend', () => { wkDragPath = ''; dndMark(null) })
     // 编辑卡左上角文件名只作展示：重命名入口统一在顶栏文件 pill / 侧栏文件行的右键菜单里
     // （2026-10-25 定案，删掉此处点击直调 openFileRename 的旧入口）。
+    // 编辑卡内链接点击（见 work-editor.js 的 wkOpenEditorLink）：mousedown 捕获先掐断 CM 的定位/选区处理，
+    // 否则点链接只把光标放上去；click 时显式分派（文件链接 → 编辑卡打开 + 定位行，外链 → 新标签）。
+    const edHost = $('work-editor')
+    edHost.addEventListener('mousedown', (e) => {
+      if (!wkEditorLinkTarget(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+    }, true)
+    edHost.addEventListener('click', (e) => {
+      const a = wkEditorLinkTarget(e.target)
+      if (!a) return
+      e.preventDefault()
+      e.stopPropagation()
+      wkOpenEditorLink(a)
+    })
     // 编辑区：Ctrl+S 立即保存（绑在 #work-editor 上；编辑器自身处理其余按键，未消费的键冒泡到此处）
     $('work-editor').addEventListener('keydown', (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return

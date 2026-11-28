@@ -12468,6 +12468,44 @@ function wkMerge3(base, local, remote) {
     await renderEditor() // 等文档真正进编辑器再返回（调用方据此在正确文档上定位行）
   }
 
+  // ---------- 编辑卡内链接点击（唯一口） ----------
+  // CM6 编辑域是 contenteditable，浏览器不跟随其内 <a> 的默认导航（点按被编辑器当成定位光标），
+  // 故在此显式分派两类链接：
+  //   ① 文件链接 chip（包内 `a.cm-file-link`，`[名](docs/x.md:12)`）→ 当前 work 编辑卡打开该文件并定位行；
+  //   ② 外链（包内 `a.cm-link-widget`，http(s)/mailto）→ 新标签打开。
+  // 文件链接路径解析复用 @ 提及链（activateMention → floria-work scroll），不另立第二条落点；
+  // 文档相对写法（`./x.md` / `../x.md`）按当前文件所在目录归一，其余按项目根相对（@ 插入口径）；
+  // 无项目 label 前缀的路径显式绑定当前工作项目（work 编辑卡的链接基准 = 本卡所在项目）。
+  function wkEditorLinkTarget(el) {
+    if (!el || !el.closest) return null
+    return el.closest('a.cm-file-link, a.cm-link-widget')
+  }
+  function wkDocRelative(cur, rel) {
+    const parts = String(rel || '').replace(/\\/g, '/').split('/')
+    if (!/^\.{1,2}$/.test(parts[0])) return parts.join('/')
+    const base = String(cur || '').split('/').slice(0, -1)
+    for (const seg of parts) {
+      if (seg === '..') base.pop()
+      else if (seg !== '.' && seg !== '') base.push(seg)
+    }
+    return base.join('/')
+  }
+  function wkOpenEditorLink(a) {
+    const url = a.getAttribute('href') || ''
+    if (a.classList.contains('cm-file-link')) {
+      const info = window.FloriaCM6.parseFileLink(url)
+      if (!info) return
+      let rel = wkDocRelative(state.workFile, info.path)
+      const ws = String(state.workspace || '').replace(/\\/g, '/').replace(/\/+$/, '')
+      if (ws && rel.startsWith(ws + '/')) rel = rel.slice(ws.length + 1)
+      const top = rel.split('/')[0]
+      const path = mentionProjectLabels().includes(top) ? rel : state.workProj + '/' + rel
+      activateMention({ kind: 'path', ptype: 'file', path, line: info.line || 0 })
+      return
+    }
+    if (/^(?:https?:|mailto:)/i.test(url)) window.open(url, '_blank', 'noopener')
+  }
+
   // 关一枚文件 tab（顶栏文件 pill 的 ×，p = 该 pill 的路径）：从开放集 state.wkFiles 移除。关的是
   // **激活项** → 切右邻 / 左邻（落点语义同 wkCloseTab）；一枚不剩 → 清 workFile、下沉格回聊天 tab
   // （「聊天 / 文件 / 预览至少一栏」由 applyPanes 保底）。非激活 tab 没有文档态（单编辑器模型，切前
@@ -13448,6 +13486,21 @@ function wkMerge3(base, local, remote) {
     body.addEventListener('dragend', () => { wkDragPath = ''; dndMark(null) })
     // 编辑卡左上角文件名只作展示：重命名入口统一在顶栏文件 pill / 侧栏文件行的右键菜单里
     // （2026-10-25 定案，删掉此处点击直调 openFileRename 的旧入口）。
+    // 编辑卡内链接点击（见 work-editor.js 的 wkOpenEditorLink）：mousedown 捕获先掐断 CM 的定位/选区处理，
+    // 否则点链接只把光标放上去；click 时显式分派（文件链接 → 编辑卡打开 + 定位行，外链 → 新标签）。
+    const edHost = $('work-editor')
+    edHost.addEventListener('mousedown', (e) => {
+      if (!wkEditorLinkTarget(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+    }, true)
+    edHost.addEventListener('click', (e) => {
+      const a = wkEditorLinkTarget(e.target)
+      if (!a) return
+      e.preventDefault()
+      e.stopPropagation()
+      wkOpenEditorLink(a)
+    })
     // 编辑区：Ctrl+S 立即保存（绑在 #work-editor 上；编辑器自身处理其余按键，未消费的键冒泡到此处）
     $('work-editor').addEventListener('keydown', (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return
