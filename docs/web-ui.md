@@ -1,7 +1,7 @@
 # web 前端链路定案（web-ui）
 
 > 本文件属 `docs/` 文档库，收录 web 前端（内置网关静态托管页）的**现行链路与不变量**。只写现状，不写逐次缺陷的根因叙事（历史见 git 与神经元 LOG）。
-> 前端唯一手改处 = `src/gateway/web-src/`（71 个 ESM 模块），`src/gateway/web/app.js` 由构建生成、勿手改；改动须 bump `?v=` cache-bust 并重新构建 exe（→ [build.md](build.md) §1.1）。网关服务侧（认证 / mDNS / 预览容器 / 审批中继 / 独立会话进程链）→ [gateway.md](gateway.md)；源码核心机制 → [core.md](core.md)；术语 → [glossary.md](glossary.md)。改动以下任一链路时必须同步更新本文。
+> 前端唯一手改处 = `src/gateway/web-src/`（71 个 ESM 模块），`src/gateway/web/app.js` 由构建生成、勿手改；改动须 bump `?v=` cache-bust 并重新构建 exe（→ [build.md](build.md) §1.4）。网关服务侧（认证 / mDNS / 预览容器 / 审批中继 / 独立会话进程链）→ [gateway.md](gateway.md)；源码核心机制 → [core.md](core.md)；术语 → [glossary.md](glossary.md)。改动以下任一链路时必须同步更新本文。
 
 ## 1. pushState 路径路由
 

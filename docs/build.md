@@ -1,194 +1,221 @@
-# 构建标准与 Feature Flag 活审计（build）
+# 构建标准与 Feature Flag 总表（build）
 
 > 本文件属 `docs/` 文档库。
 > 权威规则与姊妹件：**总标准 → [standards.md](standards.md)**；**前端打包对网关侧的效应 → [gateway.md](gateway.md)**。
 
-## 1. 构建标准
+## 1. 构建
 
-- 源码构建区 = 本仓库根（`Floria/`）：`src/` `scripts/` `probes/` `package.json` `bun.lock` `tsconfig.json` `env.d.ts` `node_modules/`。
-- 命令（均在 `cd Pj16-CodeAgent构建/Floria` 后执行）：
-  - `bun install` — 装依赖（bun >= 1.3.11）
-  - `bun run build` — 构建 → 项目根 `./cli-<ts>.exe`
-  - `bun run build:dev` — dev 构建 → **项目根** `cli-dev-<YYYYMMDDHHMMSS>.exe`（dev 构建即部署：产物直出项目根，build.ts 按脚本位置推导 PROJECT_ROOT；构建统一用本命令）
-  - `bun run build:dev:full` — 开全部实验 feature（产物 `cli-dev-<ts>-<特性代号>`，时间戳不同不覆盖；注意 CHICAGO_MCP 仍会编入但外部二进制启动到缺失的 `@ant/computer-use-mcp` 运行时包无法干净引导，见 §2.4 broken 节）
-  - `bun run compile` — 正式编译 → `./dist/cli-<YYYYMMDDHHMMSS>.exe`（发布流程用）
-  - `bun run dev` — 源码直跑（入口 `src/entrypoints/cli.tsx`）
-- `scripts/build.ts` 内调用的子脚本（bundle-web-modules / gen-web-assets / postprocess-icon）一律用 `process.execPath` 启动（常量 `BUN_BIN`），**不裸名 `bun`**——本机 bun 是便携副本不在 PATH，裸名会 ENOENT 打断构建；**不变量：构建只依赖「正在运行的那个 bun」，不依赖 PATH 状态。**
-- 产物命名（`scripts/build.ts`）= `<前缀>-<YYYYMMDDHHMMSS>[-<显式 --feature 代号>]`，显式 feature 代号用 `+` 连接（如 `cli-dev-<YYYYMMDDHHMMSS>-PRIVATE_GATEWAY.exe`）；前缀 dev=`cli-dev`、compile=`dist/cli`。默认五个 feature（BUILTIN_EXPLORE_PLAN_AGENTS + PRIVATE_GATEWAY + REACTIVE_COMPACT[usage-policy 拒绝/媒体超限/PTL 自动恢复] + SESSION_LINK[会话间协作] + CARD_API[卡片公开 API]）与 `--feature-set=dev-full` 不进文件名。**构建一律 `bun run build:dev`（产物名不带 `-PRIVATE_GATEWAY` 代号，含发布；`build:dev:gateway` 已废弃不使用）**；按特性构建仍用 `--feature=X`（产物名带该特性代号；VOICE_MODE 与 NEURON_RAG 默认关，需显式 `--feature=X` 才编入）。
-- 产物是**自包含单文件二进制**（`bun build --compile --bytecode --packages bundle`），拷到任意项目目录即可用，运行时不需要 src/node_modules。**exe 产物带时间戳是强制规范，不允许覆盖**（禁止覆盖成固定名如 `cli-dev.exe`）；部署/换新 = 直接用新时间戳 exe 启动，旧产物原样保留。
-- **ripgrep 内嵌（Grep/Glob 依赖）**：exe 不含系统 rg，构建时由 `scripts/build.ts` 的 `ripgrepEmbedPlugin` 把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 作为构建资产内嵌（虚拟说明符 `virtual:ripgrep-bin`，宿主平台二进制缺失即构建硬失败）；运行时 `src/utils/ripgrep.ts` `materializeEmbeddedRipgrep()` 把内嵌字节原子落地到 `tmpdir()/floria-ripgrep/<资产名>` 再 spawn（内嵌虚拟路径只可读、不可直接执行）。**不变量：Grep/Glob 与 Bash 内的 `rg` 会话集成共用同一 `ripgrepCommand()`；dev 直跑走 `src/vendor/ripgrep/...`（builtin）分支，两者都必须解析到可执行的 rg。** 旧链 `argv0='rg'` 分发（Bun 编译产物内部提供）在本机 bun 1.4.2 已不存在——勿回退。
+源码构建区 = 本仓库根（`Floria/`）：`src/` `scripts/` `probes/` `package.json` `bun.lock` `tsconfig.json` `env.d.ts` `node_modules/`。本目录即仓库根，其自身内容全量入库，`node_modules/`/`dist/`/`temp/`/`*.exe` 由 `.gitignore` 排除。
+
+### 1.1 调用
+
+均在 `cd Pj16-CodeAgent构建/Floria` 后执行（bun >= 1.3.11）：
+
+| 命令 | 产物 | 用途 |
+|---|---|---|
+| `bun install` | — | 装依赖 |
+| `bun run build:dev` | 项目根 `cli-dev-<YYYYMMDDHHMMSS>.exe` | **dev 构建即部署，统一入口**（产物直出项目根） |
+| `bun run build` | 项目根 `cli-<YYYYMMDDHHMMSS>.exe` | 非 dev 构建 |
+| `bun run compile` | `dist/cli-<YYYYMMDDHHMMSS>.exe` | 正式发布用 |
+| `bun run build:dev:full` | 项目根 `cli-dev-<ts>.exe` | 等价 `--dev --feature-set=dev-full`，开全部实验特性 |
+| `bun run dev` | — | 源码直跑（入口 `src/entrypoints/cli.tsx`） |
+
+`build:dev:gateway` 已废弃，不再使用。
+
+### 1.2 参数
+
+`scripts/build.ts` 直接读 `process.argv`，参数随 `bun run ./scripts/build.ts` 一起传（npm 脚本只是快捷方式）：
+
+| 参数 | 写法 | 作用 |
+|---|---|---|
+| `--dev` | 开关 | dev 模式：产物前缀 `cli-dev`，版本串 `x.y.z+<日期>.t<时分秒>.sha<HEAD 8 位>` |
+| `--compile` | 开关 | 产物落 `dist/`（与 `--dev` 组合时为 `dist/cli-dev-…`） |
+| `--feature=X` | `--feature=X` 或 `--feature X`，可多次 | 追加单个特性；产物名末尾追加 `-<代号>`（多个代号用 `+` 连接）。VOICE_MODE、NEURON_RAG 默认关，只能这样显式编入 |
+| `--feature-set=dev-full` | `--feature-set=dev-full` 或 `--feature-set dev-full` | 并入全部实验特性（32 项，见各表状态列「实验」） |
+
+默认特性 5 项（见 §2.1）任何构建都编入，不写进产物名。
+
+### 1.3 产物规则
+
+- 命名 = `<前缀>-<YYYYMMDDHHMMSS>[-<显式特性代号>]`。**exe 时间戳强制、不允许覆盖**（禁止改成固定名如 `cli-dev.exe`）；部署换新 = 直接用新时间戳 exe 启动，旧产物原样保留。
+- 产物是**自包含单文件二进制**（`bun build --compile --bytecode --packages bundle`），可拷到任意目录运行，运行时不需要 `src/`/`node_modules`。
+- 构建只依赖「正在运行的那个 bun」，不依赖 PATH：本机 bun 是便携副本，`scripts/build.ts` 内部子脚本一律用 `process.execPath` 启动，不裸名 `bun`。
+- 版本串：dev 构建的构建元数据挂 `+`（`build metadata`，不参与优先级比较）；`-` 在 SemVer 里是 pre-release 段，不得挪作「开发版」标记。发布版版本串 = `package.json` 的 `version` 原值；递增按 SemVer（修 bug → PATCH、新功能 → MINOR、不兼容 → MAJOR）。
+- **ripgrep 内嵌**（Grep/Glob 依赖）：构建时把 `src/vendor/ripgrep/<arch>-<platform>/rg[.exe]` 作为资产内嵌（虚拟说明符 `virtual:ripgrep-bin`，宿主平台二进制缺失即构建硬失败）；运行时 `src/utils/ripgrep.ts` 原子落地到 `tmpdir()/floria-ripgrep/` 再 spawn。**不变量：Grep/Glob 与 Bash 内的 `rg` 会话集成共用同一 `ripgrepCommand()`；dev 直跑走 `src/vendor/ripgrep/...` 分支，两者都必须解析到可执行的 rg。** 旧链 `argv0='rg'` 分发在本机 bun 1.4.2 已不存在——勿回退。
 - codegraph 索引：`src/.codegraph/`（相对路径存储，随 src 迁移有效）；MCP 查询带 `projectPath=Pj16-CodeAgent构建/Floria/src`。
-- 版本串：dev 构建 = `<package.json version>+<YYYYMMDD>.t<UTC时分秒>.sha<HEAD 8 位>`（`scripts/build.ts` `getDevVersion`），compile 发布 = `package.json` 的 `version` 原值。**构建元数据挂 `+` 不挂 `-`**：`-` 在 SemVer 里是 pre-release 段（语义「该版本的预发布版」，优先级 `X.Y.Z-pre < X.Y.Z`），把已发布产物标成比 base 更早的预发布自相矛盾；`+` 是 build metadata，不参与优先级比较，语义正是「同版本、不同构建」——dev 与正式版的区分另由产物名 `cli-dev-` 前缀承载。**基础版本递增按标准 SemVer 语义**：修 bug / 调参 → PATCH、新增功能 → MINOR、不兼容 → MAJOR；基础版本单一真源 = `package.json` 的 `version`（发布规则详见项目根 `CLAUDE.md`「发布规则」节）。`bun run dev` 直跑源码时无 `--define` 注入，`MACRO.VERSION` 兜底取 `package.json`（单一真源，见 `src/entrypoints/cli.tsx`；sha 取自 git HEAD）。
-- 本目录即仓库根，其自身内容全量入库，`node_modules/`/`dist/`/`temp/`/`*.exe` 由 `.gitignore` 排除。
 
-### 1.1 前端内嵌打包与 cache-busting（改 web 前端必读）
+### 1.4 前端内嵌打包与 cache-busting（改 web 前端必读）
 
 前端权威 `src/gateway/web-src/`（41 ESM 模块，`gateway/web/app.js` 为构建生成物勿手改；模块边界是源码组织、拼接时 import/export 全剥除，见 [web-ui.md](web-ui.md) §12）；构建时 `scripts/gen-web-assets.ts` 递归 base64 内联进 exe（build.ts 每次构建前自动运行），`localGateway.ts` 内嵌优先、磁盘 public 仅兜底（项目根优先 + 便携根兜底）。**前端改动必须重新构建 exe 才生效**（无磁盘热重载）；**cache-busting**：index.html 资源引用带版本号 `?v=N`（styles.css/app.js），每次前端改动同步 bump 该号（+ sw.js CACHE），浏览器强制下载新版绕过 HTTP 缓存（资源引用为绝对路径，见 [gateway.md](gateway.md) pushState 路由章节）；**注意：前端从未注册 Service Worker**（web/ 目录无 serviceWorker 代码，sw.js 是死文件，浏览器不跑它——更新可靠靠 cache-busting 而非 sw）。**bytecode exe 内嵌资产不可 grep**（字符串经编码），验证资产版本用 `curl http://127.0.0.1:8124/sw.js` 与 `/app.js`。
 
 **vendored 第三方库（拼接器不解析 npm，第三方一律全局 `<script>`）**：拼接器 `bundle-web-modules.ts` 只拼 `web-src/**`、**不解析 npm 依赖** ⇒ 任何 npm 包必须**预打包成全局 IIFE** 提交进 `src/gateway/web/`（`gen-web-assets.ts` 递归自动内嵌，`sw.js` CORE 可预缓存，`index.html` 在 `/app.js` 之前以 `<script>` 引入）。先例 = KaTeX（`vendor/katex/`，见 [web-ui.md](web-ui.md) §57）与 CM6 编辑层（`cm6/floria-cm6.iife.js`，全局 `window.FloriaCM6`，见 §71）。**生成器/构建手动跑、不接进 `build.ts`** ⇒ **常规构建不联网**。CM6 IIFE 的生成工程 = 兄弟目录 `SubPj4-CodeMirror6开发`（`bun build.ts` → `dist/floria-cm6.iife.js`，CM6 依赖全内联），`bun tools/sync.ts deploy --yes` 只把该 IIFE 拷进 `Floria/src/gateway/web/cm6/`；ESM/sourcemap 不部署（exe 内嵌按字节计）。该包直连 npm 的 `@codemirror/*`（state/view/commands/autocomplete/language 及 lang-markdown/javascript/json/css/html/python）、`@codemirror/legacy-modes`（shell/yaml/stex）、`@lezer/markdown`、`@lezer/highlight`、`codemirror-live-markdown@0.5.1-alpha.1`。**上游库补丁**：包内 `package.json` 的 `patchedDependencies` 指向 `patches/codemirror-live-markdown@0.5.1-alpha.1.patch`（`[floria patch]`：围栏行隐藏 + 语言钮），`bun install` 时自动重放；**改库版本后必须重做补丁**（补丁按行号定位，版本一变即漂）。
 
-## 2. Feature Flags 活审计
+## 2. Feature Flag 总表
 
-本仓库现引用 91 个 `feature('FLAG')` 编译期旗标。下列打包复核分类为上次全量扫描结果：
+源码共引用 92 个 `feature('FLAG')` 编译期旗标（单双引号两种写法均已计入）。按门控对象分表，每表列：名称、功能、源码文件（门控/实现主件）、状态。
 
-- 74 个旗标可干净打包
-- 13 个仍打包失败（其中 5 个已恢复，见 §2.6；10 个远程/云端方向已定案放弃不恢复：CCR 认证族五 flag `BRIDGE_MODE`/`CCR_AUTO_CONNECT`/`CCR_MIRROR`/`CCR_REMOTE_SETUP`/`DAEMON` + `DIRECT_CONNECT`/`SSH_REMOTE`/`KAIROS`/`KAIROS_DREAM`/`PROACTIVE`——均不在任何 feature 集，源码门控保留（编译期 tree-shake））
+状态口径：
 
-Important: "bundle cleanly" does not always mean "runtime-safe". Some flags still depend on optional native modules, claude.ai OAuth, GrowthBook gates, or externalized `@ant/*` packages.
+| 状态 | 含义 |
+|---|---|
+| 默认开 | 进 `defaultFeatures`，所有构建编入 |
+| 实验 | 可干净打包，默认关；`--feature=X` 或 `--feature-set=dev-full` 编入 |
+| 支持 | rollout/平台/遥测/构建类开关，非用户可见实验 |
+| 已恢复 | 曾因缺文件不可打包，现已补齐；是否进默认构建见表内标注 |
+| stub | 占位文件已补齐可编译，运行时禁用（多数 `isEnabled: () => false`） |
+| 已放弃 | 远程/云端方向，不恢复；源码门控保留供编译期 tree-shake |
+| 缺文件 | 首次缺失 import 即不可打包 |
 
-### 2.1 Default Build Flags
+> 「可打包」不等于「运行期安全」：部分实验 flag 运行期仍依赖可选原生模块、外部化 `@ant/*` 包或云端账号。
 
-- `VOICE_MODE`
-  默认关（需显式 `--feature=VOICE_MODE`）。启用 `/voice`、push-to-talk UI、voice notices、dictation plumbing。运行时原依赖 claude.ai OAuth + 原生音频模块或 SoX 兜底录音器——OAuth 登录线路已彻底移除，`/voice` 运行时恒不可用（UI/按键编排仍编入，语音 STT/连接链按 OAuth token 恒缺位拒绝），flag 保留仅编排水位，待定去留。
-- `PRIVATE_GATEWAY`
-  【内置私有化网关，默认开，纯本地】进 `defaultFeatures`：所有默认构建（build / build:dev / compile）均注册 `/server` 指令，内置网关随 exe 编入（`--gateway` 独立进程 + 内嵌 web 前端）。token 落盘 `getPortableRoot()/.claude/gateway/token` 跨进程共享；空闲自动回收——cliClients/sockets/sseClients 三集合全空持续 `GATEWAY_IDLE_MINUTES`（默认 10，env 可调）分钟即关。纯本地指令，不涉 OAuth/GrowthBook/Anthropic API。API 清单/安全加固/前缀迁移全链 → [gateway.md](gateway.md)。
-- `REACTIVE_COMPACT`
-  进 `defaultFeatures` 默认编入。usage-policy 拒绝（stop_reason='refusal'）自动剥图恢复 + PTL/媒体超限恢复；门控接入 `query.ts`（`tryReactiveCompact` / `isWithheldPromptTooLong` / `isWithheldMediaSizeError` / `isWithheldUsagePolicyRefusal`）与 `commands/compact/compact.ts`（`compactViaReactive` / `isReactiveOnlyMode`）；运行期可用 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 整体停用。条目详情见 §2.6。
-- `SESSION_LINK`
-  【会话间协作，默认开，纯本地/TUI 无关】进 `defaultFeatures`——门控点 = 工具自身 `isEnabled()`（`SessionSendTool` / `SessionSearchTool` 均判 `feature('SESSION_LINK')`；`tools.ts` 无条件懒加载登记）。启用 `session_send`（发送，只认 sid）+ `session_search`（发现，本项目最近 10 个标题）与跨会话投递（不门控接收侧——接收走既有 `enqueue`，无新代码）。链路 → [core.md](core.md) 末节 + [gateway.md](gateway.md) §13 + [web-ui.md](web-ui.md) §24。
-- `BUILTIN_EXPLORE_PLAN_AGENTS`
-  进 `defaultFeatures`：内置 explore/plan agent 预设。
-- `NEURON_RAG`
-  【本 fork 自有，默认关】神经元记忆/RAG 引擎纯进程内置化（`src/tools/neturon/` 16 件：BGE 向量检索 @huggingface/transformers + p5/p6 认知链 leiden.ts + coggraph.ts，无 python 子进程）。注册 `recall`/`remember`（**不带 neuron_ 前缀**，常驻直载、不经 ToolSearch，直接调用）+ `neuron_list`/`neuron_source`/`neuron_fill_precog`/`neuron_cog`（延迟加载，ToolSearch 可检索）。开启方式 = 显式 `--feature=NEURON_RAG` 构建（产物名带代号）。标准见 [standards.md](standards.md) §7，机制见 [core.md](core.md)。
-- `CARD_API`
-  【卡片公开 API，默认开，纯本地】进 `defaultFeatures`——门控点 = `tools.ts` 里 `getCardCallTool()`（登记）+ `CardCallTool.isEnabled()`（`feature('CARD_API')`）。启用 `CardCall` 工具（`action:'list'|'call'`，agent 驱动浏览器里的卡片）。无浏览器在场时 list 返回空、call 明确报错，链路惰性。链路 → [web-ui.md](web-ui.md) §61 + [gateway.md](gateway.md) §18。
+### 2.1 默认构建（5）
 
-### 2.2 Working Experimental Features
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `BUILTIN_EXPLORE_PLAN_AGENTS` | 内置 explore/plan agent 预设 | `src/tools/AgentTool/builtInAgents.ts` | 默认开（也在 dev-full 集） |
+| `PRIVATE_GATEWAY` | 内置网关：`/server` 指令、`--gateway` 独立进程、内嵌 web 前端；token 落 `getPortableRoot()/.claude/gateway/token`，空闲 10 分钟（`GATEWAY_IDLE_MINUTES`）自动回收 | `src/commands.ts`、`src/utils/gatewayClient.ts` | 默认开 |
+| `REACTIVE_COMPACT` | 拒答（usage-policy refusal）、PTL、媒体超限三类自动剥图恢复；可 `CLAUDE_CODE_DISABLE_REACTIVE_COMPACT` 停用 | `src/services/compact/reactiveCompact.ts`、`src/query.ts` | 默认开（见 §2.10） |
+| `SESSION_LINK` | 会话间协作：`session_send`（只认 sid）+ `session_search`（本项目最近 10 个标题） | `src/tools/SessionSendTool/SessionSendTool.ts`、`src/tools/SessionSearchTool/SessionSearchTool.ts` | 默认开 |
+| `CARD_API` | `CardCall` 工具：agent 驱动浏览器在场卡片（list/call） | `src/tools/CardCallTool/CardCallTool.ts`、`src/tools.ts` | 默认开 |
 
-These are the user-facing or behavior-changing flags that currently bundle cleanly and should still be treated as experimental unless explicitly called out as default-on.
+### 2.2 工具（19）
 
-#### Interaction and UI Experiments
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `AGENT_TRIGGERS` | 本地 cron/trigger 工具（CronCreate/Delete/List） | `src/tools/ScheduleCronTool/`、`src/constants/tools.ts` | 实验 |
+| `AGENT_TRIGGERS_REMOTE` | 远程触发工具 `RemoteTrigger` | `src/tools/RemoteTriggerTool/RemoteTriggerTool.ts`、`src/tools.ts` | 实验 |
+| `MONITOR_TOOL` | `Monitor` 工具：spawn 后台监控进程并流式通知 | `src/tools/MonitorTool/MonitorTool.tsx` | 已恢复（默认不编入） |
+| `REVIEW_ARTIFACT` | `ReviewArtifact` 工具：批准弹窗选 finding，产物落 `.claude/reviews/` | `src/tools/ReviewArtifactTool/ReviewArtifactTool.tsx` | 已恢复（默认不编入） |
+| `WORKFLOW_SCRIPTS` | `Workflow` 工具：扫描 `.claude/workflows/*.md` 并 spawn 后台任务；脚本另注册为 `/name` | `src/tools/WorkflowTool/WorkflowTool.tsx`、`src/commands/workflows/` | 已恢复（默认不编入，见 §2.10） |
+| `HISTORY_SNIP` | `SnipTool` + 历史裁剪投影 | `src/tools/SnipTool/` | stub（禁用） |
+| `KAIROS_PUSH_NOTIFICATION` | `PushNotificationTool` | `src/tools/PushNotificationTool/` | stub（禁用） |
+| `OVERFLOW_TEST_TOOL` | `OverflowTestTool` | `src/tools/OverflowTestTool/` | stub（禁用） |
+| `CONTEXT_COLLAPSE` | `CtxInspectTool` 上下文折叠 | `src/tools/CtxInspectTool/CtxInspectTool.js`（缺失） | 缺文件 |
+| `WEB_BROWSER_TOOL` | `WebBrowserTool` | `src/tools/WebBrowserTool/WebBrowserTool.js`（缺失） | 缺文件 |
+| `UDS_INBOX` | UDS 会话互发（`udsMessaging` + `ListPeersTool`）；无网关独立会话的一等能力 | `src/utils/udsMessaging.js`、`src/tools/ListPeersTool/`（缺失） | 缺文件 |
+| `TERMINAL_PANEL` | `TerminalCaptureTool` 终端面板 | `src/tools/TerminalCaptureTool/`（缺失） | 缺文件 |
+| `BASH_CLASSIFIER` | 分类器辅助的 bash 权限判定 | `src/cli/structuredIO.ts`、`src/utils/permissions/` | 实验 |
+| `POWERSHELL_AUTO_MODE` | PowerShell 自动权限模式 | `src/utils/permissions/permissions.ts`、`yoloClassifier.ts` | 实验 |
+| `TREE_SITTER_BASH` | tree-sitter bash 解析后端 | `src/utils/bash/parser.ts` | 实验 |
+| `TREE_SITTER_BASH_SHADOW` | tree-sitter bash 影子 rollout | `src/tools/BashTool/bashPermissions.ts`、`src/utils/bash/parser.ts` | 实验 |
+| `NEURON_RAG` | 本 fork 神经元记忆/RAG：`recall`/`remember` 常驻 + `neuron_list`/`neuron_source`/`neuron_fill_precog`/`neuron_cog` 延迟加载 | `src/tools/neturon/`、`src/constants/prompts.ts` | 本 fork 专有（默认关，显式 `--feature=NEURON_RAG`） |
+| `CHICAGO_MCP` | computer-use MCP 集成与 wrapper 加载 | `src/entrypoints/cli.tsx`、`src/main.tsx` | 可打包；运行期依赖外部化 `@ant/computer-use-*`，非 runtime-safe |
+| `NATIVE_CLIPBOARD_IMAGE` | macOS 原生剪贴板读图快路径（需 `image-processor-napi`） | `src/utils/imagePaste.ts` | 实验 |
 
-- `AWAY_SUMMARY` — Adds away-from-keyboard summary behavior in the REPL.
-- `HISTORY_PICKER` — Enables the interactive prompt history picker.
-- `HOOK_PROMPTS` — Passes the prompt/request text into hook execution flows.
-- `KAIROS_BRIEF` — Enables brief-only transcript layout and BriefTool-oriented UX without the full assistant stack.
-- `KAIROS_CHANNELS` — Enables channel notices and channel callback plumbing around MCP/channel messaging.
-- `LODESTONE` — Enables deep-link / protocol-registration related flows and settings wiring.
-- `MESSAGE_ACTIONS` — Enables message action entrypoints in the interactive UI.
-- `NEW_INIT` — Enables the newer `/init` decision path.
-- `QUICK_SEARCH` — Enables prompt quick-search behavior.
-- `SHOT_STATS` — Enables additional shot-distribution stats views.
-- `TOKEN_BUDGET` — Enables token budget tracking, prompt triggers, and token warning UI.
-- `ULTRAPLAN` — Enables `/ultraplan`, prompt triggers, and exit-plan affordances.
-- `ULTRATHINK` — Enables the extra thinking-depth mode switch.
-- `STREAMLINED_OUTPUT` — Enables streamlined message-output transformation in headless `stream-json` mode when `CLAUDE_CODE_STREAMLINED_OUTPUT=true`（`cli/print.ts` 门控）.
+### 2.3 技能（6）
 
-#### Agent, Memory, and Planning Experiments
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `BUILDING_CLAUDE_APPS` | `claude-api` 技能（Claude API 应用构建） | `src/skills/bundled/claudeApi.ts` | stub（仅多语言 `.md` 资产） |
+| `RUN_SKILL_GENERATOR` | 技能生成器技能 | `src/skills/bundled/runSkillGenerator.js` | stub（注册即禁用） |
+| `KAIROS_DREAM` | 云端 dream 技能与任务行为 | `src/skills/bundled/dream.js`（缺失） | 已放弃 |
+| `MCP_SKILLS` | MCP 技能发现 | `src/services/mcp/client.ts`、`src/commands.ts` | stub（返回 `[]`） |
+| `EXPERIMENTAL_SKILL_SEARCH` | 技能检索服务（localSearch/prefetch） | `src/services/skillSearch/`（缺失） | 缺文件 |
+| `SKILL_IMPROVEMENT` | 技能改进 hook | `src/utils/hooks/skillImprovement.ts` | 支持（默认关） |
 
-- `AGENT_MEMORY_SNAPSHOT` — Stores extra custom-agent memory snapshot state in the app.
-- `AGENT_TRIGGERS` — Enables local cron/trigger tools and bundled trigger-related skills.
-- `AGENT_TRIGGERS_REMOTE` — Enables the remote trigger tool path.
-- `CACHED_MICROCOMPACT` — Enables cached microcompact state through query and API flows.
-- `COMPACTION_REMINDERS` — Enables reminder copy around compaction and attachment flows.
-- `EXTRACT_MEMORIES` — Enables post-query memory extraction hooks.
-- `PROMPT_CACHE_BREAK_DETECTION` — Enables cache-break detection around compaction/query/API flow.
-- `TEAMMEM` — Enables team-memory files, watcher hooks, and related UI messages.
-- `VERIFICATION_AGENT` — Enables verification-agent guidance in prompts and task/todo tooling.
+### 2.4 插件（1）
 
-#### Tools, Permissions, and Remote Experiments
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `MCP_RICH_OUTPUT` | MCP 工具富输出渲染 UI | `src/tools/MCPTool/UI.tsx` | 实验 |
 
-- `BASH_CLASSIFIER` — Enables classifier-assisted bash permission decisions.
-- `BRIDGE_MODE` — Enables Remote Control / REPL bridge command and entitlement paths.【已放弃】运行时需 claude.ai OAuth 订阅 + GrowthBook 门，被内置网关覆盖，不恢复；已从 `build.ts` `fullExperimentalFeatures` 剔除，源码门控保留（编译期 tree-shake）。
-- `CCR_AUTO_CONNECT` — Enables the CCR auto-connect default path.【已放弃】同 BRIDGE_MODE，从 feature 集剔除。
-- `CCR_MIRROR` — Enables outbound-only CCR mirror sessions.【已放弃】镜像转发对应能力已在本地落地：`conversationDisplay.ts` 导出 `{role,blocks[]}` + `exportConversationToServer` POST + `sendSessionActivity` 状态上报 → 网关 → floria 网页；已从 feature 集剔除。
-- `CCR_REMOTE_SETUP` — Enables the remote setup command path.【已放弃】本地网关 `/server on` 即起，无对应需求；已从 feature 集剔除。
-- `CHICAGO_MCP` — Enables computer-use MCP integration paths and wrapper loading.
-- `CONNECTOR_TEXT` — Enables connector-text block handling in API/logging/UI paths.
-- `MCP_RICH_OUTPUT` — Enables richer MCP UI rendering.
-- `NATIVE_CLIPBOARD_IMAGE` — Enables the native macOS clipboard image fast path.
-- `POWERSHELL_AUTO_MODE` — Enables PowerShell-specific auto-mode permission handling.
-- `TREE_SITTER_BASH` — Enables the tree-sitter bash parser backend.
-- `TREE_SITTER_BASH_SHADOW` — Enables the tree-sitter bash shadow rollout path.
-- `UNATTENDED_RETRY` — Enables unattended retry behavior in API retry flows.
+### 2.5 斜杠命令（11）
 
-### 2.3 Bundle-Clean Support Flags
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `VOICE_MODE` | `/voice`、push-to-talk、语音通知与听写编排 | `src/commands/voice/`、`src/components/PromptInput/Notifications.tsx` | 实验；OAuth 语音后端已移除，运行期恒不可用 |
+| `ULTRAPLAN` | `/ultraplan`、提示触发与退出计划 UI | `src/commands/ultraplan.tsx` | 实验 |
+| `NEW_INIT` | `/init` 新决策路径 | `src/commands/init.ts` | 实验 |
+| `BREAK_CACHE_COMMAND` | `/break-cache` 命令 | `src/context.ts`、`src/commands/break-cache/` | 支持 |
+| `KAIROS_GITHUB_WEBHOOKS` | `/subscribe-pr` + `SubscribePRTool` + GitHub webhook 消息 | `src/commands/subscribe-pr.js`、`src/hooks/useReplBridge.tsx` | stub（禁用） |
+| `FORK_SUBAGENT` | `/fork` 子 agent 与 boilerplate | `src/commands/branch/index.ts` | stub（禁用） |
+| `BUDDY` | `/buddy` 伴侣角色 | `src/buddy/` | stub（禁用） |
+| `TORCH` | `/torch` 命令 | `src/commands/torch.js` | stub（禁用） |
+| `BG_SESSIONS` | 后台会话命令与退出处理 | `src/commands/exit/exit.tsx` | stub（禁用） |
+| `DAEMON` | `/remoteControlServer` 常驻远程控制 | `src/commands/remoteControlServer/`（缺失） | 已放弃（内置网关承担） |
+| `CCR_REMOTE_SETUP` | 远程 setup 命令路径 | `src/commands.ts` | 已放弃 |
 
-These also bundle cleanly, but they are mostly rollout, platform, telemetry, or plumbing toggles rather than user-facing experimental features.
+### 2.6 Agent / 记忆 / 规划（9）
 
-- `ABLATION_BASELINE` — CLI ablation/baseline entrypoint toggle.
-- `ALLOW_TEST_VERSIONS` — Allows test versions in native installer flows.
-- `ANTI_DISTILLATION_CC` — Adds anti-distillation request metadata.
-- `BREAK_CACHE_COMMAND` — Injects the break-cache command path.
-- `COWORKER_TYPE_TELEMETRY` — Adds coworker-type telemetry fields.
-- `DOWNLOAD_USER_SETTINGS` — Enables settings-sync pull paths.
-- `DUMP_SYSTEM_PROMPT` — Enables the system-prompt dump path.
-- `FILE_PERSISTENCE` — Enables file persistence plumbing.
-- `HARD_FAIL` — Enables stricter failure/logging behavior.
-- `IS_LIBC_GLIBC` — Forces glibc environment detection.
-- `IS_LIBC_MUSL` — Forces musl environment detection.
-- `PERFETTO_TRACING` — Enables perfetto tracing hooks.
-- `SKILL_IMPROVEMENT` — Enables skill-improvement hooks.
-- `SKIP_DETECTION_WHEN_AUTOUPDATES_DISABLED` — Skips updater detection when auto-updates are disabled.
-- `SLOW_OPERATION_LOGGING` — Enables slow-operation logging.
-- `UPLOAD_USER_SETTINGS` — Enables settings-sync push paths.
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `AGENT_MEMORY_SNAPSHOT` | 自定义 agent 记忆快照 | `src/tools/AgentTool/loadAgentsDir.ts`、`src/main.tsx` | 实验 |
+| `CACHED_MICROCOMPACT` | 微压缩缓存状态 | `src/query.ts`、`src/constants/prompts.ts` | 实验 |
+| `COMPACTION_REMINDERS` | 压缩与附件流程提醒文案 | `src/utils/attachments.ts` | 实验 |
+| `EXTRACT_MEMORIES` | 对话后记忆抽取 hook | `src/memdir/paths.ts`、`src/cli/print.ts` | 实验 |
+| `PROMPT_CACHE_BREAK_DETECTION` | 缓存断点检测 | `src/services/api/claude.ts`、`src/commands/compact/compact.ts` | 实验 |
+| `TEAMMEM` | 团队记忆文件、watcher 与 UI 消息 | `src/components/memory/`、`src/memdir/` | 实验 |
+| `VERIFICATION_AGENT` | 验证 agent 提示与任务/todo 工具引导 | `src/tools/AgentTool/builtInAgents.ts`、`src/constants/prompts.ts` | 实验 |
+| `COORDINATOR_MODE` | coordinator + worker 两个内置 agent（`subagent_type: 'worker'`） | `src/coordinator/workerAgent.ts`、`src/coordinator/coordinatorMode.ts` | 已恢复（默认不编入） |
+| `PROACTIVE` | 云端主动任务栈 | `src/proactive/`（缺失） | 已放弃 |
 
-### 2.4 Compile-Safe But Runtime-Caveated
+### 2.7 UI / 交互（13）
 
-可打包 ≠ 运行时安全——以下旗标编入后仍有运行期缺口：
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `AWAY_SUMMARY` | 离开回来摘要 | `src/hooks/useAwaySummary.ts`、`src/screens/REPL.tsx` | 实验 |
+| `HISTORY_PICKER` | 交互式提示历史选择器 | `src/hooks/useHistorySearch.ts`、`src/components/PromptInput/PromptInput.tsx` | 实验 |
+| `HOOK_PROMPTS` | hook 执行流接收 prompt/request 文本 | `src/screens/REPL.tsx` | 实验 |
+| `KAIROS_BRIEF` | brief-only 转录布局与 `BriefTool` 导向 UX | `src/commands/brief.ts` | 实验（不恢复完整 assistant 栈） |
+| `KAIROS_CHANNELS` | 频道通知与 MCP/频道回调 | `src/components/LogoV2/ChannelsNotice.tsx`、`src/cli/print.ts` | 实验 |
+| `LODESTONE` | 深链/协议注册与设置接线 | `src/main.tsx`、`src/interactiveHelpers.tsx` | 实验 |
+| `MESSAGE_ACTIONS` | 交互 UI 的消息动作入口 | `src/screens/REPL.tsx`、`src/keybindings/defaultBindings.ts` | 实验 |
+| `QUICK_SEARCH` | 提示快速搜索 | `src/components/PromptInput/PromptInput.tsx`、`src/keybindings/defaultBindings.ts` | 实验 |
+| `SHOT_STATS` | 附加投递分布统计视图 | `src/utils/stats.ts`、`src/components/Stats.tsx` | 实验 |
+| `TOKEN_BUDGET` | token 预算跟踪、提示触发与警告 UI | `src/components/Spinner.tsx`、`src/components/PromptInput/PromptInput.tsx` | 实验 |
+| `ULTRATHINK` | 额外思考深度档 | `src/utils/thinking.ts` | 实验 |
+| `STREAMLINED_OUTPUT` | headless `stream-json` 的精简输出（`CLAUDE_CODE_STREAMLINED_OUTPUT=true`） | `src/cli/print.ts` | 实验 |
+| `AUTO_THEME` | OSC 11 主题跟随（5s 轮询） | `src/components/design-system/ThemeProvider.tsx`、`src/tools/ConfigTool/supportedSettings.ts` | stub |
 
-- `VOICE_MODE` — `/voice` 恒不可用（voice_stream 后端随 OAuth 移除而死），flag 仅保留 UI/按键编排。
-- `NATIVE_CLIPBOARD_IMAGE` — 仅在 `image-processor-napi` 存在时加速 macOS 剪贴板读图。
-- `BRIDGE_MODE` / `CCR_AUTO_CONNECT` / `CCR_MIRROR` / `CCR_REMOTE_SETUP` —【已放弃】运行期需 claude.ai OAuth + GrowthBook 门；已从 `build.ts` `fullExperimentalFeatures` 剔除，源码门控保留（tree-shake）。
-- `KAIROS_BRIEF` / `KAIROS_CHANNELS` — 不恢复完整 assistant 栈，只暴露仍存在的 brief/channel surface。
-- `CHICAGO_MCP` — 运行期仍触及外部化 `@ant/computer-use-*` 包，属 compile-safe 非 runtime-safe。
-- `TEAMMEM` — 仅当环境真启用 team-memory 配置/文件时有用。
+### 2.8 平台 / 远程 / 权限（12）
 
-### 2.5 Restored Stub Flags
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `BRIDGE_MODE` | Remote Control / REPL bridge 与 entitlement 路径 | `src/bridge/bridgeEnabled.ts`、`src/commands/bridge/index.ts` | 已放弃（内置网关覆盖） |
+| `CCR_AUTO_CONNECT` | CCR 自动连接默认路径 | `src/bridge/bridgeEnabled.ts`、`src/utils/config.ts` | 已放弃 |
+| `CCR_MIRROR` | 只出向 CCR 镜像会话 | `src/bridge/remoteBridgeCore.ts` | 已放弃（本地已由 `conversationDisplay.ts` 上报链承担） |
+| `DIRECT_CONNECT` | `claude open <cc://url>` 外部直连会话 | `src/main.tsx` | 已放弃（依赖缺失的 `src/server/parseConnectUrl.js`） |
+| `SSH_REMOTE` | `claude ssh <host>` 远程机器执行 | `src/ssh/createSSHSession.js`（缺失） | 已放弃 |
+| `BYOC_ENVIRONMENT_RUNNER` | 自带环境 runner | `src/environment-runner/main.js`（缺失） | 缺文件 |
+| `SELF_HOSTED_RUNNER` | 自托管 runner | `src/self-hosted-runner/main.js`（缺失） | 缺文件 |
+| `ALLOW_TEST_VERSIONS` | 安装器允许测试版本 | `src/utils/nativeInstaller/download.ts` | 支持 |
+| `IS_LIBC_GLIBC` | 强制 glibc 环境检测 | `src/utils/envDynamic.ts` | 支持 |
+| `IS_LIBC_MUSL` | 强制 musl 环境检测 | `src/utils/envDynamic.ts` | 支持 |
+| `UNATTENDED_RETRY` | API 重试流的无人值守重试 | `src/services/api/withRetry.ts` | 实验 |
+| `HARD_FAIL` | 更严格的失败/日志行为 | `src/utils/log.ts`、`src/main.tsx` | 支持 |
 
-These 16 flags were restored by creating the missing stub files. The stubs compile and bundle cleanly, but most are runtime-disabled (`isEnabled: () => false`) — they exist so the build passes, but their features are inert unless activated.
+### 2.9 构建 / 遥测 / 内部（16）
 
-- `AUTO_THEME` — stub `systemThemeWatcher.js` watches OSC 11 (5s poll)
-- `BG_SESSIONS` — stub `bg.js` handlers log "not available"
-- `BUDDY` — stub command, disabled
-- `BUILDING_CLAUDE_APPS` — stub `.md` assets for all languages
-- `COMMIT_ATTRIBUTION` — stub `attributionHooks.js` (no-ops)
-- `FORK_SUBAGENT` — stub command + `UserForkBoilerplateMessage`, disabled
-- `HISTORY_SNIP` — stub command + `SnipTool` + `snipProjection`, disabled
-- `KAIROS_GITHUB_WEBHOOKS` — stub `SubscribePRTool` + `subscribe-pr` command + `UserGitHubWebhookMessage`, disabled
-- `KAIROS_PUSH_NOTIFICATION` — stub `PushNotificationTool`, disabled
-- `MCP_SKILLS` — stub `mcpSkills.js` returns `[]`
-- `MEMORY_SHAPE_TELEMETRY` — stub `memoryShapeTelemetry.js` (no-ops)
-- `OVERFLOW_TEST_TOOL` — stub `OverflowTestTool`, disabled
-- `RUN_SKILL_GENERATOR` — stub `runSkillGenerator.js` registers disabled skill
-- `TEMPLATES` — stub `templateJobs.js` + `jobs/classifier.js`
-- `TORCH` — stub command, disabled
-- `TRANSCRIPT_CLASSIFIER` — stub prompt `.txt` files for all three classifier modes
+| 名称 | 功能 | 源码文件 | 状态 |
+|---|---|---|---|
+| `ABLATION_BASELINE` | CLI 消融/基线入口 | `src/entrypoints/cli.tsx` | 支持 |
+| `ANTI_DISTILLATION_CC` | 反蒸馏请求元数据 | `src/services/api/claude.ts` | 支持 |
+| `COWORKER_TYPE_TELEMETRY` | coworker 类型遥测字段 | `src/services/analytics/metadata.ts` | 支持 |
+| `DOWNLOAD_USER_SETTINGS` | 设置同步拉取路径 | `src/commands/reload-plugins/reload-plugins.ts`、`src/cli/print.ts` | 支持 |
+| `UPLOAD_USER_SETTINGS` | 设置同步推送路径 | `src/main.tsx` | 支持 |
+| `DUMP_SYSTEM_PROMPT` | 系统提示导出路径 | `src/entrypoints/cli.tsx` | 支持 |
+| `FILE_PERSISTENCE` | 文件持久化接线 | `src/utils/filePersistence/filePersistence.ts`、`src/cli/print.ts` | 支持 |
+| `PERFETTO_TRACING` | perfetto 追踪 hook | `src/utils/telemetry/perfettoTracing.ts` | 支持 |
+| `SLOW_OPERATION_LOGGING` | 慢操作日志 | `src/utils/slowOperations.ts` | 支持 |
+| `SKIP_DETECTION_WHEN_AUTOUPDATES_DISABLED` | 自动更新关闭时跳过更新检测 | `src/components/AutoUpdaterWrapper.tsx` | 支持 |
+| `MEMORY_SHAPE_TELEMETRY` | 记忆形状遥测（no-op） | `src/memdir/findRelevantMemories.ts` | stub |
+| `TRANSCRIPT_CLASSIFIER` | 转录分类器三模式提示 | `src/cli/print.ts`、`src/cli/structuredIO.ts` | stub |
+| `TEMPLATES` | 模板任务 | `src/entrypoints/cli.tsx`、`src/query/stopHooks.ts` | stub |
+| `COMMIT_ATTRIBUTION` | 提交归因 hook（no-op） | `src/cli/print.ts`、`src/commands/clear/caches.ts` | stub |
+| `CONNECTOR_TEXT` | connector 文本块在 API/日志/UI 的处理 | `src/constants/betas.ts`、`src/services/api/claude.ts` | 实验 |
+| `KAIROS` | 云端 assistant 完整栈（需 Anthropic 后端+账号） | `src/bridge/bridgeMain.ts`、`src/cli/print.ts` | 已放弃（`KAIROS_BRIEF`/`KAIROS_CHANNELS` 独立保留） |
 
-### 2.6 Broken Flags With Partial Wiring But Medium-Sized Gaps
+### 2.10 关键实现备注
 
-These do have meaningful surrounding code, but the missing piece is larger than a single wrapper or asset.
+- **`REACTIVE_COMPACT`**：三类恢复——PTL（`isWithheldPromptTooLong`）/ 媒体超限（`isWithheldMediaSizeError`）/ usage-policy 拒绝（`isUsagePolicyRefusalMessage` + `isWithheldUsagePolicyRefusal` + `policyStripRetry`，全剥 user/tool_result 内嵌 image/document 为文本标记后重建）。仅内存剥图不动 jsonl；无媒体可剥则上抛；`hasAttemptedReactiveCompact` 防螺旋。入口约束：`tryReactiveCompact` 的 `errorMsg` 必传（唯一调用方 `query.ts` 传 `lastMessage`）。
+- **`WORKFLOW_SCRIPTS`**：单 agent 最小版。①脚本发现用 `getProjectRoot()`（非 `getOriginalCwd()`），`WorkflowTool.call()` 与 `/workflows` 两处对齐；②spawn 带 `--no-session-persistence`（否则 fork 会在 `.claude/projects/` 生成独立会话 jsonl 污染 `/resume`）；③多行 CJK prompt 走 `$(cat '<temp>.md')`；④工具 require 直连（IIFE 会触发 esbuild `--minify-identifiers` 改名 bug）；⑤`isInBundledMode()` 对 `--bytecode` exe 须带 `process.argv[1].includes('/~BUN/')` 分支（`Bun.embeddedFiles` 为空数组，误判会污染所有 spawn 前缀共用方）。
+- **已恢复三件的文件面**：`MONITOR_TOOL` = MonitorTool + MonitorMcpTask + 两个权限/详情组件；`REVIEW_ARTIFACT` = ReviewArtifactTool + 权限弹窗 + `skills/bundled/hunter.ts`；`COORDINATOR_MODE` = `workerAgent.ts` + `coordinatorMode.ts` 导出 `INTERNAL_WORKER_TOOLS`。
 
-- `BYOC_ENVIRONMENT_RUNNER` — Missing `src/environment-runner/main.js`.
-- `CONTEXT_COLLAPSE` — Missing `src/tools/CtxInspectTool/CtxInspectTool.js`.
-- `COORDINATOR_MODE` — ✅ 已恢复：`src/coordinator/workerAgent.ts` 完整实现 `getCoordinatorAgents()`，返回两个 built-in agent——`coordinator`（tools=`COORDINATOR_MODE_ALLOWED_TOOLS`，prompt=`getCoordinatorSystemPrompt()`）与 `worker`（tools=`ASYNC_AGENT_ALLOWED_TOOLS` − `INTERNAL_WORKER_TOOLS`，独立 worker prompt）。`INTERNAL_WORKER_TOOLS` 已从 `coordinatorMode.ts` 导出；`subagent_type: 'worker'` 派遣经 `AgentTool.tsx:286` 正常解析。全量打包验证 EXIT:0。
-- `DAEMON` — 【已放弃】Missing `src/commands/remoteControlServer/index.js`。不恢复：常驻远程控制服务已由内置网关实现（localGateway `--gateway` 独立进程长驻），会话状态/进度推送由 `conversationDisplay.ts` 上报网关承担。不在任何 feature 集，仅保留审计标记。
-- `DIRECT_CONNECT` — ❌ 仍 broken：`main.tsx:4065` `import('./server/parseConnectUrl.js')` 与 `main.tsx:4091` `import('./server/connectHeadless.js')` 均无法解析（`src/server/` 下仅存 `createDirectConnectSession.ts` + `directConnectManager.ts`）。【已放弃】`claude open <cc://url>` 连接外部直连会话服务属远程执行方向，与本地化方向不符，不恢复。源码门控 + 残留实现保留（编译期 tree-shake）。
-- `EXPERIMENTAL_SKILL_SEARCH` — Missing `src/services/skillSearch/{localSearch,prefetch,featureCheck}.js`（`commands.ts` / `query.ts` / `constants/prompts.ts` 分别 require）。
-- `MONITOR_TOOL` — ✅ 已恢复：4 个文件——`tools/MonitorTool/MonitorTool.tsx`（buildTool 产出 `Monitor` 工具，`exec()` + `spawnShellTask({..., kind:'monitor'})` 后台监控进程，流式通知，streaming-only）、`tasks/MonitorMcpTask/MonitorMcpTask.ts`、`components/permissions/MonitorPermissionRequest/MonitorPermissionRequest.tsx`、`components/tasks/MonitorMcpDetailDialog.tsx`。已在 `tools.ts` / `PermissionRequest.tsx` / `BackgroundTasksDialog.tsx` / `runAgent.ts` 门控下接入；默认构建不含该模块（DCE 裁掉）。
-- `REACTIVE_COMPACT` — ✅ 已恢复并默认编入：`src/services/compact/reactiveCompact.ts` 完整实现。三类自动恢复：PTL（isWithheldPromptTooLong）/ 媒体超限（isWithheldMediaSizeError）/ **Usage Policy 拒绝（stop_reason='refusal'）自动剥图恢复**——`errors.ts isUsagePolicyRefusalMessage` + `isWithheldUsagePolicyRefusal` + `policyStripRetry`（filter 尾部错误消息 → 复用 compact.ts `stripImagesFromMessages` 全剥 user/tool_result 内嵌 image/document 为文本标记 → buildStripCompactionResult 后缀保留重建，summary 文案参数化），query.ts withhold 块与恢复块各一分支（mediaRecoveryEnabled 同 gate）。仅内存剥图不动 jsonl；无媒体可剥→surface；hasAttemptedReactiveCompact 防螺旋。**入口判型约束：`tryReactiveCompact` 的显式 `errorMsg` 必传参数（唯一调用方 query.ts 传 lastMessage）——withhold 错误只出现在 assistantMessages，messagesForQuery 尾部恒为 user/tool_result**。
-- `REVIEW_ARTIFACT` — ✅ 已恢复：4 个文件——`tools/ReviewArtifactTool/constants.ts`、`tools/ReviewArtifactTool/ReviewArtifactTool.tsx`（buildTool 产出 `ReviewArtifact` 工具，`requiresUserInteraction()`，批准弹窗注入 `selected` finding id，批准后把 artifact 落盘 `.claude/reviews/`）、`components/permissions/ReviewArtifactPermissionRequest/ReviewArtifactPermissionRequest.tsx`（`PermissionDialog` + `SelectMulti`）、`skills/bundled/hunter.ts`（hunter 捉虫 skill，驱动审查流程）。已在 `tools.ts` / `PermissionRequest.tsx` / `skills/bundled/index.ts` 门控下接入；默认构建不含该模块（DCE 裁掉）。
-- `SELF_HOSTED_RUNNER` — Missing `src/self-hosted-runner/main.js`.
-- `SSH_REMOTE` — Missing `src/ssh/createSSHSession.js`.【已放弃】`claude ssh <host>` 远程机器执行属远程执行方向，本地无需求，不恢复。源码门控 + 残留保留（编译期 tree-shake）。
-- `TERMINAL_PANEL` — Missing `src/tools/TerminalCaptureTool/TerminalCaptureTool.js`.
-- `UDS_INBOX` — Missing `src/utils/udsMessaging.js` + `src/tools/ListPeersTool/ListPeersTool.js`（`tools.ts` 门控下 require）。
-- `WEB_BROWSER_TOOL` — Missing `src/tools/WebBrowserTool/WebBrowserTool.js`.
-- `WORKFLOW_SCRIPTS` — ✅ 已恢复（单 agent 最小版）：8 个文件——`tools/WorkflowTool/workflowScripts.ts`（扫描 `.claude/workflows/*.md` + frontmatter 解析）、`WorkflowTool.tsx`（buildTool 产出 `Workflow` 工具，`exec()` 解析脚本后 spawn `LocalWorkflowTask` 后台子进程）、`WorkflowPermissionRequest.tsx`、`bundled/index.ts`、`createWorkflowCommand.ts`（`getWorkflowCommands` 把每个脚本注册为 `/name` slash 命令，`kind:'workflow'`）、`tasks/LocalWorkflowTask/LocalWorkflowTask.ts`（`local_workflow` 任务状态 + `kill/skipWorkflowAgent/retryWorkflowAgent`）、`commands/workflows/{index,workflows.ts}`（`/workflows` 命令）、`components/tasks/WorkflowDetailDialog.tsx`；默认构建不含。
-  现行要点：①脚本发现用 `getProjectRoot()`（非 `getOriginalCwd()`），`WorkflowTool.call()` 与 `/workflows` 命令两处对齐；②spawn 命令带 `'--no-session-persistence'`（fork 默认持久化会话，缺它会在 `.claude/projects/` 生成独立会话 jsonl 污染 `/resume`）；③多行 CJK prompt 走 `$(cat '<temp>.md')` 临时文件机制（`buildWorkflowCommand`）；④工具 require 直连（不用 IIFE——IIFE 触发 esbuild `--minify-identifiers` 改名 bug，`initBundledWorkflows()` no-op 挂载点保留）；⑤`isInBundledMode()` 对 `--bytecode` exe 须带 `process.argv[1].includes('/~BUN/')` 分支（`Bun.embeddedFiles` 对 `--bytecode` 为空数组，误判会使 `cliCommandPrefix()` 注入垃圾参数，影响所有 spawn 前缀共用方）。
+### 2.11 有用入口
 
-### 2.7 Broken Flags With Large Missing Subsystems
-
-These are the ones that still look expensive to restore because the first missing import is only the visible edge of a broader absent subsystem.
-
-- `KAIROS` — Missing `src/assistant/index.js` and much of the assistant stack with it（另有 `tools/SendUserFileTool/SendUserFileTool.js` 等缺失）。【已放弃】官方云端 assistant 模式（需 Anthropic 后端 + 账号），本地不恢复。KAIROS_BRIEF/KAIROS_CHANNELS 为独立部分可用 surface，**保留**。源码门控保留（tree-shake）。
-- `KAIROS_DREAM` — Missing `src/skills/bundled/dream.js` and related dream-task behavior.【已放弃】同 KAIROS 云端 assistant 相关，不恢复。源码门控保留（tree-shake）。
-- `PROACTIVE` — Missing `src/proactive/index.js` + `src/proactive/commands/proactive.js` and the proactive task/tool stack.【已放弃】云端主动任务栈（同 KAIROS/CCR 云端方向），本地无需求，不恢复。源码门控保留（tree-shake）。
-
-### 2.8 Useful Entry Points
-
-- Feature-aware build logic: `scripts/build.ts`
-- Feature-gated command imports: `src/commands.ts`
-- Feature-gated tool imports: `src/tools.ts`
-- Feature-gated task imports: `src/tasks.ts`
-- Feature-gated query behavior: `src/query.ts`
-- Feature-gated CLI entry paths: `src/entrypoints/cli.tsx`
+- 构建与特性集：`scripts/build.ts`
+- 命令门控：`src/commands.ts`
+- 工具门控：`src/tools.ts`
+- 任务门控：`src/tasks.ts`
+- 查询行为门控：`src/query.ts`
+- CLI 入口门控：`src/entrypoints/cli.tsx`

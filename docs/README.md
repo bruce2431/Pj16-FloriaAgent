@@ -8,7 +8,7 @@
 | 文件 | 主题 | 一句话 |
 |---|---|---|
 | [standards.md](standards.md) | 权威规则 | skill/plugin/MCP/changelog/工作区/审批等全部约定，与 CLAUDE.md 冲突时以此为准 |
-| [build.md](build.md) | 构建与 flag | 构建命令/产物规范/前端内嵌打包 cache-busting + 91 个 feature flag 活审计 |
+| [build.md](build.md) | 构建与 flag | 构建调用与参数/产物规范/前端内嵌打包 cache-busting + 92 个 feature flag 分类总表 |
 | [glossary.md](glossary.md) | 术语表 | web/CLI 双前端 UI 实体规范名 ↔ 实际 DOM 码对照 + SSE 信号族 |
 | [core.md](core.md) | 源码核心机制 | 便携配置根/wire protocol 与 openai-chat 适配器/生图能力层/会话平铺/插件双发现/沙箱权限/自愈日志/神经元 NEURON_RAG/WebSearch 多后端/动态定价/队列催办/工具循环熔断/反应式压缩/会话间协作 |
 | [gateway.md](gateway.md) | 网关服务 | API 前缀/认证配对/mDNS/预览容器（含 §6.7 预览多卡片 card.json 扫描）/反代/独立会话进程链/审批中继/会话间通信路由/神经元可视化与文件树·评论端点 |
